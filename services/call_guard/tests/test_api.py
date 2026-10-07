@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from call_guard.api import create_app
+from call_guard.model import Scorer
 
 
 @pytest.fixture
@@ -52,3 +53,21 @@ async def test_stateless(client):
     a = (await client.post("/score", json=m)).json()
     b = (await client.post("/score", json=m)).json()
     assert a == b
+
+
+async def test_whitespace_only_message_rejected(client):
+    assert (await client.post("/score", json={"message": "   \n\t "})).status_code == 422
+
+
+async def test_readyz_reports_model_version(client):
+    body = (await client.get("/readyz")).json()
+    assert body["status"] == "ready" and body["model_version"] in ("clf-v1", "rules-v1")
+
+
+async def test_metrics_fallback_gauge():
+    app = create_app(scorer=Scorer(None))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        text = (await c.get("/metrics")).text
+        assert "call_guard_fallback_mode 1" in text
+        body = (await c.get("/readyz")).json()
+        assert body["model_version"] == "rules-v1" and body["fallback_mode"] == "true"

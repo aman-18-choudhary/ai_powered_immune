@@ -1,7 +1,7 @@
 import pytest
 
 from call_guard.hardneg import HARD_NEGATIVES
-from call_guard.rules import RULES_VERSION, score_chunk, score_text
+from call_guard.rules import CALL_RISK_THRESHOLD, RULES_VERSION, score_chunk, score_text
 
 ARREST_EN = (
     "This is Inspector Sharma from the CBI. You are now under digital arrest. Do not disconnect "
@@ -81,3 +81,84 @@ def test_score_in_unit_interval_and_version():
     s, _ = score_text(ARREST_EN + " " + SAFE_ACCT + " " + ARREST_HI)
     assert 0 <= s <= 1
     assert RULES_VERSION == "rules-v1"
+
+
+# ----------------------------------------------------------------- fix round 1
+EVASION = [
+    "We will never ask for money but you must transfer your funds to the RBI safe account now",
+    "Do not tell anyone, this is a fraud case under digital arrest.",
+    "Kabhi bhi kisi ko mat batana, aap digital arrest me hain",
+    "Please ignore the noise, you are under digital arrest.",
+    "Never disconnect this call, never tell anyone. This is the CBI officer speaking.",
+]
+
+
+@pytest.mark.parametrize("text", EVASION)
+def test_awareness_words_do_not_blank_demand_clauses(text):
+    from call_guard.model import Scorer, load_classifier
+
+    assert Scorer(load_classifier()).score_text(text)[0] >= 0.7
+
+
+@pytest.mark.parametrize("text", [EVASION[0], EVASION[2], EVASION[4]])
+def test_evasion_crosses_with_rules_alone(text):
+    assert score_text(text)[0] >= 0.7
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "If you receive a call claiming you are under digital arrest, disconnect and dial 1930.",
+        "Papa, aaj TV par ek serial me digital arrest dikhaya, kitna darawana tha.",
+        "We saw a web series where the hero gets arrested for money laundering.",
+        "Dear customer, never share your OTP, PIN or CVV with anyone, including bank staff.",
+        "Hello sir, courier here, the OTP on your phone please tell me so I can hand over the parcel.",
+    ],
+)
+def test_advisory_and_media_mentions_stay_low(text):
+    assert score_text(text)[0] < 0.2
+
+
+def test_every_single_cue_class_is_below_threshold():
+    from call_guard import rules
+
+    assert max(rules._WEIGHT.values()) < CALL_RISK_THRESHOLD
+    for text in (
+        "Transfer your funds to the RBI safe account.",
+        "Do not tell anyone.",
+    ):
+        s, r = score_text(text)
+        assert len(r) == 1 and s < CALL_RISK_THRESHOLD
+
+
+def test_authority_alone_or_allegation_alone_is_not_enough():
+    assert score_text("This is Inspector Rajesh from the CBI, please confirm your name.")[0] < 0.7
+    assert score_text("A warrant is registered.")[0] < 0.7
+    assert (
+        score_text("This is Inspector Rajesh from the CBI. A warrant is registered against you.")[0]
+        >= 0.7
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ｙｏｕ ａｒｅ ｕｎｄｅｒ ｄｉｇｉｔａｌ ａｒｒｅｓｔ",  # full-width
+        "you are under digital-arrest",
+        "you are under digital_arrest",
+        "you are under digital   arrest",
+        "you are under digital​ arrest",
+        "आप डि​जिटल अरे‍स्ट में हैं",  # zero-width chars inside Devanagari words
+        "आप डिजिटल अरेस्ट में हैं",
+    ],
+)
+def test_normalisation_variants_detected(text):
+    assert "DIGITAL_ARREST_PHRASE" in codes(score_text(text)[1])
+
+
+def test_dev_set_rules_only_recall_and_fp():
+    from tests.data.dev_set import BENIGN, SCAM
+
+    hits = sum(score_text(t)[0] >= 0.7 for t in SCAM)
+    assert hits / len(SCAM) >= 0.70
+    assert not [t for t in BENIGN if score_text(t)[0] >= 0.7]

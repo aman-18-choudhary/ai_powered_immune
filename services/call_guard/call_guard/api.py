@@ -7,8 +7,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Response
+from pydantic import BaseModel, Field, field_validator
 from scam_contracts.models import Reason
 from svckit.bus import Bus
 from svckit.health import make_health_router
@@ -25,7 +25,16 @@ MAX_MESSAGE_CHARS = 4000
 
 class ScoreRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+    # accepted for forward compatibility; currently ignored (rules and classifier are
+    # script-agnostic)
     lang: str | None = Field(default=None, max_length=16)
+
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("message must not be blank")
+        return v
 
 
 class ScoreResponse(BaseModel):
@@ -66,7 +75,25 @@ def create_app(
         return True
 
     app = FastAPI(title="call-guard", lifespan=lifespan)
-    app.include_router(make_health_router(ready))
+    app.include_router(
+        make_health_router(
+            ready,
+            extra=lambda: {
+                "model_version": scorer.model_version,
+                "fallback_mode": str(scorer.fallback_mode).lower(),
+            },
+        )
+    )
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        body = (
+            "# TYPE call_guard_fallback_mode gauge\n"
+            f"call_guard_fallback_mode {int(scorer.fallback_mode)}\n"
+            "# TYPE call_guard_classifier_errors_total counter\n"
+            f"call_guard_classifier_errors_total {scorer.clf_errors}\n"
+        )
+        return Response(body, media_type="text/plain; version=0.0.4")
 
     @app.post("/score", response_model=ScoreResponse)
     async def score(req: ScoreRequest) -> ScoreResponse:

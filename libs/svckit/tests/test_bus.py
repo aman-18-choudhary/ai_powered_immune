@@ -83,9 +83,7 @@ async def test_health_router():
 
     app = FastAPI()
     app.include_router(make_health_router(ready))
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://t"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/healthz")).status_code == 200
         assert (await c.get("/readyz")).status_code == 503
 
@@ -120,9 +118,7 @@ async def test_concurrent_consumers_same_group_handle_once():
 
     await bus.publish("t", "k", _reason())
     await bus.publish("t", "k", _reason())
-    tasks = [
-        asyncio.create_task(consume(bus, "t", "g", Reason, handler, store)) for _ in range(2)
-    ]
+    tasks = [asyncio.create_task(consume(bus, "t", "g", Reason, handler, store)) for _ in range(2)]
     await asyncio.sleep(0.15)
     for t in tasks:
         t.cancel()
@@ -164,3 +160,16 @@ async def test_cancellation_releases_claim_and_redelivery_is_handled():
     await bus.publish("t", "k", _reason())
     await _run(bus, handler, store)
     assert len(calls) == 1
+
+
+async def test_readyz_extra_fields():
+    import httpx
+    from fastapi import FastAPI
+
+    async def ready() -> bool:
+        return True
+
+    app = FastAPI()
+    app.include_router(make_health_router(ready, extra=lambda: {"model_version": "m1"}))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get("/readyz")).json() == {"status": "ready", "model_version": "m1"}

@@ -5,7 +5,11 @@ from collections.abc import Awaitable, Callable
 from fastapi import APIRouter, Response
 
 
-def make_health_router(ready_check: Callable[[], Awaitable[bool]]) -> APIRouter:
+def make_health_router(
+    ready_check: Callable[[], Awaitable[bool]],
+    extra: Callable[[], dict[str, str]] | None = None,
+) -> APIRouter:
+    """`extra` (optional) adds fields to the /readyz body, e.g. the running model version."""
     router = APIRouter()
 
     @router.get("/healthz")
@@ -21,6 +25,6 @@ def make_health_router(ready_check: Callable[[], Awaitable[bool]]) -> APIRouter:
         if not ok:
             response.status_code = 503
             return {"status": "not_ready"}
-        return {"status": "ready"}
+        return {"status": "ready", **(extra() if extra else {})}
 
     return router
