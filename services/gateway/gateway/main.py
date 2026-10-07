@@ -1,4 +1,12 @@
-"""Gateway app: login, RBAC-protected reverse proxy, request-id propagation."""
+"""Gateway app: login, RBAC-protected reverse proxy, request-id propagation.
+
+Operational notes:
+- The login failed-attempt limiter keys on the socket peer address. Behind a reverse proxy, set
+  uvicorn's FORWARDED_ALLOW_IPS to the proxy address (proxy_headers is on by default) so the
+  real client IP is used; otherwise all clients share one IP bucket.
+- Known tradeoff: the per-username failed-login key lets an attacker lock a victim username out
+  for up to 60 s per window (bounded lockout DoS) in exchange for stopping credential stuffing.
+"""
 
 import asyncio
 import logging
@@ -13,7 +21,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from redis.asyncio import Redis
 from svckit.health import make_health_router
 
@@ -170,8 +178,24 @@ def create_app(
 
     app.include_router(make_health_router(ready))
 
+    async def read_body(request: Request) -> bytes:
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_body:
+                raise _RequestTooLarge
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     @app.post("/auth/login")
-    async def login(body: LoginRequest, request: Request) -> Response:
+    async def login(request: Request) -> Response:
+        try:
+            body = LoginRequest.model_validate_json(await read_body(request))
+        except _RequestTooLarge:
+            return JSONResponse({"error": "payload_too_large"}, status_code=413)
+        except ValidationError:
+            return JSONResponse({"error": "invalid_request"}, status_code=422)
         ip = request.client.host if request.client else "unknown"
         wait = await guarded(the_limiter.login_blocked(ip, body.username), None)
         if wait is not None:
@@ -185,16 +209,6 @@ def create_app(
         token, ttl = issue_token(secret, principal)
         logger.info("login ok role=%s", principal.role)
         return JSONResponse({"access_token": token, "token_type": "bearer", "expires_in": ttl})
-
-    async def read_body(request: Request) -> bytes:
-        chunks: list[bytes] = []
-        size = 0
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > max_body:
-                raise _RequestTooLarge
-            chunks.append(chunk)
-        return b"".join(chunks)
 
     async def fetch(method: str, url: str, request: Request, headers: dict[str, str]) -> Response:
         body = await read_body(request)

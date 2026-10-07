@@ -291,3 +291,16 @@ async def test_lifespan_closes_clients(redis, monkeypatch):
     async with app.router.lifespan_context(app):
         assert not app.state.http.is_closed
     assert app.state.http.is_closed and closed == ["redis"]
+
+
+async def test_chunked_login_body_capped(make_client):
+    c = make_client(max_body_bytes=100)
+
+    async def gen():
+        for _ in range(5):
+            yield b"x" * 40
+
+    r = await c.post("/auth/login", content=gen())
+    assert r.status_code == 413
+    ok = await c.post("/auth/login", json={"username": "admin", "password": "pw-admin"})
+    assert ok.status_code == 200
