@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from scam_contracts.topics import Topics
 
 from svckit.idempotency import IdempotencyStore
@@ -20,6 +20,8 @@ T = TypeVar("T", bound=BaseModel)
 class Bus(Protocol):
     async def publish(self, topic: str, key: str, value: BaseModel) -> None: ...
 
+    async def publish_raw(self, topic: str, key: str, raw: bytes) -> None: ...
+
     def subscribe(self, topic: str, group: str) -> AsyncIterator[bytes]: ...
 
 
@@ -29,10 +31,11 @@ def message_key(raw: bytes) -> str:
 
 
 class InMemoryBus:
-    """Per-group queues; a group only receives messages published after it subscribed
-    or already buffered for it. Messages published before any subscription are replayed."""
+    """Append-only log with a shared offset per (topic, group): consumers in the same
+    group split messages; different groups each see every message."""
 
     def __init__(self) -> None:
+        self._offsets: dict[tuple[str, str], int] = defaultdict(int)
         self._log: dict[str, list[tuple[str, bytes]]] = defaultdict(list)
         self._cond = asyncio.Condition()
 
@@ -50,12 +53,12 @@ class InMemoryBus:
             self._cond.notify_all()
 
     async def subscribe(self, topic: str, group: str) -> AsyncIterator[bytes]:
-        offset = 0
+        gk = (topic, group)
         while True:
             async with self._cond:
-                await self._cond.wait_for(lambda o=offset: len(self._log[topic]) > o)
-                _, raw = self._log[topic][offset]
-            offset += 1
+                await self._cond.wait_for(lambda: len(self._log[topic]) > self._offsets[gk])
+                _, raw = self._log[topic][self._offsets[gk]]
+                self._offsets[gk] += 1
             yield raw
 
 
@@ -89,13 +92,15 @@ class KafkaBus:
             topic,
             bootstrap_servers=self._bootstrap,
             group_id=group,
-            enable_auto_commit=True,
+            enable_auto_commit=False,
             auto_offset_reset="earliest",
         )
         await consumer.start()
         try:
             async for msg in consumer:
                 yield msg.value
+                # Resumed after the consumer finished handling (and any DLQ publish).
+                await consumer.commit()
         finally:
             await consumer.stop()
 
@@ -113,29 +118,43 @@ async def consume(
     handler: Callable[[T], Awaitable[None]],
     store: IdempotencyStore,
     max_retries: int = 3,
+    backoff_s: float = 0.0,
 ) -> None:
-    """Consume `topic`, calling `handler` once per distinct message.
+    """Consume `topic`, calling `handler` once per distinct event.
 
-    The idempotency key is marked only after the handler succeeds. After `max_retries`
-    failed attempts the raw message is published to `topic + DLQ_SUFFIX`.
+    The dedupe key is the model's `idempotency_key` when present, else the SHA-256 of the
+    raw bytes, namespaced as `{topic}:{group}:{key}`. The key is claimed atomically before
+    the handler runs and released if the handler ultimately fails, so only successes stay
+    marked. After `max_retries` failed attempts the raw message goes to `topic + DLQ_SUFFIX`.
     """
     async for raw in bus.subscribe(topic, group):
-        key = message_key(raw)
-        if await store.seen(key):
+        msg: T | None
+        try:
+            msg = model.model_validate_json(raw)
+        except ValidationError:
+            log.warning("unparseable message on %s", topic, exc_info=True)
+            msg = None
+        base = getattr(msg, "idempotency_key", None) or message_key(raw)
+        key = f"{topic}:{group}:{base}"
+        if await store.seen(key) or not await store.claim(key):
             continue
         done = False
         for attempt in range(1, max_retries + 1):
             try:
-                await handler(model.model_validate_json(raw))
+                if msg is None:
+                    raise ValueError("unparseable message")
+                await handler(msg)
             except Exception:
-                log.warning("handler failed on %s (attempt %d/%d)", topic, attempt, max_retries)
+                log.warning(
+                    "handler failed on %s (attempt %d/%d)", topic, attempt, max_retries,
+                    exc_info=True,
+                )
+                if attempt < max_retries and backoff_s > 0:
+                    await asyncio.sleep(backoff_s * 2 ** (attempt - 1))
             else:
                 await store.mark(key)
                 done = True
                 break
         if not done:
-            await _publish_dlq(bus, topic + Topics.DLQ_SUFFIX, key, raw)
-
-
-async def _publish_dlq(bus: Any, topic: str, key: str, raw: bytes) -> None:
-    await bus.publish_raw(topic, key, raw)
+            await store.release(key)
+            await bus.publish_raw(topic + Topics.DLQ_SUFFIX, key, raw)

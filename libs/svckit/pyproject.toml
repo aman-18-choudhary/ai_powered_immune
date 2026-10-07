@@ -7,7 +7,7 @@ name = "svckit"
 version = "0.1.0"
 description = "Shared service kit: bus, idempotency, health, PII tokenizer"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.110", "pydantic>=2.5", "aiokafka>=0.10", "redis>=5"]
+dependencies = ["scam-contracts", "fastapi>=0.110", "pydantic>=2.5", "aiokafka>=0.10", "redis>=5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "fakeredis>=2.20", "httpx>=0.27", "ruff>=0.4"]

@@ -8,6 +8,14 @@ class IdempotencyStore(Protocol):
 
     async def mark(self, key: str) -> None: ...
 
+    async def claim(self, key: str) -> bool:
+        """Atomically claim `key`; False if already claimed or marked."""
+        ...
+
+    async def release(self, key: str) -> None:
+        """Drop a claim so the message can be retried later."""
+        ...
+
 
 class InMemoryIdempotencyStore:
     def __init__(self) -> None:
@@ -18,6 +26,15 @@ class InMemoryIdempotencyStore:
 
     async def mark(self, key: str) -> None:
         self._keys.add(key)
+
+    async def claim(self, key: str) -> bool:
+        if key in self._keys:
+            return False
+        self._keys.add(key)
+        return True
+
+    async def release(self, key: str) -> None:
+        self._keys.discard(key)
 
 
 class RedisIdempotencyStore:
@@ -31,3 +48,9 @@ class RedisIdempotencyStore:
 
     async def mark(self, key: str) -> None:
         await self._client.set(self._prefix + key, "1", ex=self._ttl)
+
+    async def claim(self, key: str) -> bool:
+        return bool(await self._client.set(self._prefix + key, "1", nx=True, ex=self._ttl))
+
+    async def release(self, key: str) -> None:
+        await self._client.delete(self._prefix + key)

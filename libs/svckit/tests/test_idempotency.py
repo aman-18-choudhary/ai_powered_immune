@@ -17,3 +17,11 @@ async def test_redis_store():
     await s.mark("k")
     assert await s.seen("k")
     assert not await s.seen("other")
+
+
+async def test_claim_release_in_memory_and_redis():
+    for s in (InMemoryIdempotencyStore(), RedisIdempotencyStore(fakeredis.aioredis.FakeRedis())):
+        assert await s.claim("k")
+        assert not await s.claim("k")
+        await s.release("k")
+        assert await s.claim("k")
