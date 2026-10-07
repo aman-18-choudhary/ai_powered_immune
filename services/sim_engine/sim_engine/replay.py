@@ -15,7 +15,7 @@ from svckit.bus import Bus
 from .scam import Campaign, gen_scam_campaign
 from .world import World
 
-HERO_CAMPAIGN_ID = "hero-digital-arrest"
+HERO_CAMPAIGN_ID = "hero-digital-arrest"  # suffixed with the seed
 HERO_GAP = timedelta(seconds=90)  # victim B's transfer starts this long after A's completes
 
 SleepFn = Callable[[float], Awaitable[None]]
@@ -54,12 +54,23 @@ def build_hero_scenario(world: World, seed: int = 1) -> Scenario:
     a_i = order[0]
     a = world.citizens[a_i]
     b_i = next(
-        i for i in order[1:]
-        if world.citizens[i].bank_id != a.bank_id and world.citizens[i].state != a.state
-    )  # fmt: skip
+        (
+            i
+            for i in order[1:]
+            if world.citizens[i].bank_id != a.bank_id and world.citizens[i].state != a.state
+        ),
+        None,
+    )
+    if b_i is None:
+        raise ValueError("world has no citizen differing from victim A in both bank and state")
     b = world.citizens[b_i]
     camp = gen_scam_campaign(
-        world, HERO_CAMPAIGN_ID, 2, seed, victim_indices=[a_i, b_i], second_victim_gap=HERO_GAP
+        world,
+        f"{HERO_CAMPAIGN_ID}-{seed}",
+        2,
+        seed,
+        victim_indices=[a_i, b_i],
+        second_victim_gap=HERO_GAP,
     )
     a_tok, b_tok = camp.victim_tokens
     victim_txns = [t for t in camp.txns if camp.txn_roles[t.txn_id] == "victim_transfer"]
@@ -95,6 +106,8 @@ async def replay(
         merged += [(e, Topics.CALL_EVENTS) for e in sc.calls]
         merged += [(e, Topics.TXN_EVENTS) for e in sc.txns]
     merged.sort(key=lambda p: (p[0].ts, p[1] != Topics.CALL_EVENTS))
+    if math.isnan(speed) or speed < 0:
+        raise ValueError(f"speed must be >= 0 (0 or inf = no sleeping), got {speed}")
     realtime = speed > 0 and not math.isinf(speed)
     prev = None
     for event, topic in merged:

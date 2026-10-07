@@ -190,6 +190,7 @@ def gen_scam_campaign(
         if vi == 1 and second_victim_gap is not None:
             last_a = max(x.ts for x in camp.txns if x.payer_token == camp.victim_tokens[0])
             shift = last_a + second_victim_gap - ts
+            # B's call may now precede A's; only B's call->transfer order is preserved
             calls_of_victim = [e.model_copy(update={"ts": e.ts + shift}) for e in calls_of_victim]
             ts += shift
         camp.calls.extend(calls_of_victim)
