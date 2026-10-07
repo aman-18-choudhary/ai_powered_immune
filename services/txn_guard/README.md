@@ -21,12 +21,47 @@ Scores every payment (UPI / IMPS / NEFT) and returns `allow`, `step_up` or `hold
 
 ## What the score means
 
-A calibrated probability **inside the simulator's world** (about 1 scam transaction per 100
-benign, imperfect call-risk signal), not a real-world fraud probability. Use it as a ranking-quality
-risk score. Two policy overlays sit after the model and are not part of calibration: a
-future-dated timestamp (> 5 min ahead of `Context.now`) is at least `step_up`; an active call risk
->= 0.7 plus a strong amount anomaly (z >= 3) to a payee the payer has never paid is floored at
-0.85 (`hold_verify`).
+A calibrated probability **inside the simulator's world** (`CALIBRATED_PREVALENCE = 0.01`, about 1
+scam transaction per 100 benign, imperfect call-risk signal), not a real-world fraud probability.
+**Prior shift:** on real traffic the base rate is very different, so the score must be
+recalibrated on real labelled traffic before it is read as a probability; until then use it as a
+ranking-quality risk score.
+
+The booster never sees `rail` (simulated scams are almost all UPI, so it would learn "IMPS/NEFT is
+benign"); a load-time smoke test scores the same scam on UPI/IMPS/NEFT and refuses an artifact whose
+rails disagree.
+
+### Policy overlays (`policy.py`, every rail)
+
+After the model, floors are applied: `final = max(model, floor)`. When one lifts the score the
+returned score is a **policy-lifted value, not a calibrated probability**, the verdict carries a
+reason with the overlay's own code (`YOUNG_PAYEE_LARGE_AMOUNT_FLOOR`, `CALL_RISK_AMOUNT_GUARD`,
+`FUTURE_DATED_TIMESTAMP`; `model.overlay_applied(reasons)` tells consumers and the audit ledger)
+and the model-derived reason weights are untouched (overlay weight = lift over the model score).
+
+* young payee (< 30 d) + first payment + large amount (z >= 3 and >= Rs 5,000; or >= Rs 25,000 for
+  a payer with < 3 prior transfers): at least step_up; hold_verify if >= Rs 50,000 or payee < 7 d.
+* active call risk >= 0.7 + amount anomaly (z >= 3 and >= Rs 10,000, or short-history >= Rs
+  25,000): at least step_up for any payee; hold_verify if the payee is new/young, was first paid
+  < 24 h ago, or already received >= Rs 10,000 from this payer in the last 60 min.
+* timestamp > 5 min in the future: at least step_up.
+
+### Reliability (raw model, 4 held-out eval seeds, 144,993 benign + 1,032 scam txns)
+
+| predicted bin | n | mean predicted | observed |
+|---|---|---|---|
+| 0.0-0.1 | 144,844 | 0.000 | 0.000 |
+| 0.1-0.2 | 40 | 0.161 | 0.125 |
+| 0.2-0.3 | 11 | 0.286 | 0.091 |
+| 0.3-0.4 | 117 | 0.337 | 0.436 |
+| 0.4-0.5 | 22 | 0.437 | 0.500 |
+| 0.5-0.6 | 77 | 0.500 | 0.701 |
+| 0.6-0.7 | 30 | 0.675 | 0.500 |
+| 0.8-0.9 | 90 | 0.858 | 0.878 |
+| 0.9-1.0 | 794 | 0.984 | 0.979 |
+
+ECE 0.0004 (raw), 0.0008 after overlays (dominated by the empty-ish upper bins; mid bins have few
+samples). Also stored in the artifact (`reliability`, `ece`).
 
 ## Fallback
 

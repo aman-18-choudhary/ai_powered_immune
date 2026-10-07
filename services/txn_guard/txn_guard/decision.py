@@ -8,13 +8,15 @@ from typing import Literal
 from scam_contracts.models import TxnDecision
 
 from .model import Scorer
+from .thresholds import HOLD_AT, STEP_UP_AT
 
 log = logging.getLogger("txn_guard")
 
-STEP_UP_AT = 0.5
-HOLD_AT = 0.8
 
 Decision = Literal["allow", "step_up", "hold_verify"]
+
+
+__all__ = ["HOLD_AT", "STEP_UP_AT", "decide", "make_decision"]
 
 
 def decide(score: float) -> Decision:

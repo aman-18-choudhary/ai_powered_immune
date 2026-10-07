@@ -1,3 +1,3 @@
 """Pinned integrity data for the model artifact. Written by ``python -m txn_guard.train``."""
 
-ARTIFACT_SHA256 = "35a876333df84312ffbd16b651d0aadd3809b181d93fb53c409d9c328141fe62"
+ARTIFACT_SHA256 = "f1b91ca8e52628f4d252f58df1755c5fa44fe011f12538a8874f205be20a2eeb"

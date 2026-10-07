@@ -26,7 +26,9 @@ class Context:
     ``payer_log_mean`` / ``payer_log_std`` are the mean / population std of ``ln(amount)`` over
     the payer's ``payer_n`` previous transactions. ``recent`` holds ``(ts, amount_inr)`` of the
     payer's previous transactions in the last 24 h. ``call_risks`` holds ``(ts, score)`` of the
-    payer's recent CallRisk events. ``payee_first_seen_ts`` is None when this payer has never paid
+    payer's recent CallRisk events. ``payee_recent`` holds ``(ts, amount_inr)`` of this payer's
+    previous transfers to *this payee* in the last 24 h. ``payee_first_seen_ts`` is None when this
+    payer has never paid
     this payee. ``now`` is the evaluation clock (used only to flag future-dated timestamps).
     """
 
@@ -37,6 +39,7 @@ class Context:
     recent: tuple[tuple[datetime, float], ...] = ()
     payee_first_seen_ts: datetime | None = None
     device_seen: bool = False
+    payee_recent: tuple[tuple[datetime, float], ...] = ()
     call_risks: tuple[tuple[datetime, float], ...] = ()
 
 
@@ -70,6 +73,7 @@ class InMemoryHistoryStore:
         self._stats: dict[str, _Welford] = {}
         self._recent: dict[str, deque[tuple[datetime, float]]] = {}
         self._payees: dict[str, dict[str, datetime]] = {}
+        self._pair: dict[tuple[str, str], deque[tuple[datetime, float]]] = {}
         self._devices: dict[str, set[str]] = {}
         self._risks: dict[str, deque[tuple[datetime, float]]] = {}
 
@@ -81,6 +85,10 @@ class InMemoryHistoryStore:
         newest = max(ts for ts, _ in q)
         while q and q[0][0] < newest - VELOCITY_WINDOW:
             q.popleft()
+        pq = self._pair.setdefault((p, txn.payee_hash), deque())
+        pq.append((txn.ts, amt))
+        while pq and pq[0][0] < max(ts for ts, _ in pq) - VELOCITY_WINDOW:
+            pq.popleft()
         self._payees.setdefault(p, {}).setdefault(txn.payee_hash, txn.ts)
         self._devices.setdefault(p, set()).add(txn.device_id_token)
 
@@ -102,5 +110,6 @@ class InMemoryHistoryStore:
             recent=tuple(self._recent.get(p, ())),
             payee_first_seen_ts=self._payees.get(p, {}).get(txn.payee_hash),
             device_seen=txn.device_id_token in self._devices.get(p, ()),
+            payee_recent=tuple(self._pair.get((p, txn.payee_hash), ())),
             call_risks=tuple(self._risks.get(p, ())),
         )

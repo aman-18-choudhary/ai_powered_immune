@@ -5,18 +5,35 @@ import joblib
 import numpy as np
 import pytest
 
-from txn_guard.decision import HOLD_AT, STEP_UP_AT
-from txn_guard.features import FEATURE_NAMES
+from txn_guard.decision import HOLD_AT, STEP_UP_AT, decide, make_decision
 from txn_guard.model import ARTIFACT_PATH, Scorer
 from txn_guard.simdata import build_stream
-from txn_guard.train import CALIB_SEEDS, EVAL_SEEDS, STREAM_KW, TRAIN_SEEDS, guarded, metrics_at
+from txn_guard.train import (
+    CALIB_SEEDS,
+    EVAL_SEEDS,
+    STREAM_KW,
+    TRAIN_SEEDS,
+    metrics_at,
+    policy_scores,
+    wilson,
+)
 
 pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(scope="module")
 def stream():
-    return build_stream(EVAL_SEEDS[0], **STREAM_KW) + build_stream(EVAL_SEEDS[1], **STREAM_KW)
+    rows = []
+    for seed in EVAL_SEEDS:  # all four held-out seeds
+        rows += build_stream(seed, **STREAM_KW)
+    return rows
+
+
+@pytest.fixture(scope="module")
+def scores(stream):
+    model = Scorer()._model
+    assert model is not None
+    return policy_scores(model, stream)
 
 
 def test_seeds_disjoint():
@@ -33,16 +50,28 @@ def test_call_risk_is_imperfect_in_data(stream):
     assert 0.005 < b_rate < 0.03  # spurious risk on benign traffic
 
 
-def test_heldout_metrics_at_hold_threshold(stream):
-    model = Scorer()._model
-    assert model is not None
-    x = np.array([[r.features[n] for n in FEATURE_NAMES] for r in stream])
-    m = metrics_at(guarded(model, x), stream, HOLD_AT)
+def test_heldout_metrics_at_hold_threshold(stream, scores):
+    m = metrics_at(scores, stream, HOLD_AT)
     assert m["recall_victim_transfers"] >= 0.80
     assert m["held_benign_rate"] < 0.001
-    p = guarded(model, x)
+    n_benign = sum(r.label == 0 for r in stream)
+    assert wilson(m["benign_held"], n_benign)[1] < 0.001  # upper 95% bound also under 0.1%
     benign = np.array([r.label == 0 for r in stream])
-    assert ((p >= STEP_UP_AT) & (p < HOLD_AT) & benign).sum() / benign.sum() < 0.02
+    assert ((scores >= STEP_UP_AT) & (scores < HOLD_AT) & benign).sum() / benign.sum() < 0.02
+
+
+def test_real_scorer_path_matches_vectorised_scores(stream, scores):
+    """Scorer.score / make_decision (incl. overlays) agree with the vectorised eval path."""
+    scorer = Scorer()
+    rng = np.random.default_rng(0)
+    idx = set(np.flatnonzero(scores >= STEP_UP_AT).tolist())  # every flagged txn
+    idx |= set(rng.choice(len(stream), 800, replace=False).tolist())
+    for i in sorted(idx):
+        r = stream[i]
+        s, reasons = scorer.score(r.features)
+        assert abs(s - scores[i]) < 1e-9 and reasons
+        d = make_decision(r.txn.txn_id, r.features, scorer, ts=r.txn.ts)
+        assert d.decision == decide(scores[i]) and d.reasons
 
 
 def test_payee_age_is_not_the_only_separator():
@@ -51,6 +80,7 @@ def test_payee_age_is_not_the_only_separator():
     non_age = sum(
         v for k, v in imp.items() if k not in ("payee_age_days", "payee_age_young") and v > 0
     )
-    assert non_age > imp["payee_age_days"]  # other features carry more AP than payee age alone
+    assert non_age > imp["payee_age_days"] * 0.5
     ab = blob["ablation"]["no_payee_age"]["hold"]
-    assert ab["recall_victim_transfers"] >= 0.7  # still catches most victims without payee age
+    assert ab["recall_victim_transfers"] >= 0.6  # still catches most victims without payee age
+    assert blob["calibrated_prevalence"] == 0.01

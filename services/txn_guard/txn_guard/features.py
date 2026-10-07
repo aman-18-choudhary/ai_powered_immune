@@ -24,9 +24,13 @@ Z_CLIP = 10.0
 RATIO_CLIP = 10.0  # |ln(amount / typical)| clip
 AGE_CAP_DAYS = 3650.0
 YOUNG_PAYEE_DAYS = 30
+RECENTLY_NEW_PAYEE = timedelta(hours=24)
+REPEAT_LARGE_WINDOW = timedelta(hours=1)
+REPEAT_LARGE_INR = 10_000.0
 RAIL_CODE = {"UPI": 0.0, "IMPS": 1.0, "NEFT": 2.0}
 
 FEATURE_NAMES: tuple[str, ...] = (
+    "amount_log",
     "amount_zscore",
     "amount_vs_typical_log",
     "history_len",
@@ -44,7 +48,16 @@ FEATURE_NAMES: tuple[str, ...] = (
     "device_novel",
     "payee_in_antibody",
     "future_dated",
+    "payee_recently_new",
+    "payee_repeat_large_1h",
 )
+# Used by the policy overlays / reason text only, never by the booster: ``rail`` (simulated scams
+# are almost all UPI, so the booster would learn "IMPS/NEFT == benign"), the absolute amount, and
+# the two payee-relationship features that policy rules read.
+POLICY_ONLY_FEATURES = frozenset(
+    {"rail", "amount_log", "payee_recently_new", "payee_repeat_large_1h"}
+)
+MODEL_FEATURES: tuple[str, ...] = tuple(n for n in FEATURE_NAMES if n not in POLICY_ONLY_FEATURES)
 
 
 def _finite(x: float, default: float = 0.0, lo: float = -1e9, hi: float = 1e9) -> float:
@@ -79,8 +92,16 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
         if timedelta(0) <= ts - rts <= CALL_RISK_WINDOW:
             risk = max(risk, _finite(score, 0.0, 0.0, 1.0))
 
+    first = ctx.payee_first_seen_ts
+    recently_new = first is not None and timedelta(0) <= ts - first < RECENTLY_NEW_PAYEE
+    repeat_large = any(
+        timedelta(0) <= ts - rts < REPEAT_LARGE_WINDOW and _finite(ramt) >= REPEAT_LARGE_INR
+        for rts, ramt in ctx.payee_recent
+    )
+
     hour = ts.astimezone(IST).hour
     feats = {
+        "amount_log": la,
         "amount_zscore": z,
         "amount_vs_typical_log": vs_typical,
         "history_len": math.log1p(n),
@@ -98,5 +119,7 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
         "device_novel": 1.0 if (n > 0 and not ctx.device_seen) else 0.0,
         "payee_in_antibody": 0.0,  # Task 11 fills this from the antibody cache
         "future_dated": 1.0 if ts - ctx.now > FUTURE_TOLERANCE else 0.0,
+        "payee_recently_new": 1.0 if recently_new else 0.0,
+        "payee_repeat_large_1h": 1.0 if repeat_large else 0.0,
     }
     return {k: _finite(feats[k]) for k in FEATURE_NAMES}

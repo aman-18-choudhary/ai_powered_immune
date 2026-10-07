@@ -23,8 +23,9 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score
 
 from .decision import HOLD_AT, STEP_UP_AT
-from .features import FEATURE_NAMES
-from .model import ARTIFACT_PATH, MODEL_VERSION, GbmModel, guard_floor
+from .features import MODEL_FEATURES
+from .model import ARTIFACT_PATH, CALIBRATED_PREVALENCE, MODEL_VERSION, GbmModel
+from .policy import overlays
 from .simdata import LabelledTxn, build_stream, to_matrix
 
 TRAIN_SEEDS = (101, 102, 103, 104, 105, 106)
@@ -43,11 +44,11 @@ MONOTONE_DOWN = {"payee_age_days"}
 PAYEE_AGE_FEATURES = ("payee_age_days", "payee_age_young")
 
 
-def monotone_cst(names: tuple[str, ...] = FEATURE_NAMES) -> list[int]:
+def monotone_cst(names: tuple[str, ...] = MODEL_FEATURES) -> list[int]:
     return [1 if n in MONOTONE_UP else -1 if n in MONOTONE_DOWN else 0 for n in names]
 
 
-def make_booster(names: tuple[str, ...] = FEATURE_NAMES) -> HistGradientBoostingClassifier:
+def make_booster(names: tuple[str, ...] = MODEL_FEATURES) -> HistGradientBoostingClassifier:
     return HistGradientBoostingClassifier(
         max_iter=250, learning_rate=0.06, max_leaf_nodes=15, min_samples_leaf=30,
         l2_regularization=1.0, monotonic_cst=monotone_cst(names), early_stopping=False,
@@ -80,22 +81,48 @@ def metrics_at(score: np.ndarray, rows: list[LabelledTxn], thr: float) -> dict[s
     }
 
 
-def guarded(model: GbmModel, x: np.ndarray) -> np.ndarray:
-    """Calibrated model score with the Scorer's call-risk guardrail applied (no future-dated
-    rows exist in simulator streams)."""
-    floors = np.array([guard_floor(dict(zip(FEATURE_NAMES, row, strict=True))) for row in x])
+def policy_scores(model: GbmModel, rows: list[LabelledTxn]) -> np.ndarray:
+    """Calibrated model score with the policy-overlay floors applied (what ``Scorer`` returns
+    when it runs the model path; asserted equal to it on a subset in tests)."""
+    x, _ = to_matrix(rows, MODEL_FEATURES)
+    floors = np.array([max([o.floor for o in overlays(r.features)], default=0.0) for r in rows])
     return np.maximum(model.proba(x), floors)
 
 
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    if n == 0:
+        return 0.0, 1.0
+    p = k / n
+    d = 1 + z * z / n
+    c = p + z * z / (2 * n)
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return (c - h) / d, (c + h) / d
+
+
 def evaluate(model: GbmModel, rows: list[LabelledTxn]) -> dict:
-    x, y = to_matrix(rows, FEATURE_NAMES)
-    p = guarded(model, x)
+    y = np.array([r.label for r in rows])
+    p = policy_scores(model, rows)
+    raw = model.proba(to_matrix(rows, MODEL_FEATURES)[0])
     benign = y == 0
+    held = int(((p >= HOLD_AT) & benign).sum())
+    lo, hi = wilson(held, int(benign.sum()))
+    per_rail = {}
+    for rail in ("UPI", "IMPS", "NEFT"):
+        m = np.array([r.txn.rail == rail and r.label == 1 for r in rows])
+        per_rail[rail] = {
+            "n_scam": int(m.sum()),
+            "recall": float((p[m] >= HOLD_AT).mean()) if m.any() else None,
+        }
+    rel, ece_after = reliability(p, y)
     out = {
         "n": len(rows), "n_benign": int(benign.sum()), "n_scam": int((y == 1).sum()),
         "n_victim_transfers": sum(r.role == "victim_transfer" for r in rows),
         "average_precision": float(average_precision_score(y, p)),
         "hold": metrics_at(p, rows, HOLD_AT),
+        "held_benign_wilson95": (lo, hi),
+        "per_rail_recall": per_rail,
+        "ece_after_overlays": ece_after,
+        "model_only_hold": metrics_at(raw, rows, HOLD_AT),
         "step_up_benign_rate": float(((p >= STEP_UP_AT) & (p < HOLD_AT) & benign).sum() / benign.sum()),
         "step_or_hold_benign_rate": float(((p >= STEP_UP_AT) & benign).sum() / benign.sum()),
         "curve": [metrics_at(p, rows, t) for t in (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95)],
@@ -116,7 +143,7 @@ def reliability(p: np.ndarray, y: np.ndarray, bins: int = 10) -> tuple[list[dict
     return rows, float(ece)
 
 
-def fit(train_rows, calib_rows, names=FEATURE_NAMES) -> GbmModel:
+def fit(train_rows, calib_rows, names=MODEL_FEATURES) -> GbmModel:
     xt, yt = to_matrix(train_rows, names)
     booster = make_booster(names).fit(xt, yt)
     xc, yc = to_matrix(calib_rows, names)
@@ -129,16 +156,16 @@ def fit(train_rows, calib_rows, names=FEATURE_NAMES) -> GbmModel:
 def train(out: Path = ARTIFACT_PATH) -> Path:
     tr, ca, ev = gather(TRAIN_SEEDS), gather(CALIB_SEEDS), gather(EVAL_SEEDS)
     model = fit(tr, ca)
-    xc, yc = to_matrix(ca, FEATURE_NAMES)
+    xc, yc = to_matrix(ca, MODEL_FEATURES)
     imp = permutation_importance(
         model.model, xc, yc, scoring="average_precision", n_repeats=5, random_state=0
     )
     importance = sorted(
-        ((n, float(m)) for n, m in zip(FEATURE_NAMES, imp.importances_mean, strict=True)),
+        ((n, float(m)) for n, m in zip(MODEL_FEATURES, imp.importances_mean, strict=True)),
         key=lambda t: -t[1],
     )
     report = evaluate(model, ev)
-    xe, ye = to_matrix(ev, FEATURE_NAMES)
+    xe, ye = to_matrix(ev, MODEL_FEATURES)
     table, ece = reliability(model.proba(xe), ye)
     # ablations on the eval seeds: is payee age the only separator?
     ablation = {}
@@ -146,7 +173,7 @@ def train(out: Path = ARTIFACT_PATH) -> Path:
         ("no_payee_age", PAYEE_AGE_FEATURES),
         ("no_call_risk", ("active_call_risk",)),
     ):
-        keep = tuple(n for n in FEATURE_NAMES if n not in drop)
+        keep = tuple(n for n in MODEL_FEATURES if n not in drop)
         m2 = fit(tr, ca, keep)
         xe2, _ = to_matrix(ev, keep)
         pe = np.clip(m2.calibrator.predict(m2.model.predict_proba(xe2)[:, 1]), 0, 1)
@@ -158,7 +185,7 @@ def train(out: Path = ARTIFACT_PATH) -> Path:
     joblib.dump(
         {
             "model_version": MODEL_VERSION, "sklearn_version": sklearn.__version__,
-            "feature_names": FEATURE_NAMES, "model": model.model, "calibrator": model.calibrator,
+            "feature_names": MODEL_FEATURES, "calibrated_prevalence": CALIBRATED_PREVALENCE, "model": model.model, "calibrator": model.calibrator,
             "importance": importance, "eval": report, "reliability": table, "ece": ece,
             "ablation": ablation,
             "seeds": {"train": TRAIN_SEEDS, "calib": CALIB_SEEDS, "eval": EVAL_SEEDS},

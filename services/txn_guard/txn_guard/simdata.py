@@ -17,11 +17,17 @@ Call risk (what call-guard would have told txn-guard) is attached with imperfect
 * ``SPURIOUS_RATE`` (1.5%) of benign transactions get a spurious risk of 0.70-0.95 raised
   1-10 minutes earlier (benign people on legitimate calls, e.g. bank customer care).
 Mule-forward transactions get no call risk (the mule is not on a victim call).
+
+Mule payers have no payment history by construction in the simulator, which would make "no
+history" a leaked scam proxy. A random ``MULE_HISTORY_SHARE`` (40%) of mule payers therefore get
+5-40 injected prior benign UPI transfers (lognormal amounts, 4 favourite payees, their own device)
+before their first sweep; these rows only build history and are never emitted as examples.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import Decimal
 
 import numpy as np
 from scam_contracts.models import CallRisk, Transaction
@@ -36,6 +42,8 @@ CHUNK_GAP_S = (20.0, 70.0)
 RISK_REEMIT_EVERY = timedelta(minutes=1)
 RISK_REEMIT_FOR = timedelta(minutes=20)
 RISK_MODEL = "sim-call-guard"
+MULE_HISTORY_SHARE = 0.4
+HISTORY_PREFIX = "hist-"
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,36 @@ def _risk(token: str, call_id: str, score: float, ts) -> CallRisk:
         call_id=call_id, victim_token=token, score=round(score, 3), reasons=[],
         model_version=RISK_MODEL, ts=ts,
     )  # fmt: skip
+
+
+def _mule_history(rng: np.random.Generator, camp, world_start) -> list[tuple[object, int, object]]:
+    out: list[tuple[object, int, object]] = []
+    for tok in camp.mule_payer_tokens:
+        if rng.random() >= MULE_HISTORY_SHARE:
+            continue
+        mine = [t for t in camp.txns if t.payer_token == tok]
+        if not mine:
+            continue
+        first = min(t.ts for t in mine)
+        n = int(rng.integers(5, 41))
+        span = (first - timedelta(hours=1) - world_start).total_seconds()
+        for i in range(n):
+            ts = world_start + timedelta(seconds=float(rng.uniform(0, span)))
+            amt = float(np.clip(rng.lognormal(6.0, 1.2), 10, 90_000))
+            out.append(
+                (
+                    ts, 1,
+                    Transaction(
+                        txn_id=f"{HISTORY_PREFIX}{tok}-{i}",
+                        idempotency_key=f"{HISTORY_PREFIX}{tok}-{i}",
+                        bank_id=mine[0].bank_id, payer_token=tok,
+                        payee_hash=f"{HISTORY_PREFIX}payee-{tok}-{int(rng.integers(4))}",
+                        rail="UPI", amount_inr=Decimal(str(round(amt, 2))), ts=ts,
+                        payee_account_age_days=900, device_id_token=mine[0].device_id_token,
+                    ),
+                )
+            )  # fmt: skip
+    return out
 
 
 def build_stream(
@@ -90,6 +128,8 @@ def build_stream(
                 (ts, 0, _risk(t.payer_token, f"spur-{t.txn_id}", rng.uniform(0.7, 0.95), ts))
             )
     for c in campaigns:
+        events += _mule_history(rng, c, world.start)
+    for c in campaigns:
         by_victim: dict[str, list] = {}
         for e in c.calls:
             by_victim.setdefault(e.victim_token, []).append(e)
@@ -116,7 +156,7 @@ def build_stream(
             store.record_call_risk(payload)
             continue
         txn: Transaction = payload  # type: ignore[assignment]
-        if ts >= warm_end:
+        if ts >= warm_end and not txn.txn_id.startswith(HISTORY_PREFIX):
             role = truth.txn_role(txn.txn_id) or "benign"
             feats = extract_features(txn, store.context_for(txn, txn.ts))
             rows.append(LabelledTxn(txn, feats, 0 if role == "benign" else 1, role))

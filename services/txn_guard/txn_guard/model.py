@@ -10,6 +10,16 @@ benign in the training streams, far higher than any real base rate), with an imp
 call-risk signal (see ``simdata.py``). It is NOT a real-world fraud probability and must not be
 read as one; it is a ranking-quality risk score thresholded by ``decision.decide``.
 
+**Policy overlays.** ``policy.py`` floors the score on every rail (young payee + large amount,
+call risk + amount anomaly, future-dated timestamp). When an overlay lifts the score, the returned
+score is a *policy-lifted value, not a calibrated probability*; the verdict then carries an extra
+reason with the overlay's own code (``policy.OVERLAY_CODES``; see ``overlay_applied``) and the
+model-derived reason weights are left untouched.
+
+**Prior shift.** The calibration holds at the simulator's scam prevalence
+(``CALIBRATED_PREVALENCE``, about 1%); on real traffic with a different base rate the score must
+be recalibrated before it is read as a probability.
+
 Reasons are occlusion attributions: for each fired cue, ``weight`` is how far the score drops
 when that cue's features are reset to neutral values (floored at 0). Details never contain ids.
 
@@ -33,9 +43,11 @@ import numpy as np
 from scam_contracts.models import Reason
 
 from . import artifact_pin
-from .features import FEATURE_NAMES
+from .features import FEATURE_NAMES, MODEL_FEATURES
+from .policy import OVERLAY_CODES, overlays
 from .reasons import BASELINES, NO_RISK, TOP_K, triggers
 from .rules import RULES_VERSION, rules_score
+from .thresholds import STEP_UP_AT
 
 log = logging.getLogger("txn_guard")
 
@@ -43,16 +55,9 @@ MODEL_VERSION = "gbm-v1"
 ARTIFACT_PATH = Path(__file__).parent / "artifacts" / "gbm-v1.joblib"
 SMOKE_SCAM_MIN = 0.5
 SMOKE_BENIGN_MAX = 0.2
-FUTURE_FLOOR = 0.5  # a future-dated timestamp is suspicious: at least step_up
-# Policy guardrail: an active scam-call risk together with a *strong* amount anomaly toward a
-# payee this payer has not paid before is floored at hold_verify. The simulator's scam payees are
-# always young accounts, so the booster never sees "old payee + huge amount + call risk" and
-# would allow it; the floor closes that blind spot. Young-payee cases are left to the model
-# (benign people on legit calls pay young merchants often; flooring them would breach the
-# benign hold budget). The floor is applied after calibration and is not part of the calibration.
-GUARD_CALL_RISK = 0.7
-GUARD_AMOUNT_Z = 3.0
-GUARD_FLOOR = 0.85
+CALIBRATED_PREVALENCE = 0.01  # scam-transaction share of the simulator streams used to calibrate
+MIN_REASON_WEIGHT = 0.01  # on allow verdicts, reasons lighter than this are dropped
+SMOKE_RAIL_SPREAD_MAX = 0.05  # a rail blind spot (same txn, different rail) fails the load
 
 _BASE: dict[str, float] = dict.fromkeys(FEATURE_NAMES, 0.0) | {
     "payee_age_days": 900.0, "history_len": 3.5, "rail": 0.0,
@@ -78,18 +83,8 @@ class GbmModel:
         return np.clip(np.asarray(cal, dtype=float), 0.0, 1.0)
 
 
-def guard_floor(f: dict[str, float]) -> float:
-    """0.0, or GUARD_FLOOR when the call-risk + strong-amount-anomaly + new-payee guard fires."""
-    hit = (
-        f["active_call_risk"] >= GUARD_CALL_RISK
-        and f["amount_zscore"] >= GUARD_AMOUNT_Z
-        and f["new_payee"] >= 1.0
-    )
-    return GUARD_FLOOR if hit else 0.0
-
-
 def _vector(f: dict[str, float]) -> list[float]:
-    return [_clean(f.get(k, 0.0)) for k in FEATURE_NAMES]
+    return [_clean(f.get(k, 0.0)) for k in MODEL_FEATURES]
 
 
 def _clean(x: float) -> float:
@@ -116,12 +111,17 @@ def load_model(path: Path | None = None, expected_sha256: str | None = None) -> 
         if blob.get("sklearn_version") != sklearn.__version__:
             log.warning("txn model artifact sklearn version mismatch; using %s", RULES_VERSION)
             return None
-        if tuple(blob.get("feature_names", ())) != FEATURE_NAMES:
+        if tuple(blob.get("feature_names", ())) != MODEL_FEATURES:
             log.warning("txn model artifact feature mismatch; using %s", RULES_VERSION)
             return None
         m = GbmModel(blob["model"], blob.get("calibrator"), str(blob["model_version"]))
-        p = m.proba(np.array([_vector(SMOKE_SCAM), _vector(SMOKE_BENIGN)]))
-        if not (p[0] >= SMOKE_SCAM_MIN and p[1] <= SMOKE_BENIGN_MAX):
+        rails = [_vector(SMOKE_SCAM | {"rail": r}) for r in (0.0, 1.0, 2.0)]
+        p = m.proba(np.array([*rails, _vector(SMOKE_BENIGN)]))
+        if not (
+            p[:3].min() >= SMOKE_SCAM_MIN
+            and p[:3].max() - p[:3].min() <= SMOKE_RAIL_SPREAD_MAX
+            and p[3] <= SMOKE_BENIGN_MAX
+        ):
             log.warning("txn model artifact failed smoke test; using %s", RULES_VERSION)
             return None
         return m
@@ -168,18 +168,20 @@ class Scorer:
         if out is None:
             out = rules_score(f)
         score, reasons = out
-        if f["future_dated"] >= 1.0:
-            score = max(score, FUTURE_FLOOR)
-        floor = guard_floor(f)
-        if floor > score:
-            lift = (floor - score) / 2
-            score = floor
+        lifted = [o for o in overlays(f) if o.floor > score]
+        if lifted:
+            new_score = max(o.floor for o in lifted)
             reasons = [
-                r.model_copy(update={"weight": round(max(r.weight, lift), 4)})
-                if r.code in ("ACTIVE_SCAM_CALL", "AMOUNT_ANOMALY") else r
-                for r in reasons
+                *reasons,
+                *(Reason(code=o.code, weight=round(o.floor - score, 4), detail=o.detail) for o in lifted),
             ]  # fmt: skip
-        return min(1.0, max(0.0, _clean(score))), reasons, version
+            reasons = [r for r in reasons if r.code != NO_RISK]
+            score = new_score
+        score = min(1.0, max(0.0, _clean(score)))
+        if score < STEP_UP_AT:
+            kept = [r for r in reasons if r.weight >= MIN_REASON_WEIGHT]
+            reasons = kept or [Reason(code=NO_RISK, weight=0.0, detail="No risk indicators fired")]
+        return score, reasons, version
 
     def _model_score(self, f: dict[str, float]) -> tuple[float, list[Reason]]:
         assert self._model is not None
@@ -198,3 +200,8 @@ class Scorer:
         return float(p[0]), reasons or [
             Reason(code=NO_RISK, weight=0.0, detail="No risk indicators fired")
         ]
+
+
+def overlay_applied(reasons: list[Reason]) -> bool:
+    """True when a policy overlay lifted the score (the score is then not a calibrated value)."""
+    return any(r.code in OVERLAY_CODES for r in reasons)

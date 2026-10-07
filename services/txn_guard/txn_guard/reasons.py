@@ -36,8 +36,6 @@ class Trigger:
 
 def triggers(f: dict[str, float]) -> list[Trigger]:
     out: list[Trigger] = []
-    if f["future_dated"] >= 1.0:
-        out.append(Trigger("FUTURE_DATED_TIMESTAMP", 0.5, "Transaction timestamp is in the future"))
     if f["payee_in_antibody"] >= 1.0:
         out.append(Trigger("PAYEE_IN_ANTIBODY", 0.9, "Payee matches a confirmed mule antibody"))
     if f["active_call_risk"] >= CALL_RISK_THRESHOLD:

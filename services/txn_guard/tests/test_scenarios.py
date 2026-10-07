@@ -1,0 +1,163 @@
+"""Regression scenarios from review: rail blind spot, call-risk + amount anomaly, overlays.
+All use the committed artifact. Payer: 60 prior txns, typical about Rs 500, to a known payee."""
+
+from datetime import timedelta
+
+import pytest
+from scam_contracts.models import CallRisk
+
+from txn_guard import model as model_mod
+from txn_guard.decision import decide
+from txn_guard.features import extract_features
+from txn_guard.history import InMemoryHistoryStore
+from txn_guard.model import Scorer, overlay_applied
+
+from .conftest import T0
+
+
+@pytest.fixture(scope="module")
+def scorer():
+    s = Scorer()
+    assert not s.fallback_mode
+    return s
+
+
+@pytest.fixture
+def store(make_txn):
+    st = InMemoryHistoryStore()
+    for i in range(60):
+        st.record_txn(
+            make_txn(
+                amount=str(380 + (i * 29) % 240),
+                ts=T0 - timedelta(days=20) + timedelta(hours=i * 7),
+            )
+        )
+    return st
+
+
+def _decide(scorer, store, txn, now=T0):
+    score, reasons = scorer.score(extract_features(txn, store.context_for(txn, now)))
+    return decide(score), score, reasons
+
+
+def _call(store, score=0.9, ts=T0 - timedelta(minutes=2)):
+    store.record_call_risk(
+        CallRisk(
+            call_id="c", victim_token="payer_1", score=score, reasons=[], model_version="x", ts=ts
+        )
+    )
+
+
+CASES = [("UPI", "40000"), ("UPI", "99999"), ("IMPS", "40000"), ("IMPS", "99999"),
+         ("IMPS", "200000"), ("IMPS", "500000"), ("NEFT", "40000"), ("NEFT", "99999"),
+         ("NEFT", "200000")]  # fmt: skip
+
+
+@pytest.mark.parametrize(("rail", "amount"), CASES)
+def test_young_payee_large_amount_held_on_every_rail_without_call_risk(
+    rail, amount, scorer, store, make_txn
+):
+    t = make_txn(amount=amount, age=3, payee="p_mule", rail=rail)
+    d, score, _ = _decide(scorer, store, t)
+    assert d == "hold_verify", (rail, amount, score)
+
+
+def test_same_txn_same_decision_across_rails(scorer, store, make_txn):
+    out = {
+        r: _decide(scorer, store, make_txn(amount="45000", age=4, payee="p_mule", rail=r))[0]
+        for r in ("UPI", "IMPS", "NEFT")
+    }
+    assert set(out.values()) == {"hold_verify"}
+
+
+def test_young_payee_floor_has_own_reason_and_model_weights_untouched(scorer, store, make_txn):
+    t = make_txn(amount="6000", age=20, payee="p_young", rail="NEFT")  # z>=3, young, new
+    f = extract_features(t, store.context_for(t, T0))
+    score, reasons = scorer.score(f)
+    assert score >= 0.5
+    model_score = scorer._model.proba(
+        __import__("numpy").array([[f[n] for n in model_mod.MODEL_FEATURES]])
+    )[0]
+    if model_score < 0.5:  # overlay lifted it: own reason, flagged, weights = lift only
+        codes = {r.code for r in reasons}
+        assert "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR" in codes and overlay_applied(reasons)
+        floor = next(r for r in reasons if r.code == "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR")
+        assert abs(floor.weight - (score - model_score)) < 1e-3
+        assert all(r.weight <= model_score + 1e-4 for r in reasons if r is not floor)
+
+
+@pytest.mark.parametrize(
+    ("rail", "amount", "age", "payee"),
+    [
+        ("NEFT", "18000", 3000, "payee_known"),  # EMI
+        ("IMPS", "25000", 2500, "payee_known"),  # rent
+        ("NEFT", "150000", 2000, "payee_known"),  # salary-type to old known payee
+        ("NEFT", "150000", 2000, "p_salary_new"),  # salary-type, first time, 2000-day payee
+        ("IMPS", "20000", 1460, "p_shop_new"),  # laptop to a 4-year-old new payee
+    ],
+)
+def test_benign_imps_neft_not_held(rail, amount, age, payee, scorer, store, make_txn):
+    d, score, _ = _decide(scorer, store, make_txn(amount=amount, age=age, payee=payee, rail=rail))
+    assert d in ("allow", "step_up"), (rail, amount, score)
+
+
+def test_call_risk_with_amount_anomaly_known_payee_at_least_step_up(scorer, store, make_txn):
+    _call(store)
+    d, score, reasons = _decide(scorer, store, make_txn(amount="40000"))  # known payee, z large
+    assert d in ("step_up", "hold_verify") and score >= 0.5
+    assert "CALL_RISK_AMOUNT_GUARD" in {r.code for r in reasons}
+    assert d == "step_up"  # known, old, not recently new: step_up, not hold
+
+
+def test_five_split_sequence_all_held(scorer, store, make_txn):
+    _call(store)
+    decisions = []
+    for i in range(5):
+        ts = T0 + timedelta(minutes=i)
+        t = make_txn(amount="99999", age=1200, payee="p_old_new_to_payer", ts=ts)
+        score, _ = scorer.score(extract_features(t, store.context_for(t, ts)))
+        decisions.append(decide(score))
+        store.record_txn(t)  # recorded as known after the first
+        _call(store, ts=ts)
+    assert decisions == ["hold_verify"] * 5
+
+
+def test_repeat_large_to_known_payee_within_hour_held(scorer, store, make_txn):
+    _call(store)
+    first = make_txn(amount="40000")  # known payee: step_up
+    assert _decide(scorer, store, first)[0] == "step_up"
+    store.record_txn(first)
+    _call(store, ts=T0 + timedelta(minutes=1))
+    again = make_txn(amount="40000", ts=T0 + timedelta(minutes=2))
+    d = decide(scorer.score(extract_features(again, store.context_for(again, again.ts)))[0])
+    assert d == "hold_verify"
+
+
+def test_call_risk_alone_ordinary_amount_known_payee_at_most_step_up(scorer, store, make_txn):
+    _call(store, 0.95)
+    assert _decide(scorer, store, make_txn(amount="500"))[0] in ("allow", "step_up")
+
+
+def test_guard_ignores_small_absolute_amounts(scorer, store, make_txn):
+    _call(store, 0.95)
+    d, _, reasons = _decide(scorer, store, make_txn(amount="1500"))  # 3x typical, but small
+    assert d in ("allow", "step_up")
+    assert "CALL_RISK_AMOUNT_GUARD" not in {r.code for r in reasons}
+
+
+def test_overlay_reason_detail_has_no_raw_ids(scorer, store, make_txn):
+    _call(store)
+    t = make_txn(amount="45000", age=3, payee="p_secret_payee", device="dev_secret")
+    _, _, reasons = _decide(scorer, store, t)
+    text = " ".join(r.detail for r in reasons)
+    assert "p_secret_payee" not in text and "dev_secret" not in text and "payer_1" not in text
+
+
+def test_rail_blind_spot_fails_the_load(monkeypatch):
+    monkeypatch.setattr(model_mod, "SMOKE_RAIL_SPREAD_MAX", -1.0)
+    assert Scorer().fallback_mode
+
+
+def test_allow_verdict_drops_negligible_reasons(scorer, store, make_txn):
+    d, _, reasons = _decide(scorer, store, make_txn(amount="500"))
+    assert d == "allow" and all(r.weight >= 0.01 or r.code == "NO_RISK_INDICATORS" for r in reasons)
