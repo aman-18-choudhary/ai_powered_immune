@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 UPI_LIMIT_INR = Decimal("100000")
 IMPS_LIMIT_INR = Decimal("500000")
@@ -64,7 +64,7 @@ class CallEvent(_Frozen):
 class CallRisk(_Frozen):
     call_id: str
     victim_token: str
-    score: float
+    score: Annotated[float, Field(ge=0, le=1)]
     reasons: list[Reason]
     model_version: str
     ts: AwareDatetime
@@ -73,7 +73,7 @@ class CallRisk(_Frozen):
 class TxnDecision(_Frozen):
     txn_id: str
     decision: Literal["allow", "step_up", "hold_verify"]
-    score: float
+    score: Annotated[float, Field(ge=0, le=1)]
     reasons: list[Reason]
     model_version: str
     ts: AwareDatetime

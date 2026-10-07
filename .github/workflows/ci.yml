@@ -17,6 +17,6 @@ jobs:
           for f in $(find . -name pyproject.toml -not -path "./.venv/*" -not -path "*/node_modules/*"); do
             d=$(dirname "$f")
             echo "== $d"
-            pip install -e "$d[dev]" || pip install -e "$d"
+            pip install -e "$d[dev]"
             (cd "$d" && ruff check . && python -m pytest -q)
           done

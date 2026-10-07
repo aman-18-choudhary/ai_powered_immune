@@ -1,6 +1,6 @@
 .PHONY: up down test lint
 
-PKGS := $(patsubst %/pyproject.toml,%,$(wildcard */pyproject.toml services/*/pyproject.toml))
+PKGS := $(patsubst %/pyproject.toml,%,$(shell find . -name pyproject.toml -not -path "./.venv/*" -not -path "*/node_modules/*"))
 
 up:
 	docker compose -f infra/docker-compose.yml up -d
