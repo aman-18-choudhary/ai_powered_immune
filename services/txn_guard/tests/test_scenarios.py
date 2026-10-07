@@ -161,3 +161,86 @@ def test_rail_blind_spot_fails_the_load(monkeypatch):
 def test_allow_verdict_drops_negligible_reasons(scorer, store, make_txn):
     d, _, reasons = _decide(scorer, store, make_txn(amount="500"))
     assert d == "allow" and all(r.weight >= 0.01 or r.code == "NO_RISK_INDICATORS" for r in reasons)
+
+
+# ---- fix round 2: test-then-escalate bypass, established payees, extreme amounts ----
+def _typical_store(make_txn, amount: str):
+    st = InMemoryHistoryStore()
+    for i in range(60):
+        st.record_txn(make_txn(amount=amount, ts=T0 - timedelta(days=20) + timedelta(hours=i * 7)))
+    return st
+
+
+@pytest.mark.parametrize(
+    "delay",
+    [timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2), timedelta(days=1),
+     timedelta(days=3)],
+)  # fmt: skip
+@pytest.mark.parametrize(("age", "expected"), [(3, "hold_verify"), (10, "hold_verify"), (25, None)])
+def test_test_then_escalate_is_not_a_bypass(delay, age, expected, scorer, store, make_txn):
+    store.record_txn(make_txn(amount="1000", age=age, payee="p_young", ts=T0 - delay))
+    t = make_txn(amount="90000", age=age, payee="p_young")
+    d, score, reasons = _decide(scorer, store, t)
+    if expected:
+        assert d == expected, (delay, age, score)
+    else:
+        assert d in ("step_up", "hold_verify"), (delay, age, score)
+    assert overlay_applied(reasons) or score >= 0.5
+
+
+def _pay(store, make_txn, n, first_days_ago, max_amt="20000", age=10):
+    for i in range(n):
+        d = first_days_ago * (1 - i / max(1, n - 1)) if n > 1 else first_days_ago
+        amt = max_amt if i == 0 else str(min(5000, int(max_amt)))
+        store.record_txn(
+            make_txn(
+                amount=amt, age=age, payee="p_contractor", ts=T0 - timedelta(days=d, minutes=1)
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("n", "days", "est"), [(2, 8, 0.0), (3, 8, 1.0), (3, 6, 0.0), (4, 7.5, 1.0)]
+)
+def test_established_payee_boundaries(n, days, est, store, make_txn):
+    _pay(store, make_txn, n, days)
+    t = make_txn(amount="30000", age=10, payee="p_contractor")
+    assert extract_features(t, store.context_for(t, T0))["payee_established"] == est
+
+
+@pytest.mark.parametrize("amount", ["30000", "40000"])
+def test_established_young_payee_contractor_not_held(amount, scorer, store, make_txn):
+    _pay(store, make_txn, 4, 12, max_amt="20000")
+    d, score, reasons = _decide(
+        scorer, store, make_txn(amount=amount, age=10, payee="p_contractor")
+    )
+    assert d in ("allow", "step_up"), (amount, score)
+    assert "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR" not in {r.code for r in reasons}
+
+
+def test_escalation_to_young_payee_beyond_10x_prior_max(scorer, store, make_txn):
+    _pay(store, make_txn, 4, 12, max_amt="2000")
+    d, _, reasons = _decide(scorer, store, make_txn(amount="30000", age=10, payee="p_contractor"))
+    assert d in ("step_up", "hold_verify")
+    assert "PAYEE_AMOUNT_ESCALATION" in {r.code for r in reasons}
+    # established payee: escalation is step_up only (hold needs a not-established payee)
+    d2, _, _ = _decide(scorer, store, make_txn(amount="60000", age=10, payee="p_contractor"))
+    assert d2 in ("step_up", "hold_verify")
+
+
+@pytest.mark.parametrize(("rail", "amount"), [("UPI", "95000"), ("NEFT", "300000")])
+def test_extreme_amount_to_new_old_payee_is_step_up(rail, amount, scorer, store, make_txn):
+    d, score, reasons = _decide(
+        scorer, store, make_txn(amount=amount, age=40, payee="p_new40", rail=rail)
+    )
+    assert d == "step_up", (rail, score)
+    assert "NEW_PAYEE_EXTREME_AMOUNT" in {r.code for r in reasons}
+
+
+def test_salary_and_business_payments_still_allowed(scorer, make_txn):
+    d, _, _ = _decide(scorer, _typical_store(make_txn, "40000"),
+                      make_txn(amount="150000", age=2000, payee="p_salary", rail="NEFT"))  # fmt: skip
+    assert d == "allow"
+    d, _, _ = _decide(scorer, _typical_store(make_txn, "50000"),
+                      make_txn(amount="90000", age=900, payee="p_vendor", rail="NEFT"))  # fmt: skip
+    assert d == "allow"

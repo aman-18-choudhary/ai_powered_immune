@@ -27,9 +27,10 @@ class Context:
     the payer's ``payer_n`` previous transactions. ``recent`` holds ``(ts, amount_inr)`` of the
     payer's previous transactions in the last 24 h. ``call_risks`` holds ``(ts, score)`` of the
     payer's recent CallRisk events. ``payee_recent`` holds ``(ts, amount_inr)`` of this payer's
-    previous transfers to *this payee* in the last 24 h. ``payee_first_seen_ts`` is None when this
-    payer has never paid
-    this payee. ``now`` is the evaluation clock (used only to flag future-dated timestamps).
+    previous transfers to *this payee* in the last 24 h. ``payee_n`` / ``payee_max_amount`` are
+    this payer's lifetime count of, and largest amount sent to, this payee.
+    ``payee_first_seen_ts`` is None when this payer has never paid this payee.
+    ``now`` is the evaluation clock (used only to flag future-dated timestamps).
     """
 
     now: datetime
@@ -39,6 +40,8 @@ class Context:
     recent: tuple[tuple[datetime, float], ...] = ()
     payee_first_seen_ts: datetime | None = None
     device_seen: bool = False
+    payee_n: int = 0
+    payee_max_amount: float = 0.0
     payee_recent: tuple[tuple[datetime, float], ...] = ()
     call_risks: tuple[tuple[datetime, float], ...] = ()
 
@@ -73,6 +76,7 @@ class InMemoryHistoryStore:
         self._stats: dict[str, _Welford] = {}
         self._recent: dict[str, deque[tuple[datetime, float]]] = {}
         self._payees: dict[str, dict[str, datetime]] = {}
+        self._pair_stats: dict[tuple[str, str], tuple[int, float]] = {}
         self._pair: dict[tuple[str, str], deque[tuple[datetime, float]]] = {}
         self._devices: dict[str, set[str]] = {}
         self._risks: dict[str, deque[tuple[datetime, float]]] = {}
@@ -85,6 +89,8 @@ class InMemoryHistoryStore:
         newest = max(ts for ts, _ in q)
         while q and q[0][0] < newest - VELOCITY_WINDOW:
             q.popleft()
+        n0, m0 = self._pair_stats.get((p, txn.payee_hash), (0, 0.0))
+        self._pair_stats[(p, txn.payee_hash)] = (n0 + 1, max(m0, amt))
         pq = self._pair.setdefault((p, txn.payee_hash), deque())
         pq.append((txn.ts, amt))
         while pq and pq[0][0] < max(ts for ts, _ in pq) - VELOCITY_WINDOW:
@@ -110,6 +116,8 @@ class InMemoryHistoryStore:
             recent=tuple(self._recent.get(p, ())),
             payee_first_seen_ts=self._payees.get(p, {}).get(txn.payee_hash),
             device_seen=txn.device_id_token in self._devices.get(p, ()),
+            payee_n=self._pair_stats.get((p, txn.payee_hash), (0, 0.0))[0],
+            payee_max_amount=self._pair_stats.get((p, txn.payee_hash), (0, 0.0))[1],
             payee_recent=tuple(self._pair.get((p, txn.payee_hash), ())),
             call_risks=tuple(self._risks.get(p, ())),
         )

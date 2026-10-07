@@ -39,11 +39,17 @@ reason with the overlay's own code (`YOUNG_PAYEE_LARGE_AMOUNT_FLOOR`, `CALL_RISK
 `FUTURE_DATED_TIMESTAMP`; `model.overlay_applied(reasons)` tells consumers and the audit ledger)
 and the model-derived reason weights are untouched (overlay weight = lift over the model score).
 
-* young payee (< 30 d) + first payment + large amount (z >= 3 and >= Rs 5,000; or >= Rs 25,000 for
+* young payee (< 30 d) + payee not *established* (established = >= 3 prior payments AND first
+  paid >= 7 days ago, so a small "test" payment does not disable the rule) + large amount (z >= 3 and >= Rs 5,000; or >= Rs 25,000 for
   a payer with < 3 prior transfers): at least step_up; hold_verify if >= Rs 50,000 or payee < 7 d.
 * active call risk >= 0.7 + amount anomaly (z >= 3 and >= Rs 10,000, or short-history >= Rs
   25,000): at least step_up for any payee; hold_verify if the payee is new/young, was first paid
   < 24 h ago, or already received >= Rs 10,000 from this payer in the last 60 min.
+* `PAYEE_AMOUNT_ESCALATION`: payee < 30 d old + amount >= 10x the largest amount this payer ever
+  sent it + >= Rs 25,000: at least step_up; hold_verify from Rs 50,000 when also z >= 3 and not
+  established.
+* `NEW_PAYEE_EXTREME_AMOUNT`: payee not established + z >= 10 + >= Rs 50,000, any payee age:
+  step_up only.
 * timestamp > 5 min in the future: at least step_up.
 
 ### Reliability (raw model, 4 held-out eval seeds, 144,993 benign + 1,032 scam txns)

@@ -27,6 +27,8 @@ YOUNG_PAYEE_DAYS = 30
 RECENTLY_NEW_PAYEE = timedelta(hours=24)
 REPEAT_LARGE_WINDOW = timedelta(hours=1)
 REPEAT_LARGE_INR = 10_000.0
+ESTABLISHED_MIN_PAYMENTS = 3
+ESTABLISHED_MIN_AGE = timedelta(days=7)
 RAIL_CODE = {"UPI": 0.0, "IMPS": 1.0, "NEFT": 2.0}
 
 FEATURE_NAMES: tuple[str, ...] = (
@@ -50,12 +52,21 @@ FEATURE_NAMES: tuple[str, ...] = (
     "future_dated",
     "payee_recently_new",
     "payee_repeat_large_1h",
+    "payee_established",
+    "payee_max_prior_log",
 )
 # Used by the policy overlays / reason text only, never by the booster: ``rail`` (simulated scams
 # are almost all UPI, so the booster would learn "IMPS/NEFT == benign"), the absolute amount, and
 # the two payee-relationship features that policy rules read.
 POLICY_ONLY_FEATURES = frozenset(
-    {"rail", "amount_log", "payee_recently_new", "payee_repeat_large_1h"}
+    {
+        "rail",
+        "amount_log",
+        "payee_recently_new",
+        "payee_repeat_large_1h",
+        "payee_established",
+        "payee_max_prior_log",
+    }
 )
 MODEL_FEATURES: tuple[str, ...] = tuple(n for n in FEATURE_NAMES if n not in POLICY_ONLY_FEATURES)
 
@@ -99,6 +110,13 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
         for rts, ramt in ctx.payee_recent
     )
 
+    established = (
+        first is not None
+        and max(0, ctx.payee_n) >= ESTABLISHED_MIN_PAYMENTS
+        and ts - first >= ESTABLISHED_MIN_AGE
+    )
+    max_prior = _finite(ctx.payee_max_amount, 0.0, 0.0)
+
     hour = ts.astimezone(IST).hour
     feats = {
         "amount_log": la,
@@ -121,5 +139,7 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
         "future_dated": 1.0 if ts - ctx.now > FUTURE_TOLERANCE else 0.0,
         "payee_recently_new": 1.0 if recently_new else 0.0,
         "payee_repeat_large_1h": 1.0 if repeat_large else 0.0,
+        "payee_established": 1.0 if established else 0.0,
+        "payee_max_prior_log": math.log(max_prior) if max_prior > 0 else 0.0,
     }
     return {k: _finite(feats[k]) for k in FEATURE_NAMES}
