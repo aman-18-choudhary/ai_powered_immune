@@ -119,6 +119,7 @@ async def consume(
     store: IdempotencyStore,
     max_retries: int = 3,
     backoff_s: float = 0.0,
+    claim_ttl_s: float = 300,
 ) -> None:
     """Consume `topic`, calling `handler` once per distinct event.
 
@@ -136,25 +137,30 @@ async def consume(
             msg = None
         base = getattr(msg, "idempotency_key", None) or message_key(raw)
         key = f"{topic}:{group}:{base}"
-        if await store.seen(key) or not await store.claim(key):
+        if await store.seen(key) or not await store.claim(key, claim_ttl_s):
             continue
         done = False
-        for attempt in range(1, max_retries + 1):
-            try:
-                if msg is None:
-                    raise ValueError("unparseable message")
-                await handler(msg)
-            except Exception:
-                log.warning(
-                    "handler failed on %s (attempt %d/%d)", topic, attempt, max_retries,
-                    exc_info=True,
-                )
-                if attempt < max_retries and backoff_s > 0:
-                    await asyncio.sleep(backoff_s * 2 ** (attempt - 1))
-            else:
-                await store.mark(key)
-                done = True
-                break
-        if not done:
-            await store.release(key)
-            await bus.publish_raw(topic + Topics.DLQ_SUFFIX, key, raw)
+        try:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    if msg is None:
+                        raise ValueError("unparseable message")
+                    await handler(msg)
+                except Exception:
+                    log.warning(
+                        "handler failed on %s (attempt %d/%d)", topic, attempt, max_retries,
+                        exc_info=True,
+                    )
+                    if attempt < max_retries and backoff_s > 0:
+                        await asyncio.sleep(backoff_s * 2 ** (attempt - 1))
+                else:
+                    await store.mark(key)
+                    done = True
+                    break
+            if not done:
+                await bus.publish_raw(topic + Topics.DLQ_SUFFIX, key, raw)
+                await store.release(key)
+        except BaseException:
+            if not done:
+                await store.release(key)
+            raise

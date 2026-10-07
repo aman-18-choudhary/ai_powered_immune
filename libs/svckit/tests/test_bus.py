@@ -139,3 +139,28 @@ async def test_unparseable_goes_to_dlq():
     await bus.publish_raw("t", "k", b"not json")
     await _run(bus, handler, InMemoryIdempotencyStore())
     assert bus.messages("t.dlq") == [("t:g:" + message_key(b"not json"), b"not json")]
+
+
+async def test_cancellation_releases_claim_and_redelivery_is_handled():
+    bus = InMemoryBus()
+    store = InMemoryIdempotencyStore()
+    started = asyncio.Event()
+    calls: list[Reason] = []
+
+    async def slow(m: Reason) -> None:
+        started.set()
+        await asyncio.sleep(10)
+
+    await bus.publish("t", "k", _reason())
+    task = asyncio.create_task(consume(bus, "t", "g", Reason, slow, store))
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    async def handler(m: Reason) -> None:
+        calls.append(m)
+
+    # Simulate redelivery of the uncommitted message to a restarted consumer.
+    await bus.publish("t", "k", _reason())
+    await _run(bus, handler, store)
+    assert len(calls) == 1

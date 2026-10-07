@@ -1,5 +1,6 @@
 """Idempotency stores."""
 
+import time
 from typing import Any, Protocol
 
 
@@ -8,8 +9,8 @@ class IdempotencyStore(Protocol):
 
     async def mark(self, key: str) -> None: ...
 
-    async def claim(self, key: str) -> bool:
-        """Atomically claim `key`; False if already claimed or marked."""
+    async def claim(self, key: str, claim_ttl_s: float = 300) -> bool:
+        """Atomically claim `key` for `claim_ttl_s`; False if already claimed or marked."""
         ...
 
     async def release(self, key: str) -> None:
@@ -19,22 +20,25 @@ class IdempotencyStore(Protocol):
 
 class InMemoryIdempotencyStore:
     def __init__(self) -> None:
-        self._keys: set[str] = set()
+        self._done: set[str] = set()
+        self._claims: dict[str, float] = {}
 
     async def seen(self, key: str) -> bool:
-        return key in self._keys
+        return key in self._done
 
     async def mark(self, key: str) -> None:
-        self._keys.add(key)
+        self._done.add(key)
+        self._claims.pop(key, None)
 
-    async def claim(self, key: str) -> bool:
-        if key in self._keys:
+    async def claim(self, key: str, claim_ttl_s: float = 300) -> bool:
+        now = time.monotonic()
+        if key in self._done or self._claims.get(key, 0.0) > now:
             return False
-        self._keys.add(key)
+        self._claims[key] = now + claim_ttl_s
         return True
 
     async def release(self, key: str) -> None:
-        self._keys.discard(key)
+        self._claims.pop(key, None)
 
 
 class RedisIdempotencyStore:
@@ -47,10 +51,11 @@ class RedisIdempotencyStore:
         return bool(await self._client.exists(self._prefix + key))
 
     async def mark(self, key: str) -> None:
-        await self._client.set(self._prefix + key, "1", ex=self._ttl)
+        await self._client.set(self._prefix + key, "done", ex=self._ttl)
 
-    async def claim(self, key: str) -> bool:
-        return bool(await self._client.set(self._prefix + key, "1", nx=True, ex=self._ttl))
+    async def claim(self, key: str, claim_ttl_s: float = 300) -> bool:
+        px = max(1, int(claim_ttl_s * 1000))
+        return bool(await self._client.set(self._prefix + key, "claim", nx=True, px=px))
 
     async def release(self, key: str) -> None:
         await self._client.delete(self._prefix + key)

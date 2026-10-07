@@ -1,3 +1,5 @@
+import asyncio
+
 import fakeredis.aioredis
 
 from svckit.idempotency import InMemoryIdempotencyStore, RedisIdempotencyStore
@@ -25,3 +27,11 @@ async def test_claim_release_in_memory_and_redis():
         assert not await s.claim("k")
         await s.release("k")
         assert await s.claim("k")
+
+
+async def test_unreleased_claim_expires_after_claim_ttl():
+    for s in (InMemoryIdempotencyStore(), RedisIdempotencyStore(fakeredis.aioredis.FakeRedis())):
+        assert await s.claim("k", claim_ttl_s=0.05)
+        assert not await s.claim("k", claim_ttl_s=0.05)
+        await asyncio.sleep(0.12)
+        assert await s.claim("k", claim_ttl_s=0.05)
