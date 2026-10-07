@@ -7,7 +7,7 @@ name = "sim-engine"
 version = "0.1.0"
 description = "Synthetic Indian payments + scam-call ecosystem with ground truth"
 requires-python = ">=3.11"
-dependencies = ["scam-contracts", "svckit", "numpy>=1.26", "scipy>=1.11"]
+dependencies = ["scam-contracts", "svckit", "numpy>=1.26", "scipy>=1.11", "fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.29"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]
@@ -17,6 +17,8 @@ include = ["sim_engine*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100

@@ -98,7 +98,12 @@ def gen_scam_campaign(
     n_victims: int,
     seed: int,
     start_ts: datetime | None = None,
+    victim_indices: list[int] | None = None,
+    second_victim_gap: timedelta | None = None,
 ) -> Campaign:
+    """``victim_indices`` pins the victims (indices into world.citizens). With
+    ``second_victim_gap``, the second victim's first transfer is moved to exactly that long
+    after the first victim's last transfer (their calls shift with it)."""
     rng = np.random.default_rng([seed, zlib.crc32(campaign_id.encode()), 4])
     camp = Campaign(campaign_id)
     t0 = start_ts or (world.start + timedelta(days=1, hours=float(rng.uniform(9, 17))))
@@ -129,7 +134,10 @@ def gen_scam_campaign(
     caller_hashes = [world.phone_hash(x) for x in numbers]
 
     # --- victims, spaced so the campaign ramps over hours
-    vic_idx = rng.choice(len(world.citizens), size=n_victims, replace=False)
+    drawn = rng.choice(len(world.citizens), size=n_victims, replace=False)
+    vic_idx = drawn if victim_indices is None else np.array(victim_indices)
+    if len(vic_idx) != n_victims:
+        raise ValueError("victim_indices must have n_victims entries")
     inflows: dict[str, list[tuple[datetime, float]]] = {m.account_id: [] for m in mules}
     t = t0
     txn_counter = 0
@@ -169,17 +177,22 @@ def gen_scam_campaign(
                 rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:a", vtoken, caller, call_start,
                 scam_call_chunks(rng, lang, name, "short"), lang, _channel(rng),
             )  # fmt: skip
-            camp.calls.extend(events)
             call_start = events[-1].ts + timedelta(minutes=float(rng.uniform(3, 10)))
         main = chunks_to_events(
             rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:b", vtoken, caller, call_start,
             scam_call_chunks(rng, lang, name, "full"), lang, _channel(rng),
         )  # fmt: skip
-        camp.calls.extend(main)
+        calls_of_victim = [*events, *main]
         # victim transfers follow the demand within minutes; skewed-high, split, repeated;
         # UPI is capped per day, so larger totals continue over IMPS
         total = float(np.clip(rng.lognormal(np.log(120_000), 0.7), 20_000, 600_000))
         ts = main[-1].ts + timedelta(minutes=float(rng.uniform(1, 6)))
+        if vi == 1 and second_victim_gap is not None:
+            last_a = max(x.ts for x in camp.txns if x.payer_token == camp.victim_tokens[0])
+            shift = last_a + second_victim_gap - ts
+            calls_of_victim = [e.model_copy(update={"ts": e.ts + shift}) for e in calls_of_victim]
+            ts += shift
+        camp.calls.extend(calls_of_victim)
         first = None
         vic_mules = rng.permutation(n_mules)[: max(2, min(n_mules, 3))]
         device = world.device_token(cit.device_id)
