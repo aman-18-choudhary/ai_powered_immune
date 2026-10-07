@@ -48,3 +48,15 @@ class GroundTruth:
                 f"(< {MASS_VICTIM_THRESHOLD})"
             )
         return sorted(c.victim_first_txn_ts)[MASS_VICTIM_THRESHOLD - 1]
+
+    def has_mass_victimisation(self, campaign_id: str) -> bool:
+        """True when the campaign reaches 10 victims at all. Task 8 must check this (or use
+        ``mass_victimisation_ts_or_none``) instead of calling ``mass_victimisation_ts`` blind."""
+        return len(self._campaigns[campaign_id].victim_first_txn_ts) >= MASS_VICTIM_THRESHOLD
+
+    def mass_victimisation_ts_or_none(self, campaign_id: str) -> datetime | None:
+        """``mass_victimisation_ts`` or None for campaigns that never reach 10 victims
+        (the evaluation-safe accessor; ``mass_victimisation_ts`` raises ValueError)."""
+        if not self.has_mass_victimisation(campaign_id):
+            return None
+        return self.mass_victimisation_ts(campaign_id)

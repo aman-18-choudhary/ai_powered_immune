@@ -46,6 +46,9 @@ def test_signal_timestamps(campaigns):
         gt.mass_victimisation_ts("camp-B")  # only 6 victims
     with pytest.raises(KeyError):
         gt.first_signal_ts("nope")
+    assert gt.has_mass_victimisation("camp-A") and not gt.has_mass_victimisation("camp-B")
+    assert gt.mass_victimisation_ts_or_none("camp-A") == gt.mass_victimisation_ts("camp-A")
+    assert gt.mass_victimisation_ts_or_none("camp-B") is None
 
 
 def test_campaign_seed_reproducible_ground_truth(world):
@@ -65,12 +68,13 @@ def test_scam_transcripts_realistic_and_bilingual(campaigns, world):
     by_call: dict[str, list] = {}
     for e in calls:
         by_call.setdefault(e.call_id, []).append(e)
-    assert all(len(v) >= 6 for v in by_call.values())
+    sizes = [len(v) for v in by_call.values()]
+    assert min(sizes) <= 4 < 8 <= max(sizes)  # short first contacts and long calls
     assert all(len({e.lang for e in v}) == 1 for v in by_call.values())
     english = [
         " ".join(e.transcript_chunk for e in v).lower()
         for v in by_call.values()
-        if v[0].lang == "en"
+        if v[0].lang == "en" and len(v) >= 5  # short first contacts omit the later stages
     ]
     assert english
     for text in english:
@@ -97,3 +101,35 @@ def test_training_corpora_cover_classes():
     assert "digital arrest" in stext and "safe account" in stext
     # benign calls must not contain the core scam markers
     assert "digital arrest" not in " ".join(t for t, _, _ in ben).lower()
+
+
+def test_no_placeholder_greeting_and_pretext_fits_authority(world):
+    from sim_engine.calls import AUTH_PRETEXTS, PRETEXTS
+
+    assert set(AUTH_PRETEXTS["trai"]) == {"sim"} and set(AUTH_PRETEXTS["customs"]) == {"parcel"}
+    assert set(AUTH_PRETEXTS["cbi"]) <= {"laundering", "parcel"}
+    assert set(AUTH_PRETEXTS["ed"]) == {"laundering"}
+    assert all(p in PRETEXTS for ps in AUTH_PRETEXTS.values() for p in ps)
+    texts = [e.transcript_chunk for c in [gen_scam_campaign(world, "g", 8, 5)] for e in c.calls]
+    assert not any("Sir/Madam" in t or "{" in t for t in texts)
+    ben = [e.transcript_chunk for e in gen_benign_calls(world, days=1, seed=2)]
+    assert not any("{" in t for t in ben)
+
+
+def test_benign_templates_not_memorisable():
+    from sim_engine.calls import BENIGN, BENIGN_KINDS
+
+    for kind in BENIGN_KINDS:
+        assert len(BENIGN[kind]) == 3  # en, hi-Latn, hi
+        for opens, bodies, closes in BENIGN[kind]:
+            assert min(len(opens), len(bodies), len(closes)) >= 6
+
+
+def test_benign_calls_include_video_and_long_calls(world):
+    calls = list(gen_benign_calls(world, days=3, seed=4))
+    by_call: dict[str, list] = {}
+    for e in calls:
+        by_call.setdefault(e.call_id, []).append(e)
+    assert {"pstn", "voip", "video"} <= {e.channel for e in calls}
+    sizes = [len(v) for v in by_call.values()]
+    assert max(sizes) >= 9 and min(sizes) <= 4

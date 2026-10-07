@@ -76,17 +76,17 @@ S_INTRO = (
 )
 S_ALLEGE = (
     [
-        "Madam/sir, our investigation shows that {pretext}. This is a criminal offence under "
+        "{name}, our investigation shows that {pretext}. This is a criminal offence under "
         "the PMLA and the NDPS Act.",
         "We have received a complaint and evidence: {pretext}. Your name is in the FIR.",
     ],
     [
-        "Sir/madam, hamari jaanch me saamne aaya hai ki {pretext}. Yeh PMLA aur NDPS act ke "
+        "{name} ji, hamari jaanch me saamne aaya hai ki {pretext}. Yeh PMLA aur NDPS act ke "
         "tahat criminal offence hai.",
         "Hamare paas complaint aur saboot hai: {pretext}. FIR me aapka naam hai.",
     ],
     [
-        "सर/मैडम, हमारी जांच में सामने आया है कि {pretext}। यह PMLA और NDPS एक्ट के तहत आपराधिक अपराध है।",
+        "{name} जी, हमारी जांच में सामने आया है कि {pretext}। यह PMLA और NDPS एक्ट के तहत आपराधिक अपराध है।",
         "हमारे पास शिकायत और सबूत हैं: {pretext}। FIR में आपका नाम है।",
     ],
 )
@@ -216,7 +216,7 @@ VICTIM_REPLIES = (
     [
         "Sir mujhe bahut dar lag raha hai. Bataiye mujhe kya karna hai.",
         "Theek hai sir, main video call par hoon.",
-    ],  # noqa: E501
+    ],
     ["सर मुझे बहुत डर लग रहा है। बताइए मुझे क्या करना है।", "ठीक है सर, मैं वीडियो कॉल पर हूँ।"],
 )
 OFFICERS = ["Rajesh Sharma", "Vikram Rathore", "Anil Kapoor", "Sandeep Yadav", "Rakesh Verma",
@@ -224,24 +224,53 @@ OFFICERS = ["Rajesh Sharma", "Vikram Rathore", "Anil Kapoor", "Sandeep Yadav", "
 SCAM_STAGES = (S_INTRO, S_ALLEGE, S_ARREST, S_SECRET, S_URGENT, S_VERIFY, S_TRANSFER, S_FOLLOW)
 
 
-def scam_call_chunks(rng: np.random.Generator, lang: str, name: str = "Sir/Madam") -> list[str]:
+# Impersonated authority -> pretexts that actually fit it
+AUTH_PRETEXTS = {
+    "trai": ["sim"],
+    "customs": ["parcel"],
+    "ncb": ["parcel"],
+    "cbi": ["laundering", "parcel"],
+    "ed": ["laundering"],
+    "police": ["laundering", "sim", "parcel"],
+}
+SCAM_VIDEO_CHANNEL_P = (0.30, 0.30, 0.40)  # pstn, voip, video
+
+
+def scam_call_chunks(
+    rng: np.random.Generator,
+    lang: str,
+    name: str | None = None,
+    mode: str | None = None,
+) -> list[str]:
+    """One scam call as chunks. ``mode``: "short" (first contact, 2-4 chunks), "full"
+    (5-12 chunks, always reaches the safe-account demand) or None (25% short / 75% full)."""
     li = LANGS.index(lang)
+    if mode is None:
+        mode = "short" if rng.random() < 0.25 else "full"
     auth = str(rng.choice(sorted(AUTHORITIES)))
-    pre = str(rng.choice(sorted(PRETEXTS)))
+    pre = str(rng.choice(AUTH_PRETEXTS[auth]))
     # AUTHORITIES tuples are (english, devanagari, latin-script)
     auth_name = AUTHORITIES[auth][{0: 0, 1: 2, 2: 1}[li]]
     ctx = {
-        "name": name,
+        "name": name or pick_name(rng, lang),
         "officer": str(rng.choice(OFFICERS)),
         "auth": auth_name,
         "pretext": PRETEXTS[pre][li],
         "case": f"{int(rng.integers(100, 999))}/{int(rng.integers(2021, 2027))}",
     }
+    if mode == "short":
+        stages = [0, 1] + ([2] if rng.random() < 0.4 else [])
+    else:
+        stages = [0, 1, 2, 3]
+        stages += [4] if rng.random() < 0.7 else []
+        stages += [5] if rng.random() < 0.7 else []
+        stages += [6]
+        stages += [7] if rng.random() < 0.5 else []
     chunks: list[str] = []
-    for si, stage in enumerate(SCAM_STAGES):
-        variants = stage[li]
+    for si in stages:
+        variants = SCAM_STAGES[si][li]
         chunks.append(variants[int(rng.integers(len(variants)))].format(**ctx))
-        if si in (1, 3, 4) and rng.random() < 0.7:  # victim interjection, no scam markers
+        if si in (1, 3, 4) and rng.random() < 0.6:  # victim interjection, no scam markers
             rep = VICTIM_REPLIES[li]
             chunks.append(rep[int(rng.integers(len(rep)))])
     return chunks
@@ -249,148 +278,319 @@ def scam_call_chunks(rng: np.random.Generator, lang: str, name: str = "Sir/Madam
 
 # ------------------------------------------------------------- benign scripts
 BENIGN_KINDS = ("bank_care", "delivery", "family", "telemarketing")
-BENIGN_P = (0.25, 0.25, 0.3, 0.2)
+BENIGN_P = (0.2, 0.2, 0.4, 0.2)
+# per-kind channel mix (pstn, voip, video): family/WhatsApp calls are often video
+BENIGN_CHANNEL_P = {
+    "bank_care": (0.85, 0.10, 0.05),
+    "delivery": (0.90, 0.10, 0.00),
+    "family": (0.30, 0.30, 0.40),
+    "telemarketing": (0.80, 0.15, 0.05),
+}
+NAMES = (
+    ["Rahul Mehta", "Priya Nair", "Sunita Devi", "Arjun Reddy", "Kavita Joshi", "Mohammed Irfan",
+     "Anjali Gupta", "Suresh Patil", "Neha Singh", "Ramesh Iyer", "Pooja Banerjee", "Imran Khan"],
+    ["राहुल मेहता", "प्रिया नायर", "सुनीता देवी", "अर्जुन रेड्डी", "कविता जोशी", "मोहम्मद इरफान",
+     "अंजलि गुप्ता", "सुरेश पाटिल", "नेहा सिंह", "रमेश अय्यर", "पूजा बनर्जी", "इमरान खान"],
+)  # fmt: skip
 
-BENIGN_SCRIPTS: dict[str, tuple[list[list[str]], list[list[str]], list[list[str]]]] = {
-    "bank_care": (
-        [
-            ["Hello, this is customer care from {bank} bank. We are calling about your credit "
-             "card statement that was generated yesterday.",
-             "Sir, for security please confirm your date of birth. Remember, we will never ask "
-             "for your OTP or PIN.",
-             "Your due amount is a few thousand rupees, payable by the due date. You can pay "
-             "through the app or net banking at your convenience.",
-             "Thank you for banking with us. Have a nice day."],
-            ["Good morning, {bank} bank here. You raised a complaint about a failed UPI "
-             "transaction. The amount has been reversed to your account.",
-             "Please check your passbook. Is there anything else I can help you with?",
-             "Also, for your safety: the RBI and the bank never ask customers to move money to a "
-             "safe account, so ignore such calls and report them.",
-             "Thank you, please rate this call after we disconnect."],
-        ],
-        [
-            ["Hello, main {bank} bank customer care se bol raha hoon. Aapke credit card ka "
-             "statement kal generate hua hai.",
-             "Sir suraksha ke liye apni date of birth confirm kijiye. Yaad rakhiye hum kabhi OTP ya "
-             "PIN nahi maangte.",
-             "Aapka due amount kuch hazaar rupaye hai, due date tak bharna hai. App ya net banking "
-             "se aaram se pay kar sakte hain.",
-             "Bank se jude rehne ke liye dhanyavaad. Aapka din shubh ho."],
-            ["Namaste, {bank} bank se bol rahe hain. Aapne failed UPI transaction ki complaint ki "
-             "thi. Paisa aapke account me wapas aa gaya hai.",
-             "Kripya passbook check kijiye. Kuch aur madad chahiye?",
-             "Aur ek zaroori baat, bank ya RBI kabhi safe account me paise transfer karne ko nahi "
-             "kehte, aisi calls ko ignore karke report kijiye.",
-             "Dhanyavaad, call ke baad rating zaroor dijiye."],
-        ],
-        [
-            ["हेलो, मैं {bank} बैंक कस्टमर केयर से बोल रहा हूँ। आपके क्रेडिट कार्ड का स्टेटमेंट कल "
-             "जनरेट हुआ है।",
-             "सर सुरक्षा के लिए अपनी जन्मतिथि कन्फर्म कीजिए। याद रखिए हम कभी OTP या PIN नहीं "
-             "मांगते।",
-             "आपका बकाया कुछ हज़ार रुपये है, तारीख तक भरना है। ऐप या नेट बैंकिंग से आराम से भर सकते हैं।",
-             "बैंक से जुड़े रहने के लिए धन्यवाद। आपका दिन शुभ हो।"],
-        ],
-    ),
-    "delivery": (
-        [
-            ["Hello sir, I am the delivery executive from {shop}. I am outside your society gate "
-             "with your order.",
-             "Which block is it? Can you come down or shall I send it up with the guard?",
-             "Okay, I will hand it over to the guard. Please pay cash on delivery, the amount is "
-             "in the app.",
-             "Thank you sir, please give a good rating."],
-            ["Hi, this is {shop} delivery. Your parcel is out for delivery today between two and "
-             "four pm. Will someone be at home?",
-             "Okay, I will call again when I reach the lane. Please keep the order number ready.",
-             "Delivered, sir. Thank you."],
-        ],
-        [
-            ["Hello sir, main {shop} se delivery boy bol raha hoon. Aapka order lekar society ke "
-             "gate par khada hoon.",
-             "Kaunsa block hai? Aap neeche aayenge ya guard ko de doon?",
-             "Theek hai guard ko de deta hoon. Cash on delivery hai to payment app me dikh raha hai.",
-             "Dhanyavaad sir, achhi rating dena."],
-            ["Hi, {shop} delivery se bol raha hoon. Aapka parcel aaj do se chaar baje ke beech "
-             "pahunchega. Koi ghar par hoga?",
-             "Theek hai, gali me pahunch kar dobara call karunga. Order number ready rakhiye.",
-             "Deliver ho gaya sir. Dhanyavaad."],
-        ],
-        [
-            ["हेलो सर, मैं {shop} से डिलीवरी बॉय बोल रहा हूँ। आपका ऑर्डर लेकर सोसाइटी के गेट पर खड़ा हूँ।",
-             "कौन सा ब्लॉक है? आप नीचे आएंगे या गार्ड को दे दूँ?",
-             "ठीक है गार्ड को दे देता हूँ। कैश ऑन डिलीवरी है तो पेमेंट ऐप में दिख रहा है।",
-             "धन्यवाद सर, अच्छी रेटिंग देना।"],
-        ],
-    ),
-    "family": (
-        [
-            ["Hi beta, did you have lunch? I was just thinking about you.",
-             "Yes yes, everything is fine here. Your father went for his evening walk.",
-             "Come home this weekend, I will make your favourite paneer. Don't work too much.",
-             "Okay, take care. Call me when you reach. Bye."],
-            ["Hey bhai, are we still on for the match on Sunday?",
-             "Great, I will book the ground. Bring the bats this time, no excuses!",
-             "Cool, see you at six. Bye."],
-        ],
-        [
-            ["Hello beta, khana khaya? Bas tumhari yaad aa rahi thi.",
-             "Haan haan, yahan sab theek hai. Papa shaam ki sair par gaye hain.",
-             "Is weekend ghar aa jao, tumhari pasand ka paneer banaungi. Zyada kaam mat karna.",
-             "Achha apna dhyan rakhna. Pahunch kar phone karna. Bye."],
-            ["Arre bhai, Sunday ko match pakka hai na?",
-             "Badhiya, main ground book kar leta hoon. Is baar bat le aana, koi bahana nahi!",
-             "Theek hai, chhe baje milte hain. Bye."],
-        ],
-        [
-            ["हेलो बेटा, खाना खाया? बस तुम्हारी याद आ रही थी।",
-             "हाँ हाँ, यहाँ सब ठीक है। पापा शाम की सैर पर गए हैं।",
-             "इस वीकेंड घर आ जाओ, तुम्हारी पसंद का पनीर बनाऊंगी। ज़्यादा काम मत करना।",
-             "अच्छा अपना ध्यान रखना। पहुँचकर फोन करना। बाय।"],
-        ],
-    ),
-    "telemarketing": (
-        [
-            ["Good afternoon sir, I am calling from {shop} finance. You are eligible for a "
-             "pre-approved personal loan at a low interest rate.",
-             "There is no processing fee this month. May I explain the plan to you for two minutes?",
-             "No problem sir, if you are not interested I will not call again. Thank you for your time."],
-            ["Hello madam, this is a call about our new health insurance plan with cashless "
-             "treatment in over ten thousand hospitals.",
-             "We also have a free credit card with cashback on groceries. Would you like to "
-             "know more?",
-             "Okay, I will send the details on WhatsApp. Have a good day."],
-        ],
-        [
-            ["Namaste sir, main {shop} finance se bol raha hoon. Aap pre-approved personal loan ke "
-             "liye eligible hain, kam byaaj dar par.",
-             "Is mahine processing fee nahi hai. Kya main do minute me plan samjha sakta hoon?",
-             "Koi baat nahi sir, interested nahi hain to dobara call nahi karunga. Samay dene ke "
-             "liye dhanyavaad."],
-            ["Hello madam, hamare naye health insurance plan ke baare me call hai, das hazaar se "
-             "zyada hospitals me cashless ilaaj.",
-             "Humare paas grocery par cashback wala free credit card bhi hai. Kya aap jaanna "
-             "chahengi?",
-             "Theek hai, main details WhatsApp par bhej deta hoon. Aapka din achha ho."],
-        ],
-        [
-            ["नमस्ते सर, मैं {shop} फाइनेंस से बोल रहा हूँ। आप कम ब्याज दर पर पर्सनल लोन के लिए "
-             "प्री-अप्रूव्ड हैं।",
-             "इस महीने प्रोसेसिंग फीस नहीं है। क्या मैं दो मिनट में प्लान समझा सकता हूँ?",
-             "कोई बात नहीं सर, इच्छुक नहीं हैं तो दोबारा कॉल नहीं करूंगा। समय देने के लिए धन्यवाद।"],
-        ],
-    ),
+# BENIGN[kind][lang_index] = (openings, bodies, closings), >= 6 variants each. Placeholders:
+# {name}, {bank}, {shop}.
+BENIGN: dict[str, list[tuple[list[str], list[str], list[str]]]] = {
+    "bank_care": [
+        (
+            ["Hello, am I speaking with {name}? This is customer care from {bank} bank.",
+             "Good morning {name}, {bank} bank calling about the service request you raised.",
+             "Hi, this is {bank} bank. Is this a good time to talk for two minutes?",
+             "Hello {name}, I am calling from {bank} bank regarding your credit card account.",
+             "Good evening, {bank} bank relationship team here. May I speak with {name}?",
+             "Hello, {bank} bank phone banking. You had called us about your debit card."],
+            ["Your credit card statement was generated yesterday and the due amount is a few thousand rupees.",
+             "The failed UPI transaction you complained about has been reversed to your account.",
+             "For security, please confirm your date of birth. We will never ask for your OTP or PIN.",
+             "Your new debit card has been dispatched and should reach you within five working days.",
+             "A reminder that the RBI and the bank never ask customers to move money to a safe account, so ignore such calls and report them.",
+             "Your KYC update is complete, no further documents are needed from your side.",
+             "Your fixed deposit is maturing next month, you can renew it through the app or at the branch."],
+            ["Thank you for banking with us. Have a nice day.",
+             "Is there anything else I can help you with today?",
+             "Thanks {name}, please rate this call after we disconnect.",
+             "You can also visit your nearest branch if you prefer. Thank you.",
+             "Your service request number will arrive by SMS. Goodbye.",
+             "Thank you for your time, have a pleasant day."],
+        ),
+        (
+            ["Hello, kya main {name} ji se baat kar raha hoon? {bank} bank customer care se bol raha hoon.",
+             "Namaste {name}, {bank} bank se call hai, aapne jo service request daali thi uske baare me.",
+             "Hi, {bank} bank se bol rahe hain. Do minute baat kar sakte hain?",
+             "Hello {name} ji, aapke credit card account ke baare me {bank} bank se call hai.",
+             "Good evening, {bank} bank ki relationship team se bol raha hoon. {name} ji se baat ho sakti hai?",
+             "Hello, {bank} bank phone banking. Aapne debit card ke baare me call kiya tha."],
+            ["Aapke credit card ka statement kal generate hua hai, due amount kuch hazaar rupaye hai.",
+             "Aapki failed UPI transaction ka paisa account me wapas aa gaya hai.",
+             "Suraksha ke liye apni date of birth confirm kijiye. Hum kabhi OTP ya PIN nahi maangte.",
+             "Aapka naya debit card bhej diya gaya hai, paanch working days me pahunch jayega.",
+             "Ek yaad dilana hai, bank ya RBI kabhi safe account me paise transfer karne ko nahi kehte, aisi calls ko ignore karke report kijiye.",
+             "Aapka KYC update ho gaya hai, ab koi aur document nahi chahiye.",
+             "Aapki fixed deposit agle mahine mature ho rahi hai, app ya branch se renew kar sakte hain."],
+            ["Bank se jude rehne ke liye dhanyavaad. Aapka din shubh ho.",
+             "Kuch aur madad chahiye aapko?",
+             "Dhanyavaad {name} ji, call ke baad rating zaroor dijiye.",
+             "Aap chahein to nazdeeki branch bhi aa sakte hain. Dhanyavaad.",
+             "Service request number SMS se aa jayega. Namaste.",
+             "Samay dene ke liye shukriya, aapka din achha ho."],
+        ),
+        (
+            ["हेलो, क्या मैं {name} जी से बात कर रहा हूँ? मैं {bank} बैंक कस्टमर केयर से बोल रहा हूँ।",
+             "नमस्ते {name}, {bank} बैंक से कॉल है, आपने जो सर्विस रिक्वेस्ट डाली थी उसके बारे में।",
+             "हाय, {bank} बैंक से बोल रहे हैं। दो मिनट बात कर सकते हैं?",
+             "हेलो {name} जी, आपके क्रेडिट कार्ड अकाउंट के बारे में {bank} बैंक से कॉल है।",
+             "गुड इवनिंग, {bank} बैंक की रिलेशनशिप टीम से बोल रहा हूँ। क्या {name} जी से बात हो सकती है?",
+             "हेलो, {bank} बैंक फोन बैंकिंग। आपने डेबिट कार्ड के बारे में कॉल किया था।"],
+            ["आपके क्रेडिट कार्ड का स्टेटमेंट कल जनरेट हुआ है, बकाया कुछ हज़ार रुपये है।",
+             "आपकी फेल हुई UPI ट्रांजैक्शन का पैसा आपके अकाउंट में वापस आ गया है।",
+             "सुरक्षा के लिए अपनी जन्मतिथि कन्फर्म कीजिए। हम कभी OTP या PIN नहीं मांगते।",
+             "आपका नया डेबिट कार्ड भेज दिया गया है, पाँच कार्य दिवस में पहुँच जाएगा।",
+             "एक बात याद दिला दूँ, बैंक या RBI कभी सेफ अकाउंट में पैसे ट्रांसफर करने को नहीं कहते, ऐसी कॉल को अनदेखा करके रिपोर्ट कीजिए।",
+             "आपका KYC अपडेट हो गया है, अब कोई और दस्तावेज़ नहीं चाहिए।",
+             "आपकी फिक्स्ड डिपॉजिट अगले महीने मैच्योर हो रही है, ऐप या ब्रांच से रिन्यू कर सकते हैं।"],
+            ["बैंक से जुड़े रहने के लिए धन्यवाद। आपका दिन शुभ हो।",
+             "क्या मैं आपकी और कोई मदद कर सकता हूँ?",
+             "धन्यवाद {name} जी, कॉल के बाद रेटिंग ज़रूर दीजिए।",
+             "आप चाहें तो नज़दीकी ब्रांच भी आ सकते हैं। धन्यवाद।",
+             "सर्विस रिक्वेस्ट नंबर SMS से आ जाएगा। नमस्ते।",
+             "समय देने के लिए शुक्रिया, आपका दिन अच्छा हो।"],
+        ),
+    ],
+    "delivery": [
+        (
+            ["Hello {name}, I am the delivery executive from {shop}. I am outside your gate.",
+             "Hi sir, {shop} delivery here. Is this {name}?",
+             "Good afternoon, calling from {shop}. Your parcel is out for delivery today.",
+             "Hello, delivery boy from {shop}. I am near your society, which lane is it?",
+             "Hi {name}, {shop} courier. I have a package for you but the address is unclear.",
+             "Namaste, {shop} delivery partner here. I reached your building."],
+            ["Which block is it? Can you come down or shall I leave it with the guard?",
+             "Please keep the order number ready, it is in the app.",
+             "It is cash on delivery, the amount is shown in the app.",
+             "Will someone be at home between two and four pm?",
+             "I can see the gate but not the flat number, could you share it?",
+             "The lift is not working so I am coming up by the stairs.",
+             "Your package is a bit large, I will need you to sign for it."],
+            ["Delivered. Thank you, please give a good rating.",
+             "Okay, I will hand it to the guard. Thanks.",
+             "Thank you sir, have a good day.",
+             "I will wait five minutes at the gate. Thanks.",
+             "Done, please check the package and confirm in the app.",
+             "Thanks {name}, bye."],
+        ),
+        (
+            ["Hello {name} ji, main {shop} se delivery boy bol raha hoon. Aapke gate ke bahar hoon.",
+             "Hi sir, {shop} delivery se bol raha hoon. {name} ji hain?",
+             "Namaste, {shop} se call hai. Aapka parcel aaj deliver hone wala hai.",
+             "Hello, {shop} ka delivery boy. Society ke paas hoon, kaunsi gali hai?",
+             "Hi {name}, {shop} courier. Aapka package hai par address clear nahi hai.",
+             "Namaste, {shop} delivery partner bol raha hoon. Aapki building pahunch gaya."],
+            ["Kaunsa block hai? Aap neeche aayenge ya guard ko de doon?",
+             "Order number ready rakhiye, app me dikh jayega.",
+             "Cash on delivery hai, amount app me dikh raha hai.",
+             "Do se chaar baje ke beech koi ghar par hoga?",
+             "Gate dikh raha hai par flat number nahi, bata dijiye.",
+             "Lift band hai to seedhiyon se aa raha hoon.",
+             "Package thoda bada hai, aapko sign karna padega."],
+            ["Deliver ho gaya. Dhanyavaad, achhi rating dena.",
+             "Theek hai guard ko de deta hoon. Shukriya.",
+             "Dhanyavaad sir, aapka din achha ho.",
+             "Paanch minute gate par ruk raha hoon. Dhanyavaad.",
+             "Ho gaya, package check karke app me confirm kar dijiye.",
+             "Shukriya {name} ji, bye."],
+        ),
+        (
+            ["हेलो {name} जी, मैं {shop} से डिलीवरी बॉय बोल रहा हूँ। आपके गेट के बाहर हूँ।",
+             "हाय सर, {shop} डिलीवरी से बोल रहा हूँ। {name} जी हैं?",
+             "नमस्ते, {shop} से कॉल है। आपका पार्सल आज डिलीवर होने वाला है।",
+             "हेलो, {shop} का डिलीवरी बॉय। सोसाइटी के पास हूँ, कौन सी गली है?",
+             "हाय {name}, {shop} कूरियर। आपका पैकेज है पर पता साफ़ नहीं है।",
+             "नमस्ते, {shop} डिलीवरी पार्टनर बोल रहा हूँ। आपकी बिल्डिंग पहुँच गया।"],
+            ["कौन सा ब्लॉक है? आप नीचे आएंगे या गार्ड को दे दूँ?",
+             "ऑर्डर नंबर तैयार रखिए, ऐप में दिख जाएगा।",
+             "कैश ऑन डिलीवरी है, रकम ऐप में दिख रही है।",
+             "दो से चार बजे के बीच कोई घर पर होगा?",
+             "गेट दिख रहा है पर फ्लैट नंबर नहीं, बता दीजिए।",
+             "लिफ्ट बंद है तो सीढ़ियों से आ रहा हूँ।",
+             "पैकेज थोड़ा बड़ा है, आपको साइन करना पड़ेगा।"],
+            ["डिलीवर हो गया। धन्यवाद, अच्छी रेटिंग देना।",
+             "ठीक है गार्ड को दे देता हूँ। शुक्रिया।",
+             "धन्यवाद सर, आपका दिन अच्छा हो।",
+             "पाँच मिनट गेट पर रुक रहा हूँ। धन्यवाद।",
+             "हो गया, पैकेज चेक करके ऐप में कन्फर्म कर दीजिए।",
+             "शुक्रिया {name} जी, बाय।"],
+        ),
+    ],
+    "family": [
+        (
+            ["Hi {name}, did you have lunch? I was just thinking about you.",
+             "Hey {name}, are you free for a minute? Wanted to catch up.",
+             "Hello {name}! Long time, how have you been?",
+             "Hi {name}, can you see me? The video is a bit laggy on my side.",
+             "Hey {name}, happy birthday! Hope you are having a great day.",
+             "Hi {name}, just calling to check you reached home safely."],
+            ["Everything is fine here. Dad went for his evening walk.",
+             "Come home this weekend, I will make your favourite paneer.",
+             "Are we still on for the cricket match on Sunday? I will book the ground.",
+             "The wedding is on the fifteenth, you must come a day early to help.",
+             "Don't work too much, you sound tired. Are you eating properly?",
+             "I sent you the photos from the trip on WhatsApp, did you get them?",
+             "Grandma was asking about you, she wants to talk to you on video."],
+            ["Okay, take care. Call me when you reach. Bye.",
+             "See you on Sunday then. Bye!",
+             "Love you, talk tomorrow. Bye.",
+             "Okay okay, I will call you later, the network is bad here.",
+             "Give my regards to everyone at home. Bye {name}.",
+             "Alright, goodnight. Sleep well."],
+        ),
+        (
+            ["Hello {name}, khana khaya? Bas tumhari yaad aa rahi thi.",
+             "Arre {name}, ek minute free ho? Baat karni thi.",
+             "Hello {name}! Kaafi time baad, kaise ho?",
+             "Hi {name}, mujhe dikh rahe ho? Meri taraf video thoda atak raha hai.",
+             "Arre {name}, janamdin mubarak! Din badhiya ja raha hoga.",
+             "Hi {name}, bas check karne ko call kiya ki ghar pahunch gaye ya nahi."],
+            ["Yahan sab theek hai. Papa shaam ki sair par gaye hain.",
+             "Is weekend ghar aa jao, tumhari pasand ka paneer banaungi.",
+             "Sunday ko cricket match pakka hai na? Main ground book kar leta hoon.",
+             "Shaadi pandrah tarikh ko hai, ek din pehle aa jana madad ke liye.",
+             "Zyada kaam mat karna, thake hue lag rahe ho. Theek se khana kha rahe ho?",
+             "Trip ki photos WhatsApp par bheji hain, mili kya?",
+             "Naani tumhare baare me pooch rahi thi, video par baat karna chahti hain."],
+            ["Achha apna dhyan rakhna. Pahunch kar phone karna. Bye.",
+             "To Sunday ko milte hain. Bye!",
+             "Love you, kal baat karte hain. Bye.",
+             "Achha achha, baad me call karta hoon, yahan network kharab hai.",
+             "Sabko mera namaste kehna. Bye {name}.",
+             "Theek hai, shubh ratri. Aaram se sona."],
+        ),
+        (
+            ["हेलो {name}, खाना खाया? बस तुम्हारी याद आ रही थी।",
+             "अरे {name}, एक मिनट फ्री हो? बात करनी थी।",
+             "हेलो {name}! काफ़ी समय बाद, कैसे हो?",
+             "हाय {name}, मैं दिख रहा हूँ? मेरी तरफ़ वीडियो थोड़ा अटक रहा है।",
+             "अरे {name}, जन्मदिन मुबारक! दिन बढ़िया जा रहा होगा।",
+             "हाय {name}, बस चेक करने के लिए कॉल किया कि घर पहुँच गए या नहीं।"],
+            ["यहाँ सब ठीक है। पापा शाम की सैर पर गए हैं।",
+             "इस वीकेंड घर आ जाओ, तुम्हारी पसंद का पनीर बनाऊंगी।",
+             "रविवार को क्रिकेट मैच पक्का है ना? मैं ग्राउंड बुक कर लेता हूँ।",
+             "शादी पंद्रह तारीख को है, एक दिन पहले आ जाना मदद के लिए।",
+             "ज़्यादा काम मत करना, थके हुए लग रहे हो। ठीक से खाना खा रहे हो?",
+             "ट्रिप की फ़ोटो WhatsApp पर भेजी हैं, मिलीं क्या?",
+             "नानी तुम्हारे बारे में पूछ रही थीं, वीडियो पर बात करना चाहती हैं।"],
+            ["अच्छा अपना ध्यान रखना। पहुँचकर फोन करना। बाय।",
+             "तो रविवार को मिलते हैं। बाय!",
+             "लव यू, कल बात करते हैं। बाय।",
+             "अच्छा अच्छा, बाद में कॉल करता हूँ, यहाँ नेटवर्क खराब है।",
+             "सबको मेरा नमस्ते कहना। बाय {name}।",
+             "ठीक है, शुभ रात्रि। आराम से सोना।"],
+        ),
+    ],
+    "telemarketing": [
+        (
+            ["Good afternoon {name}, I am calling from {shop} finance.",
+             "Hello sir, this is a quick call from {shop} about an offer for you.",
+             "Hi {name}, am I speaking with the right person? {shop} here.",
+             "Good morning madam, {shop} services calling. Do you have two minutes?",
+             "Hello {name}, I am from the {shop} sales team.",
+             "Hi, this is {shop}. You recently enquired on our website, so I am following up."],
+            ["You are eligible for a pre-approved personal loan at a low interest rate with no processing fee this month.",
+             "We have a new health insurance plan with cashless treatment in over ten thousand hospitals.",
+             "We also have a free credit card with cashback on groceries and fuel.",
+             "You can upgrade your plan today and get three months of the premium service free.",
+             "The offer is valid till the end of this month and the paperwork is fully online.",
+             "I can send you the brochure and the details on WhatsApp if you like.",
+             "Our relationship manager can visit your home at a time convenient to you."],
+            ["No problem, if you are not interested I will not call again. Thank you for your time.",
+             "Okay, I will send the details on WhatsApp. Have a good day.",
+             "Thank you {name}, you can reach us on the toll free number any time.",
+             "Sure, I will call you back tomorrow evening. Thanks.",
+             "Alright, sorry to disturb you. Goodbye.",
+             "Thanks for your time sir, have a great day."],
+        ),
+        (
+            ["Namaste {name} ji, main {shop} finance se bol raha hoon.",
+             "Hello sir, {shop} se ek chhota sa call hai aapke liye offer ke baare me.",
+             "Hi {name} ji, kya sahi vyakti se baat ho rahi hai? {shop} se bol rahe hain.",
+             "Good morning madam, {shop} services se call hai. Do minute milenge?",
+             "Hello {name}, main {shop} sales team se hoon.",
+             "Hi, {shop} se bol raha hoon. Aapne hamari website par enquiry ki thi, usi ke follow up me call hai."],
+            ["Aap pre-approved personal loan ke liye eligible hain, kam byaaj dar par aur is mahine koi processing fee nahi.",
+             "Hamara naya health insurance plan hai jisme das hazaar se zyada hospitals me cashless ilaaj milta hai.",
+             "Humare paas grocery aur fuel par cashback wala free credit card bhi hai.",
+             "Aaj plan upgrade karenge to teen mahine premium service free milegi.",
+             "Offer is mahine ke ant tak valid hai aur paperwork poora online hai.",
+             "Agar chahein to main brochure aur details WhatsApp par bhej deta hoon.",
+             "Hamare relationship manager aapke sahuliyat ke samay ghar aa sakte hain."],
+            ["Koi baat nahi, interested nahi hain to dobara call nahi karunga. Samay dene ke liye dhanyavaad.",
+             "Theek hai, main details WhatsApp par bhej deta hoon. Aapka din achha ho.",
+             "Dhanyavaad {name} ji, aap kabhi bhi toll free number par sampark kar sakte hain.",
+             "Zaroor, main kal shaam dobara call karunga. Shukriya.",
+             "Theek hai, disturb karne ke liye maafi. Namaste.",
+             "Samay dene ke liye dhanyavaad sir, aapka din shubh ho."],
+        ),
+        (
+            ["नमस्ते {name} जी, मैं {shop} फाइनेंस से बोल रहा हूँ।",
+             "हेलो सर, {shop} से एक छोटा सा कॉल है आपके लिए ऑफर के बारे में।",
+             "हाय {name} जी, क्या सही व्यक्ति से बात हो रही है? {shop} से बोल रहे हैं।",
+             "गुड मॉर्निंग मैडम, {shop} सर्विसेज़ से कॉल है। दो मिनट मिलेंगे?",
+             "हेलो {name}, मैं {shop} सेल्स टीम से हूँ।",
+             "हाय, {shop} से बोल रहा हूँ। आपने हमारी वेबसाइट पर पूछताछ की थी, उसी के फॉलो अप में कॉल है।"],
+            ["आप प्री-अप्रूव्ड पर्सनल लोन के लिए पात्र हैं, कम ब्याज दर पर और इस महीने कोई प्रोसेसिंग फीस नहीं।",
+             "हमारा नया हेल्थ इंश्योरेंस प्लान है जिसमें दस हज़ार से ज़्यादा अस्पतालों में कैशलेस इलाज मिलता है।",
+             "हमारे पास किराना और फ्यूल पर कैशबैक वाला फ्री क्रेडिट कार्ड भी है।",
+             "आज प्लान अपग्रेड करेंगे तो तीन महीने प्रीमियम सर्विस फ्री मिलेगी।",
+             "ऑफर इस महीने के अंत तक वैलिड है और पेपरवर्क पूरा ऑनलाइन है।",
+             "अगर चाहें तो मैं ब्रोशर और डिटेल्स WhatsApp पर भेज देता हूँ।",
+             "हमारे रिलेशनशिप मैनेजर आपके सुविधाजनक समय पर घर आ सकते हैं।"],
+            ["कोई बात नहीं, इच्छुक नहीं हैं तो दोबारा कॉल नहीं करूंगा। समय देने के लिए धन्यवाद।",
+             "ठीक है, मैं डिटेल्स WhatsApp पर भेज देता हूँ। आपका दिन अच्छा हो।",
+             "धन्यवाद {name} जी, आप कभी भी टोल फ्री नंबर पर संपर्क कर सकते हैं।",
+             "ज़रूर, मैं कल शाम दोबारा कॉल करूंगा। शुक्रिया।",
+             "ठीक है, परेशान करने के लिए माफ़ी। नमस्ते।",
+             "समय देने के लिए धन्यवाद सर, आपका दिन शुभ हो।"],
+        ),
+    ],
 }  # fmt: skip
+FILLERS = (
+    ["Okay.", "Yes, go on.", "Sorry, can you repeat that?", "Hmm, I see.", "Right, understood.",
+     "One second, let me check.", "Yes yes, that is fine.", "Hello? Can you hear me?"],
+    ["Achha.", "Haan, boliye.", "Sorry, dobara bolenge?", "Hmm, samajh gaya.", "Theek hai.",
+     "Ek second, check karta hoon.", "Haan haan, chalega.", "Hello? Awaaz aa rahi hai?"],
+    ["अच्छा।", "हाँ, बोलिए।", "सॉरी, दोबारा बोलेंगे?", "हम्म, समझ गया।", "ठीक है।",
+     "एक सेकंड, चेक करता हूँ।", "हाँ हाँ, चलेगा।", "हेलो? आवाज़ आ रही है?"],
+)  # fmt: skip
 BANKS = ["HDFC", "ICICI", "SBI", "Axis", "Kotak"]
 SHOPS = ["Amazon", "Flipkart", "Swiggy", "Zomato", "BlueDart", "Bajaj", "Policybazaar"]
 
 
+def pick_name(rng: np.random.Generator, lang: str) -> str:
+    pool = NAMES[1] if lang == "hi" else NAMES[0]
+    return pool[int(rng.integers(len(pool)))]
+
+
 def benign_call_chunks(rng: np.random.Generator, kind: str, lang: str) -> list[str]:
     li = LANGS.index(lang)
-    variants = BENIGN_SCRIPTS[kind][li]
-    script = variants[int(rng.integers(len(variants)))]
-    ctx = {"bank": str(rng.choice(BANKS)), "shop": str(rng.choice(SHOPS))}
-    return [c.format(**ctx) for c in script]
+    opens, bodies, closes = BENIGN[kind][li]
+    ctx = {
+        "name": pick_name(rng, lang),
+        "bank": str(rng.choice(BANKS)),
+        "shop": str(rng.choice(SHOPS)),
+    }
+    n_body = int(rng.choice([1, 2, 2, 3, 3, 4]))
+    body_idx = rng.permutation(len(bodies))[:n_body]
+    chunks = [opens[int(rng.integers(len(opens)))]]
+    chunks += [bodies[int(i)] for i in body_idx]
+    n_fill = int(rng.choice([0, 0, 1, 1, 2, 3, 5]))
+    for _ in range(n_fill):  # filler back-and-forth makes some benign calls long
+        chunks.insert(int(rng.integers(1, len(chunks) + 1)), FILLERS[li][int(rng.integers(8))])
+    chunks.append(closes[int(rng.integers(len(closes)))])
+    return [c.format(**ctx) for c in chunks]
 
 
 def _pick_lang(rng: np.random.Generator) -> str:
@@ -420,7 +620,6 @@ def benign_call_corpus(seed: int, n: int) -> list[tuple[str, str, str]]:
 
 
 def chunks_to_events(
-    world: World,
     rng: np.random.Generator,
     call_key: str,
     victim_token: str,
@@ -467,11 +666,11 @@ def gen_benign_calls(
             lang = _pick_lang(rng)
             hour = float(rng.uniform(8, 21))
             start = world.start + timedelta(days=d, hours=hour)
-            channel = "pstn" if rng.random() < 0.7 else "voip"
+            channel = str(rng.choice(["pstn", "voip", "video"], p=BENIGN_CHANNEL_P[kind]))
             number = f"+91{int(rng.integers(6_000_000_000, 9_999_999_999))}"
             all_events.extend(
                 chunks_to_events(
-                    world, rng, f"b:{world.seed}:{seed}:{idx}",
+                    rng, f"b:{world.seed}:{seed}:{idx}",
                     world.payer_token(cit.citizen_id), world.phone_hash(number), start,
                     benign_call_chunks(rng, kind, lang), lang, channel,
                 )

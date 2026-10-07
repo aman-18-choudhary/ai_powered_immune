@@ -6,7 +6,7 @@ import numpy as np
 from scipy import stats
 
 from sim_engine.benign import gen_benign_txns
-from sim_engine.scam import gen_scam_campaign
+from sim_engine.scam import PASS_THROUGH_MAX, gen_scam_campaign
 from sim_engine.world import IST, build_world
 
 
@@ -91,13 +91,15 @@ def test_scam_victim_transfer_follows_call_within_minutes(campaigns):
         for v in c.victim_tokens:
             calls = [e for e in c.calls if e.victim_token == v]
             vt = [t for t in c.txns if t.payer_token == v]
-            assert len({e.call_id for e in calls}) == 1
-            assert len(calls) >= 6  # multi-chunk call
+            call_ids = {e.call_id for e in calls}
+            assert 1 <= len(call_ids) <= 2  # optional short first contact + main call
             first_call, last_chunk = min(e.ts for e in calls), max(e.ts for e in calls)
             first_txn = min(t.ts for t in vt)
             assert first_txn > last_chunk
-            assert first_txn - first_call < timedelta(minutes=30)
             assert first_txn - last_chunk < timedelta(minutes=10)
+            assert first_txn - first_call < timedelta(minutes=45)
+            main = max(call_ids, key=lambda i: sum(e.call_id == i for e in calls))
+            assert sum(e.call_id == main for e in calls) >= 5
 
 
 def test_scam_amounts_skew_high_split_and_repeat(campaigns, benign):
@@ -106,9 +108,29 @@ def test_scam_amounts_skew_high_split_and_repeat(campaigns, benign):
         for v in c.victim_tokens:
             vt = [t for t in c.txns if t.payer_token == v]
             assert len(vt) >= 2
-            assert all(t.rail == "UPI" and t.amount_inr <= Decimal("100000") for t in vt)
+            assert all(t.amount_inr <= Decimal("100000") for t in vt if t.rail == "UPI")
+            assert all(t.amount_inr <= Decimal("500000") for t in vt if t.rail == "IMPS")
             assert sum(t.amount_inr for t in vt) >= Decimal("20000")
             assert min(float(t.amount_inr) for t in vt) > 10 * med_benign
+            # an account cannot move more than Rs 1,00,000 via UPI per day
+            per_day: dict = {}
+            for t in vt:
+                if t.rail == "UPI":
+                    per_day[t.ts.date()] = per_day.get(t.ts.date(), 0) + t.amount_inr
+            assert all(total <= Decimal("100000") for total in per_day.values())
+    big = [
+        sum(t.amount_inr for t in c.txns if t.payer_token == v)
+        for c in campaigns
+        for v in c.victim_tokens
+    ]
+    assert any(x > Decimal("100000") for x in big)  # some victims move more than a UPI day
+    imps = [
+        t
+        for c in campaigns
+        for t in c.txns
+        if t.rail == "IMPS" and t.payer_token in c.victim_tokens
+    ]
+    assert imps
 
 
 def test_mules_young_fan_in_fan_out(campaigns):
@@ -134,9 +156,9 @@ def test_mule_chain_pass_through_under_one_hour(campaigns):
                 for o in c.txns
                 if o.payee_hash == c.mule_chain[-1]
                 and o.ts >= t_in.ts
-                and o.ts - t_in.ts <= timedelta(hours=1)
+                and o.ts - t_in.ts <= PASS_THROUGH_MAX
             ]
-            assert outs, "inflow not forwarded within an hour"
+            assert outs, "inflow not forwarded in time"
 
 
 def test_same_seed_is_deterministic():
@@ -149,3 +171,10 @@ def test_same_seed_is_deterministic():
     assert snap(5) == snap(5)
     assert snap(5) != snap(6)
     assert IST.key == "Asia/Kolkata"
+
+
+def test_account_keys_include_campaign_seed(world):
+    a = gen_scam_campaign(world, "same-id", 3, 1)
+    b = gen_scam_campaign(world, "same-id", 3, 2)
+    assert not set(a.mule_account_ids) & set(b.mule_account_ids)
+    assert a.cashout_account_id != b.cashout_account_id

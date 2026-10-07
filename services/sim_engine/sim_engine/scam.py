@@ -8,11 +8,23 @@ from decimal import Decimal
 import numpy as np
 from scam_contracts.models import IMPS_LIMIT_INR, UPI_LIMIT_INR, CallEvent, Transaction
 
-from .calls import LANG_P, LANGS, chunks_to_events, scam_call_chunks
+from .calls import (
+    LANG_P,
+    LANGS,
+    SCAM_VIDEO_CHANNEL_P,
+    chunks_to_events,
+    pick_name,
+    scam_call_chunks,
+)
 from .world import CASHOUT_CITIES, Account, World, stable_id
 
 MASS_VICTIM_THRESHOLD = 10
-PASS_THROUGH_MAX = timedelta(minutes=45)
+PASS_THROUGH_MAX = timedelta(minutes=45)  # max delay from a mule inflow to its sweep
+_SWEEP_WINDOW_MIN = 10  # inflows within this window are swept together
+_SWEEP_DELAY_MAX_MIN = 20
+assert timedelta(minutes=_SWEEP_WINDOW_MIN + _SWEEP_DELAY_MAX_MIN) <= PASS_THROUGH_MAX
+UPI_DAILY_CAP = float(UPI_LIMIT_INR)  # one account cannot move more than this via UPI per day
+IMPS_CHUNK_MAX = float(IMPS_LIMIT_INR) * 0.99
 
 
 @dataclass
@@ -43,15 +55,41 @@ def _mk_account(world: World, rng: np.random.Generator, key: str, kind: str, whe
     return acc
 
 
-def _split(rng: np.random.Generator, total: float, limit: float, rail: str) -> list[float]:
-    """Split ``total`` into near-round parts, each within the rail limit."""
-    n = int(np.ceil(total / (limit * 0.99)))
-    n += int(rng.integers(0, 2)) if rail == "UPI" else 0
-    n = max(n, 2) if rail == "UPI" else max(n, 1)
+def _channel(rng: np.random.Generator) -> str:
+    return str(rng.choice(["pstn", "voip", "video"], p=SCAM_VIDEO_CHANNEL_P))
+
+
+def _irregular(rng: np.random.Generator, x: float, cap: float) -> float:
+    """Scam amounts are not all round: some round to 1000s, most are irregular rupees,
+    a few carry paise (e.g. fee-like or tax-like totals)."""
+    r = rng.random()
+    if r < 0.30:
+        v = max(round(x / 1000.0) * 1000.0, 5000.0)
+    elif r < 0.85:
+        v = float(round(x))
+    else:
+        v = round(x, 2)
+    return min(max(v, 5000.0), cap)
+
+
+def _split(rng: np.random.Generator, total: float, cap: float, min_parts: int = 2) -> list[float]:
+    """Split ``total`` into irregular parts, each <= cap, repeated transfers."""
+    n = max(min_parts, int(np.ceil(total / (cap * 0.97))))
     w = rng.uniform(0.6, 1.4, n)
-    parts = np.floor(total * w / w.sum() / 100.0) * 100.0
-    parts = np.minimum(np.maximum(parts, 1000.0), limit * 0.99999)
-    return [float(p) for p in parts]
+    return [_irregular(rng, total * wi / w.sum(), cap) for wi in w]
+
+
+def _victim_plan(rng: np.random.Generator, total: float) -> list[tuple[str, float]]:
+    """(rail, amount) transfers. UPI is capped at Rs 1,00,000 per account per day, so
+    larger totals go out as IMPS (<= Rs 5,00,000 each) after the first UPI transfers."""
+    if total <= UPI_DAILY_CAP:
+        return [
+            ("UPI", a) for a in _split(rng, total, UPI_DAILY_CAP * 0.99, 2 if total < 50_000 else 3)
+        ]
+    upi_part = float(rng.uniform(30_000, 0.99 * UPI_DAILY_CAP))
+    plan = [("UPI", a) for a in _split(rng, upi_part, UPI_DAILY_CAP * 0.5, 2)]
+    plan += [("IMPS", a) for a in _split(rng, total - upi_part, IMPS_CHUNK_MAX, 1)]
+    return plan
 
 
 def gen_scam_campaign(
@@ -67,10 +105,13 @@ def gen_scam_campaign(
 
     # --- infrastructure: young mule accounts (3-6), shared devices, one cash-out account
     n_mules = int(rng.integers(3, 7))
-    mules = [_mk_account(world, rng, f"{campaign_id}:mule:{i}", "mule", t0) for i in range(n_mules)]
-    cashout = _mk_account(world, rng, f"{campaign_id}:cashout", "cashout", t0)
+    mules = [
+        _mk_account(world, rng, f"{seed}:{campaign_id}:mule:{i}", "mule", t0)
+        for i in range(n_mules)
+    ]
+    cashout = _mk_account(world, rng, f"{seed}:{campaign_id}:cashout", "cashout", t0)
     mule_devices = [
-        world.device_token(stable_id("dev", world.seed, campaign_id, k)) for k in range(2)
+        world.device_token(stable_id("dev", world.seed, seed, campaign_id, k)) for k in range(2)
     ]
     camp.mule_account_ids = [m.account_id for m in mules]
     camp.cashout_account_id = cashout.account_id
@@ -119,24 +160,32 @@ def gen_scam_campaign(
         camp.victim_tokens.append(vtoken)
         t = t + timedelta(minutes=float(rng.exponential(35)))
         lang = str(rng.choice(LANGS, p=LANG_P))
-        channel = str(rng.choice(["video", "voip", "pstn"], p=[0.6, 0.3, 0.1]))
-        chunks = scam_call_chunks(rng, lang)
-        events = chunks_to_events(
-            world, rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}", vtoken,
-            caller_hashes[int(rng.integers(len(caller_hashes)))], t, chunks, lang, channel,
+        name = pick_name(rng, lang)
+        caller = caller_hashes[int(rng.integers(len(caller_hashes)))]
+        call_start = t
+        events: list[CallEvent] = []
+        if rng.random() < 0.35:  # short first-contact call, then the real one minutes later
+            events = chunks_to_events(
+                rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:a", vtoken, caller, call_start,
+                scam_call_chunks(rng, lang, name, "short"), lang, _channel(rng),
+            )  # fmt: skip
+            camp.calls.extend(events)
+            call_start = events[-1].ts + timedelta(minutes=float(rng.uniform(3, 10)))
+        main = chunks_to_events(
+            rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:b", vtoken, caller, call_start,
+            scam_call_chunks(rng, lang, name, "full"), lang, _channel(rng),
         )  # fmt: skip
-        camp.calls.extend(events)
-        # victim transfers follow the demand within minutes; skewed-high, split, repeated
+        camp.calls.extend(main)
+        # victim transfers follow the demand within minutes; skewed-high, split, repeated;
+        # UPI is capped per day, so larger totals continue over IMPS
         total = float(np.clip(rng.lognormal(np.log(120_000), 0.7), 20_000, 600_000))
-        parts = _split(rng, total, float(UPI_LIMIT_INR), "UPI")
-        ts = events[-1].ts + timedelta(minutes=float(rng.uniform(1, 6)))
+        ts = main[-1].ts + timedelta(minutes=float(rng.uniform(1, 6)))
         first = None
         vic_mules = rng.permutation(n_mules)[: max(2, min(n_mules, 3))]
-        for pi, amt in enumerate(parts):
+        device = world.device_token(cit.device_id)
+        for pi, (rail, amt) in enumerate(_victim_plan(rng, total)):
             mule = mules[int(vic_mules[pi % len(vic_mules)])]
-            device = world.device_token(cit.device_id)
-            txn = mk_txn(vtoken, mule, "UPI", amt, ts, cit.bank_id, device,
-                         "victim_transfer")  # fmt: skip
+            txn = mk_txn(vtoken, mule, rail, amt, ts, cit.bank_id, device, "victim_transfer")
             inflows[mule.account_id].append((ts, amt))
             first = first or txn
             ts = ts + timedelta(minutes=float(rng.uniform(1, 5)))
@@ -147,15 +196,15 @@ def gen_scam_campaign(
         rows = sorted(inflows[mule.account_id])
         i = 0
         while i < len(rows):
-            window_end = rows[i][0] + timedelta(minutes=10)
+            window_end = rows[i][0] + timedelta(minutes=_SWEEP_WINDOW_MIN)
             batch = [r for r in rows[i:] if r[0] <= window_end]
             i += len(batch)
             amount = sum(a for _, a in batch)
-            send_ts = batch[-1][0] + timedelta(minutes=float(rng.uniform(2, 20)))
-            rail = "UPI" if amount <= float(UPI_LIMIT_INR) else "IMPS"
-            limit = float(UPI_LIMIT_INR if rail == "UPI" else IMPS_LIMIT_INR)
-            while amount > 0:
-                chunk = min(amount, limit * 0.999)
+            send_ts = batch[-1][0] + timedelta(minutes=float(rng.uniform(2, _SWEEP_DELAY_MAX_MIN)))
+            rail = "UPI" if amount <= 50_000 else "IMPS"
+            limit = UPI_DAILY_CAP * 0.99 if rail == "UPI" else IMPS_CHUNK_MAX
+            while amount > 0.005:
+                chunk = min(amount, limit)
                 mk_txn(camp.mule_payer_tokens[mi], cashout, rail, chunk, send_ts, mule.bank_id,
                        mule_devices[mi % 2], "mule_forward")  # fmt: skip
                 amount -= chunk

@@ -138,7 +138,7 @@ def build_world(
     city_idx = rng.choice(len(CITIES), size=n_citizens, p=w / w.sum())
     bank_idx = rng.choice(n_banks, size=n_citizens, p=_bank_shares(n_banks))
     age_days = rng.integers(200, 4000, size=n_citizens)
-    young = rng.random(n_citizens) < 0.02  # a few legitimately new accounts
+    young = rng.random(n_citizens) < 0.06  # legitimately new accounts
     age_days = np.where(young, rng.integers(3, 30, size=n_citizens), age_days)
     activity = rng.gamma(shape=1.5, scale=1 / 1.5, size=n_citizens)
 
@@ -161,6 +161,8 @@ def build_world(
         )  # fmt: skip
     n_merch = max(60, n_citizens // 8)
     mage = rng.integers(100, 3000, size=n_merch)
+    new_shop = rng.random(n_merch) < 0.20  # newly onboarded merchants / QR codes
+    mage = np.where(new_shop, rng.integers(1, 30, size=n_merch), mage)
     merchants = []
     for j in range(n_merch):
         acc_id = stable_id("acct", seed, "m", j, n=12)
