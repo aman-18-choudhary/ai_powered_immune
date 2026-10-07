@@ -1,0 +1,200 @@
+"""Gradient-boosted transaction risk model (``gbm-v1``) with rules-only fallback.
+
+What the score means
+--------------------
+``score`` is the output of ``HistGradientBoostingClassifier`` (monotone in the cues that must
+only ever add risk) passed through an isotonic calibrator fitted on held-out simulator seeds. It
+is therefore a calibrated probability *within the simulator's world*: P(transaction is part of
+a labelled scam | features) at the simulator's scam prevalence (about 1 scam transaction per 100
+benign in the training streams, far higher than any real base rate), with an imperfect
+call-risk signal (see ``simdata.py``). It is NOT a real-world fraud probability and must not be
+read as one; it is a ranking-quality risk score thresholded by ``decision.decide``.
+
+Reasons are occlusion attributions: for each fired cue, ``weight`` is how far the score drops
+when that cue's features are reset to neutral values (floored at 0). Details never contain ids.
+
+The artifact (joblib dict: ``model_version``, ``sklearn_version``, ``feature_names``, ``model``,
+``calibrator`` + training metadata) is produced by ``python -m txn_guard.train``. It is loaded
+only if its SHA-256 matches ``artifact_pin.py``, the scikit-learn version matches, the feature
+names match ``features.FEATURE_NAMES`` and a smoke test passes; otherwise the Scorer runs the
+transparent ``rules-fallback-v1`` scorer and says so loudly (WARNING log, ``fallback_mode``).
+A failure inside ``predict_proba`` at runtime also falls back, for that call only.
+"""
+
+import hashlib
+import io
+import logging
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from scam_contracts.models import Reason
+
+from . import artifact_pin
+from .features import FEATURE_NAMES
+from .reasons import BASELINES, NO_RISK, TOP_K, triggers
+from .rules import RULES_VERSION, rules_score
+
+log = logging.getLogger("txn_guard")
+
+MODEL_VERSION = "gbm-v1"
+ARTIFACT_PATH = Path(__file__).parent / "artifacts" / "gbm-v1.joblib"
+SMOKE_SCAM_MIN = 0.5
+SMOKE_BENIGN_MAX = 0.2
+FUTURE_FLOOR = 0.5  # a future-dated timestamp is suspicious: at least step_up
+# Policy guardrail: an active scam-call risk together with a *strong* amount anomaly toward a
+# payee this payer has not paid before is floored at hold_verify. The simulator's scam payees are
+# always young accounts, so the booster never sees "old payee + huge amount + call risk" and
+# would allow it; the floor closes that blind spot. Young-payee cases are left to the model
+# (benign people on legit calls pay young merchants often; flooring them would breach the
+# benign hold budget). The floor is applied after calibration and is not part of the calibration.
+GUARD_CALL_RISK = 0.7
+GUARD_AMOUNT_Z = 3.0
+GUARD_FLOOR = 0.85
+
+_BASE: dict[str, float] = dict.fromkeys(FEATURE_NAMES, 0.0) | {
+    "payee_age_days": 900.0, "history_len": 3.5, "rail": 0.0,
+    "hour_ist": 14.0, "velocity_count_24h": 1.0, "velocity_amount_24h": 6.0,
+}  # fmt: skip
+SMOKE_BENIGN = dict(_BASE)
+SMOKE_SCAM = _BASE | {
+    "amount_zscore": 4.0, "amount_vs_typical_log": 4.5, "payee_age_days": 5.0,
+    "payee_age_young": 1.0, "new_payee": 1.0, "active_call_risk": 0.9, "velocity_count_1h": 2.0,
+    "velocity_amount_1h": 10.5,
+}  # fmt: skip
+
+
+@dataclass
+class GbmModel:
+    model: Any
+    calibrator: Any
+    version: str
+
+    def proba(self, rows: np.ndarray) -> np.ndarray:
+        raw = self.model.predict_proba(rows)[:, 1]
+        cal = self.calibrator.predict(raw) if self.calibrator is not None else raw
+        return np.clip(np.asarray(cal, dtype=float), 0.0, 1.0)
+
+
+def guard_floor(f: dict[str, float]) -> float:
+    """0.0, or GUARD_FLOOR when the call-risk + strong-amount-anomaly + new-payee guard fires."""
+    hit = (
+        f["active_call_risk"] >= GUARD_CALL_RISK
+        and f["amount_zscore"] >= GUARD_AMOUNT_Z
+        and f["new_payee"] >= 1.0
+    )
+    return GUARD_FLOOR if hit else 0.0
+
+
+def _vector(f: dict[str, float]) -> list[float]:
+    return [_clean(f.get(k, 0.0)) for k in FEATURE_NAMES]
+
+
+def _clean(x: float) -> float:
+    return float(x) if math.isfinite(x) else 0.0
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_model(path: Path | None = None, expected_sha256: str | None = None) -> GbmModel | None:
+    """Load and verify the artifact; None (rules fallback) on any problem."""
+    path = path or ARTIFACT_PATH
+    pin = artifact_pin.ARTIFACT_SHA256 if expected_sha256 is None else expected_sha256
+    try:
+        import joblib
+        import sklearn
+
+        raw = path.read_bytes()
+        if not pin or hashlib.sha256(raw).hexdigest() != pin:
+            log.warning("txn model artifact failed integrity check; using %s", RULES_VERSION)
+            return None
+        blob = joblib.load(io.BytesIO(raw))
+        if blob.get("sklearn_version") != sklearn.__version__:
+            log.warning("txn model artifact sklearn version mismatch; using %s", RULES_VERSION)
+            return None
+        if tuple(blob.get("feature_names", ())) != FEATURE_NAMES:
+            log.warning("txn model artifact feature mismatch; using %s", RULES_VERSION)
+            return None
+        m = GbmModel(blob["model"], blob.get("calibrator"), str(blob["model_version"]))
+        p = m.proba(np.array([_vector(SMOKE_SCAM), _vector(SMOKE_BENIGN)]))
+        if not (p[0] >= SMOKE_SCAM_MIN and p[1] <= SMOKE_BENIGN_MAX):
+            log.warning("txn model artifact failed smoke test; using %s", RULES_VERSION)
+            return None
+        return m
+    except Exception:
+        log.warning("txn model artifact unavailable at %s; using %s", path.name, RULES_VERSION)
+        return None
+
+
+class Scorer:
+    """``score(features) -> (score in [0,1], reasons)``; ``score_with_version`` also returns the
+    model version that actually produced the verdict (``gbm-v1`` or ``rules-fallback-v1``)."""
+
+    def __init__(self, path: Path | None = None, expected_sha256: str | None = None) -> None:
+        self._model = load_model(path, expected_sha256)
+        self.model_errors = 0
+        if self._model is None:
+            log.warning("txn-guard running in FALLBACK mode: %s", RULES_VERSION)
+
+    @property
+    def fallback_mode(self) -> bool:
+        return self._model is None
+
+    @property
+    def model_version(self) -> str:
+        return self._model.version if self._model else RULES_VERSION
+
+    def score(self, features: dict[str, float]) -> tuple[float, list[Reason]]:
+        s, reasons, _ = self.score_with_version(features)
+        return s, reasons
+
+    def score_with_version(self, features: dict[str, float]) -> tuple[float, list[Reason], str]:
+        f = {k: _clean(features.get(k, 0.0)) for k in FEATURE_NAMES}
+        out: tuple[float, list[Reason]] | None = None
+        version = RULES_VERSION
+        if self._model is not None:
+            try:
+                out = self._model_score(f)
+                version = self._model.version
+            except Exception:
+                self.model_errors += 1
+                log.warning(
+                    "txn model inference failed; using %s for this transaction", RULES_VERSION
+                )
+        if out is None:
+            out = rules_score(f)
+        score, reasons = out
+        if f["future_dated"] >= 1.0:
+            score = max(score, FUTURE_FLOOR)
+        floor = guard_floor(f)
+        if floor > score:
+            lift = (floor - score) / 2
+            score = floor
+            reasons = [
+                r.model_copy(update={"weight": round(max(r.weight, lift), 4)})
+                if r.code in ("ACTIVE_SCAM_CALL", "AMOUNT_ANOMALY") else r
+                for r in reasons
+            ]  # fmt: skip
+        return min(1.0, max(0.0, _clean(score))), reasons, version
+
+    def _model_score(self, f: dict[str, float]) -> tuple[float, list[Reason]]:
+        assert self._model is not None
+        trig = triggers(f)
+        occl = [t for t in trig if t.code in BASELINES]
+        rows = [_vector(f)] + [_vector(f | BASELINES[t.code]) for t in occl]
+        p = self._model.proba(np.array(rows))
+        drop = {t.code: max(0.0, float(p[0] - p[i + 1])) for i, t in enumerate(occl)}
+        ranked = sorted(
+            trig, key=lambda t: (drop.get(t.code, t.salience), t.salience), reverse=True
+        )
+        reasons = [
+            Reason(code=t.code, weight=round(drop.get(t.code, t.salience), 4), detail=t.detail)
+            for t in ranked[:TOP_K]
+        ]
+        return float(p[0]), reasons or [
+            Reason(code=NO_RISK, weight=0.0, detail="No risk indicators fired")
+        ]
