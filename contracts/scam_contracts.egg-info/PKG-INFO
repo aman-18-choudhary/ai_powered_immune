@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: scam-contracts
+Version: 0.1.0
+Summary: Shared pydantic contracts for the scam immune system
+Requires-Python: >=3.11
+Requires-Dist: pydantic>=2.5
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"

@@ -1,0 +1,8 @@
+pyproject.toml
+scam_contracts/__init__.py
+scam_contracts.egg-info/PKG-INFO
+scam_contracts.egg-info/SOURCES.txt
+scam_contracts.egg-info/dependency_links.txt
+scam_contracts.egg-info/requires.txt
+scam_contracts.egg-info/top_level.txt
+tests/test_models.py
