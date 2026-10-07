@@ -1,14 +1,19 @@
 """Password hashing, user store and JWT issue/verify (HS256 only)."""
 
+import asyncio
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
 import jwt
+
+logger = logging.getLogger(__name__)
 
 ROLES: frozenset[str] = frozenset({"officer", "analyst", "citizen", "admin"})
 ALGORITHM = "HS256"
@@ -55,7 +60,11 @@ class UserStore(Protocol):
 class InMemoryUserStore:
     """Users held in memory with hashed passwords. A Postgres store can replace it."""
 
-    def __init__(self, users: dict[str, tuple[str, str]] | None = None) -> None:
+    def __init__(
+        self, users: dict[str, tuple[str, str]] | None = None, max_concurrent_hashes: int = 4
+    ) -> None:
+        # Caps threads spent on scrypt so unauthenticated logins cannot exhaust the pool.
+        self._sem = asyncio.Semaphore(max_concurrent_hashes)
         self._users: dict[str, tuple[str, str]] = {}
         # Verified against when the username is unknown, so timing does not leak existence.
         self._dummy = hash_password(secrets.token_hex(16))
@@ -69,23 +78,32 @@ class InMemoryUserStore:
 
     async def authenticate(self, username: str, password: str) -> Principal | None:
         record = self._users.get(username)
-        ok = verify_password(password, record[0] if record else self._dummy)
+        async with self._sem:
+            ok = await asyncio.to_thread(
+                verify_password, password, record[0] if record else self._dummy
+            )
         if record is None or not ok:
             return None
         return Principal(sub=username, role=record[1])
 
 
-# Clearly-marked demo defaults, used only when GATEWAY_DEMO_USERS=1 and no override is set.
-_DEMO_DEFAULT_PASSWORD = "demo-only-change-me"
-
-
 def demo_users_from_env(overrides: dict[str, str] | None = None) -> dict[str, tuple[str, str]]:
-    """One demo user per role (username == role). Password: GATEWAY_DEMO_PASSWORD_<ROLE>."""
+    """One demo user per role (username == role).
+
+    Password precedence: explicit override, GATEWAY_DEMO_PASSWORD_<ROLE>, GATEWAY_DEMO_PASSWORD,
+    else a random password logged once (never a fixed default).
+    """
+    logger.warning("GATEWAY_DEMO_USERS is enabled: demo accounts exist. Never use in production.")
     users: dict[str, tuple[str, str]] = {}
     for role in sorted(ROLES):
-        password = (overrides or {}).get(role) or os.getenv(
-            f"GATEWAY_DEMO_PASSWORD_{role.upper()}", _DEMO_DEFAULT_PASSWORD
+        password = (
+            (overrides or {}).get(role)
+            or os.getenv(f"GATEWAY_DEMO_PASSWORD_{role.upper()}")
+            or os.getenv("GATEWAY_DEMO_PASSWORD")
         )
+        if not password:
+            password = secrets.token_urlsafe(12)
+            logger.warning("generated demo password for %s: %s", role, password)
         users[role] = (password, role)
     return users
 
@@ -94,7 +112,13 @@ def issue_token(
     secret: str, principal: Principal, ttl_seconds: int = DEFAULT_TTL_SECONDS
 ) -> tuple[str, int]:
     now = int(time.time())
-    claims = {"sub": principal.sub, "role": principal.role, "iat": now, "exp": now + ttl_seconds}
+    claims = {
+        "sub": principal.sub,
+        "role": principal.role,
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "jti": str(uuid.uuid4()),
+    }
     return jwt.encode(claims, secret, algorithm=ALGORITHM), ttl_seconds
 
 
@@ -109,6 +133,6 @@ def decode_token(secret: str, token: str) -> Principal:
     except jwt.PyJWTError as exc:
         raise AuthError(type(exc).__name__) from exc
     role, sub = claims.get("role"), claims.get("sub")
-    if role not in ROLES or not isinstance(sub, str) or not sub:
+    if not isinstance(role, str) or role not in ROLES or not isinstance(sub, str) or not sub:
         raise AuthError("bad claims")
     return Principal(sub=sub, role=role)

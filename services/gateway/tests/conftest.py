@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import fakeredis.aioredis
 import httpx
 import pytest
@@ -13,11 +15,14 @@ class Upstream:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self.down = False
+        self.override: Callable[[httpx.Request], httpx.Response] | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.down:
             raise httpx.ConnectError("boom", request=request)
         self.requests.append(request)
+        if self.override:
+            return self.override(request)
         return httpx.Response(200, json={"path": request.url.path, "q": request.url.query.decode()})
 
 

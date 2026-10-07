@@ -83,7 +83,7 @@ async def test_rate_limit_returns_429(make_client, auth):
     codes = [(await c.get("/api/citizen/x", headers=h)).status_code for _ in range(5)]
     assert codes == [200, 200, 200, 429, 429]
     r = await c.get("/api/citizen/x", headers=h)
-    assert 1 <= int(r.headers["retry-after"]) <= 60
+    assert 1 <= int(r.headers["retry-after"]) <= 60  # never above the window
 
 
 async def test_rate_limit_is_per_subject(make_client, auth):
