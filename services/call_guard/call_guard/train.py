@@ -75,9 +75,13 @@ def build_split(seed: int, benign_lines: list[str], n_sim: tuple[int, int], n_au
     st, sl = sim_chunks(seed, *n_sim)
     rng = np.random.default_rng([seed, 43])
     a_scam = authored.scam_chunks(rng, n_auth_scam)
-    texts = [*st, *a_scam, *benign_lines]
-    labels = [*sl, *[1] * len(a_scam), *[0] * len(benign_lines)]
-    weights = [*[1.0] * len(st), *[AUTHORED_WEIGHT] * (len(a_scam) + len(benign_lines))]
+    notices = authored.benign_notice_chunks(rng, n_auth_scam // 2)
+    texts = [*st, *a_scam, *benign_lines, *notices]
+    labels = [*sl, *[1] * len(a_scam), *[0] * (len(benign_lines) + len(notices))]
+    weights = [
+        *[1.0] * len(st),
+        *[AUTHORED_WEIGHT] * (len(a_scam) + len(benign_lines) + len(notices)),
+    ]
     return texts, labels, weights
 
 
@@ -96,7 +100,7 @@ def make_pipeline() -> Pipeline:
                     dtype=np.float32,
                 ),
             ),
-            ("lr", LogisticRegression(C=3.0, max_iter=2000)),
+            ("lr", LogisticRegression(C=1.0, max_iter=2000)),
         ]
     )
 

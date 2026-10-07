@@ -93,14 +93,31 @@ EVASION = [
 ]
 
 
+STRONG_EVASION = [EVASION[0], EVASION[2], EVASION[4]]  # two independent cue classes
+
+
 @pytest.mark.parametrize("text", EVASION)
 def test_awareness_words_do_not_blank_demand_clauses(text):
+    """The demand clause survives (reasons present, score high) and, for single-class texts,
+    a second cue-bearing chunk in the same call crosses the threshold."""
     from call_guard.model import Scorer, load_classifier
 
-    assert Scorer(load_classifier()).score_text(text)[0] >= 0.7
+    s = Scorer(load_classifier())
+    score, reasons, _ = s.score_text(text)
+    assert reasons and reasons[0].code != "NO_RISK_INDICATORS" and score >= 0.55
+    if text in STRONG_EVASION:
+        assert score >= 0.7
+    else:  # lone accusation / lone isolation demand: below threshold alone, crosses with a 2nd cue
+        assert score < 0.7
+        second = "This is Inspector Rao from the CBI. Transfer your funds to the RBI safe account."
+        from call_guard.session import accumulate
+
+        st = accumulate(None, score, reasons, 0.0)
+        s2, r2, _ = s.score_text(second)
+        assert accumulate(st, s2, r2, 20.0).score >= 0.7
 
 
-@pytest.mark.parametrize("text", [EVASION[0], EVASION[2], EVASION[4]])
+@pytest.mark.parametrize("text", STRONG_EVASION)
 def test_evasion_crosses_with_rules_alone(text):
     assert score_text(text)[0] >= 0.7
 
@@ -162,3 +179,47 @@ def test_dev_set_rules_only_recall_and_fp():
     hits = sum(score_text(t)[0] >= 0.7 for t in SCAM)
     assert hits / len(SCAM) >= 0.70
     assert not [t for t in BENIGN if score_text(t)[0] >= 0.7]
+
+
+RELAYED_OR_MEDIA = [
+    "If someone tells you that you are under digital arrest, it's a scam.",
+    "Someone called mom and said you are under digital arrest, what should we do?",
+    "Papa, ek caller bol raha tha aap digital arrest me ho, ye kya hai? Mujhe darr lag raha hai.",
+    "In the film the inspector tells the hero, you are under digital arrest, don't leave the room.",
+    "Dad, I got a call. They said there is an FIR in my name and I must not tell anyone. I am calling you instead.",
+    "Hi dad, did you see the news last night? An old man in Pune lost twenty lakhs to a digital arrest scam, the caller pretended to be from the CBI.",
+    "Did you watch that crime show last night? The inspector put the villain under arrest after the courier with drugs was found.",
+    "Yaar kal news me dekha, ek aadmi ko digital arrest scam me do lakh ka chuna laga. Mummy ko bol dena ki aise calls pe bharosa na kare, police aise video call par arrest nahi karti.",
+    "Mom, a man claiming to be from CBI said I am under digital arrest and told me to stay on video. Is this real? I'm scared.",
+]
+
+
+@pytest.mark.parametrize("text", RELAYED_OR_MEDIA)
+def test_relayed_quoted_and_media_speech_is_neutral(text):
+    assert score_text(text)[0] < 0.5
+
+
+def test_lone_accusation_stays_below_threshold_even_with_classifier():
+    from call_guard.model import Scorer, load_classifier
+
+    s = Scorer(load_classifier())
+    for t in ("You are under digital arrest.", "आप डिजिटल अरेस्ट में हैं।"):
+        assert s.score_text(t)[0] < 0.7
+
+
+def test_official_payment_channel_not_flagged():
+    t = "Pay the court fine to the government account listed on the challan, immediately, else warrant may be issued by the traffic court."
+    assert score_text(t)[0] < 0.5
+
+
+def test_digital_custody_synonym_and_camera_confinement():
+    assert "DIGITAL_ARREST_PHRASE" in codes(
+        score_text("We can place you in digital custody at home.")[1]
+    )
+    assert "ISOLATION_DEMAND" in codes(
+        score_text("Keep your phone camera pointed at you at all times.")[1]
+    )
+    s, _ = score_text(
+        "This is the Cyber Police. You cannot disconnect this call till the investigation is over."
+    )
+    assert s >= 0.7  # authority + stay-on-call is a strong pair

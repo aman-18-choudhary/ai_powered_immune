@@ -43,6 +43,14 @@ CLF_CLIP = (0.0, 1.0)
 # alone must not alert on text that is *about* scams.
 ADVISORY_RULE_FLOOR = 0.5
 ADVISORY_CLF_CAP = 0.45
+# The classifier is a booster, never a standalone alarm. How far it may lift a chunk depends on
+# how many *independent rule cue classes* (URGENCY alone does not count) corroborate it:
+#   0 classes -> at most CLF_CAP_NO_RULES (0.6, "suspicious", below the 0.7 alert threshold)
+#   1 class   -> at most CLF_CAP_ONE_CLASS (0.69, still below the alert threshold)
+#   2+ classes -> unrestricted
+CLF_CAP_NO_RULES = 0.6
+CLF_CAP_ONE_CLASS = 0.69
+WEAK_CODES = frozenset({"URGENCY", "NO_RISK_INDICATORS", "SCRIPT_CLASSIFIER_MATCH"})
 
 SMOKE_SCAM = (
     "This is the CBI. You are under digital arrest, transfer all your money to the RBI safe "
@@ -130,6 +138,15 @@ class Scorer:
                 version = self._clf.version
                 if advisory and rule_score < ADVISORY_RULE_FLOOR:
                     p = min(p, ADVISORY_CLF_CAP)  # awareness / media text: classifier cannot alert
+                classes = sum(r.code not in WEAK_CODES for r in reasons)
+                p = min(
+                    p,
+                    CLF_CAP_NO_RULES
+                    if classes == 0
+                    else CLF_CAP_ONE_CLASS
+                    if classes == 1
+                    else 1.0,
+                )
                 if p >= CLF_REASON_MIN and p > rule_score:
                     reasons = [
                         *reasons,

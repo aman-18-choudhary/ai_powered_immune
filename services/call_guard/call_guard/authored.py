@@ -361,3 +361,162 @@ BENIGN: list[str] = [
     "मेरा चचेरा भाई पिछले साल एक प्रदर्शन में गिरफ्तार हुआ था पर केस खारिज हो गया, अब वो ठीक है।",
     "हम कभी आपसे ओटीपी नहीं मांगते। इसे सिर्फ आधिकारिक ऐप के अंदर ही शेयर कीजिए।",
 ]
+
+
+# ------------------------------------------------------------------ benign notices (generated)
+# Official-sounding but legitimate notices: KYC / branch visits, SIM re-verification, compliance,
+# insurance renewal, tax notices, utility cut-offs, traffic challans. Many carry a consequence
+# ("or your account will be blocked") because that vocabulary is what the classifier must not
+# treat as scam evidence.
+NOTICE_SENDER = {
+    "en": [
+        "This is your bank.",
+        "Dear customer,",
+        "Hello sir, this is a reminder from your insurer.",
+        "Good morning, this is the telecom service centre.",
+        "This is the income tax helpdesk.",
+        "Calling from the electricity department.",
+        "This is the municipal water board.",
+        "Hello, regional transport office here.",
+        "Dear policyholder,",
+        "Hi, this is your credit card team.",
+    ],
+    "hi-Latn": [
+        "Namaste, aapke bank se bol rahe hain.",
+        "Pyare grahak,",
+        "Sir, yeh aapke bima company ki taraf se yaad dilana hai.",
+        "Namaste, telecom seva kendra se call hai.",
+        "Income tax helpdesk se bol raha hoon.",
+        "Bijli vibhag se call hai.",
+        "Nagar nigam jal vibhag se bol rahe hain.",
+        "Namaste, RTO office se call hai.",
+        "Pyare policyholder,",
+        "Hello, aapki credit card team se bol raha hoon.",
+    ],
+    "hi": [
+        "नमस्ते, आपके बैंक से बोल रहे हैं।",
+        "प्रिय ग्राहक,",
+        "सर, यह आपकी बीमा कंपनी की ओर से याद दिलाना है।",
+        "नमस्ते, टेलीकॉम सेवा केंद्र से कॉल है।",
+        "इनकम टैक्स हेल्पडेस्क से बोल रहा हूँ।",
+        "बिजली विभाग से कॉल है।",
+        "नगर निगम जल विभाग से बोल रहे हैं।",
+        "नमस्ते, आरटीओ ऑफिस से कॉल है।",
+        "प्रिय पॉलिसीधारक,",
+        "हेलो, आपकी क्रेडिट कार्ड टीम से बोल रहा हूँ।",
+    ],
+}
+NOTICE_BODY = {
+    "en": [
+        "Your account is under periodic review by our compliance team.",
+        "Your KYC is due for renewal.",
+        "Your SIM needs re-verification as per the new telecom guidelines.",
+        "Your insurance policy is due for renewal on the thirtieth.",
+        "Your income tax notice for the previous year has been issued and is available on your login.",
+        "Your electricity bill is overdue by ten days.",
+        "A traffic challan of five hundred rupees is pending against your vehicle.",
+        "The water connection at your address has an unpaid bill.",
+        "Your credit card statement is generated and the minimum due is pending.",
+        "Your PAN and Aadhaar linking status needs to be updated.",
+    ],
+    "hi-Latn": [
+        "Aapka account hamari compliance team ki periodic review me hai.",
+        "Aapka KYC renewal ke liye due hai.",
+        "Naye telecom guidelines ke hisab se aapke SIM ka re-verification baaki hai.",
+        "Aapki insurance policy ka renewal tees tarikh ko due hai.",
+        "Pichhle saal ka income tax notice jaari hua hai aur aapke login par available hai.",
+        "Aapka bijli ka bill das din se baaki hai.",
+        "Aapki gaadi par paanch sau rupaye ka traffic challan pending hai.",
+        "Aapke pate par paani ke connection ka bill baaki hai.",
+        "Aapka credit card statement ban gaya hai aur minimum due baaki hai.",
+        "Aapke PAN aur Aadhaar linking ka status update karna hai.",
+    ],
+    "hi": [
+        "आपका अकाउंट हमारी कंप्लायंस टीम की समय-समय की समीक्षा में है।",
+        "आपका केवाईसी नवीनीकरण के लिए बाकी है।",
+        "नए टेलीकॉम दिशानिर्देशों के अनुसार आपके सिम का री-वेरिफिकेशन बाकी है।",
+        "आपकी बीमा पॉलिसी का नवीनीकरण तीस तारीख को देय है।",
+        "पिछले साल का इनकम टैक्स नोटिस जारी हुआ है और आपके लॉगिन पर उपलब्ध है।",
+        "आपका बिजली का बिल दस दिन से बाकी है।",
+        "आपके वाहन पर पांच सौ रुपये का ट्रैफिक चालान बकाया है।",
+        "आपके पते पर पानी के कनेक्शन का बिल बाकी है।",
+        "आपका क्रेडिट कार्ड स्टेटमेंट बन गया है और न्यूनतम देय बाकी है।",
+        "आपके पैन और आधार लिंकिंग की स्थिति अपडेट करनी है।",
+    ],
+}
+NOTICE_ACTION = {
+    "en": [
+        "Please visit your nearest branch with your Aadhaar and PAN to complete it.",
+        "Kindly visit the nearest store with your Aadhaar and complete the process today.",
+        "You can pay online through the official app or at the counter.",
+        "Please carry your original documents and a photo ID when you visit.",
+        "You may update the details on the official website using your login.",
+        "Please keep your Aadhaar and PAN handy when you come to the branch.",
+        "Kindly complete re-verification at the service centre during working hours.",
+    ],
+    "hi-Latn": [
+        "Kripya Aadhaar aur PAN lekar apni nazdiki branch me aakar ise poora kijiye.",
+        "Kripya Aadhaar lekar nazdiki store par aaiye aur aaj hi process poora kijiye.",
+        "Aap official app se ya counter par online bhar sakte hain.",
+        "Aate samay original documents aur photo ID saath laiyega.",
+        "Aap official website par apne login se details update kar sakte hain.",
+        "Branch aate samay apna Aadhaar aur PAN saath rakhiye.",
+        "Kripya karya samay me service centre par re-verification poora kijiye.",
+    ],
+    "hi": [
+        "कृपया आधार और पैन लेकर अपनी नज़दीकी शाखा में आकर इसे पूरा कीजिए।",
+        "कृपया आधार लेकर नज़दीकी स्टोर पर आइए और आज ही प्रक्रिया पूरी कीजिए।",
+        "आप आधिकारिक ऐप से या काउंटर पर ऑनलाइन भर सकते हैं।",
+        "आते समय मूल दस्तावेज़ और फोटो आईडी साथ लाइए।",
+        "आप आधिकारिक वेबसाइट पर अपने लॉगिन से विवरण अपडेट कर सकते हैं।",
+        "शाखा आते समय अपना आधार और पैन साथ रखिए।",
+        "कृपया कार्य समय में सर्विस सेंटर पर री-वेरिफिकेशन पूरा कीजिए।",
+    ],
+}
+NOTICE_CONSEQUENCE = {
+    "en": [
+        "Otherwise your account may be blocked after thirty days.",
+        "If this is not done, your SIM will be deactivated.",
+        "Failure to pay may lead to a late fee or a disconnection notice.",
+        "Please do it soon to avoid a lapse of cover.",
+        "Delay may attract a penalty as per the rules.",
+        "Thank you, have a good day.",
+        "",
+    ],
+    "hi-Latn": [
+        "Warna tees din baad aapka account block ho sakta hai.",
+        "Aisa na karne par aapka SIM band kar diya jayega.",
+        "Na bharne par late fee ya connection kaatne ka notice aa sakta hai.",
+        "Cover lapse hone se bachne ke liye jaldi kijiye.",
+        "Der hone par niyamon ke hisab se penalty lag sakti hai.",
+        "Dhanyawad, aapka din shubh ho.",
+        "",
+    ],
+    "hi": [
+        "वरना तीस दिन बाद आपका अकाउंट ब्लॉक हो सकता है।",
+        "ऐसा न करने पर आपका सिम बंद कर दिया जाएगा।",
+        "न भरने पर लेट फीस या कनेक्शन कटने का नोटिस आ सकता है।",
+        "कवर खत्म होने से बचने के लिए जल्दी कीजिए।",
+        "देर होने पर नियमों के अनुसार जुर्माना लग सकता है।",
+        "धन्यवाद, आपका दिन शुभ हो।",
+        "",
+    ],
+}
+
+
+def benign_notice_chunks(rng: np.random.Generator, n: int) -> list[str]:
+    out: list[str] = []
+    for _ in range(n):
+        lang = LANGS[int(rng.integers(3))]
+        parts = [
+            NOTICE_SENDER[lang][int(rng.integers(len(NOTICE_SENDER[lang])))]
+            if rng.random() < 0.7
+            else "",
+            NOTICE_BODY[lang][int(rng.integers(len(NOTICE_BODY[lang])))],
+            NOTICE_ACTION[lang][int(rng.integers(len(NOTICE_ACTION[lang])))]
+            if rng.random() < 0.85
+            else "",
+            NOTICE_CONSEQUENCE[lang][int(rng.integers(len(NOTICE_CONSEQUENCE[lang])))],
+        ]
+        out.append(" ".join(p for p in parts if p))
+    return out

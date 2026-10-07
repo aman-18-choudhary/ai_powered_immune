@@ -12,9 +12,6 @@ from tests.data.independent_eval import BENIGN_CALLS, SCAM_CALLS
 
 T0 = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
 
-# Documented exceptions to "hard-negative chunk max < 0.5" (none needed at time of writing).
-HARD_NEG_EXCEPTIONS: set[str] = set()
-
 
 async def _call_max(scorer: SessionScorer, call_id: str, chunks: list[str], lang: str) -> float:
     best = 0.0
@@ -64,11 +61,15 @@ async def test_independent_call_level_metrics(use_clf):
         assert fpr <= 0.02
 
 
-def test_hard_negative_chunks_stay_below_half():
-    scorer = Scorer(load_classifier())
-    over = []
-    for _lang, chunks, hard in BENIGN_CALLS:
-        if hard:
-            over += [c for c in chunks if scorer.score_text(c)[0] >= 0.5]
-    print("hard negative exceptions:", over)
-    assert set(over) <= HARD_NEG_EXCEPTIONS and len(over) <= 2
+@pytest.mark.parametrize("use_clf", [True, False], ids=["blend", "rules_only"])
+def test_hard_negative_chunks_stay_below_half(use_clf):
+    """Strict gate: every hard-negative chunk < 0.5, no exceptions."""
+    scorer = Scorer(load_classifier() if use_clf else None)
+    over = [
+        c
+        for _lang, chunks, hard in BENIGN_CALLS
+        if hard
+        for c in chunks
+        if scorer.score_text(c)[0] >= 0.5
+    ]
+    assert over == []

@@ -21,7 +21,7 @@ needs at least two independent classes, e.g. authority claim + allegation / isol
 
     DIGITAL_ARREST_PHRASE   0.69  "you are under digital arrest" (second person/accusation only)
     SAFE_ACCOUNT_TRANSFER   0.69  move funds to a safe / RBI / verification account
-    ISOLATION_DEMAND        0.50  one of: stay on call, tell no one, camera/room confinement
+    ISOLATION_DEMAND        0.55  one of: stay on call, tell no one, camera/room confinement
                             0.75  two or more of those sub-types together (independent cues)
     PAYMENT_DEMAND          0.50  send money / deposit in the same clause as arrest, jail, case
     AUTHORITY_IMPERSONATION 0.40  authority name + first-person / official-call framing
@@ -145,6 +145,7 @@ _ADVISORY = _rx(
 
 # Sentence-level benign context (a police-station visit / complaint is about the speaker's own matter).
 _BENIGN_SENT = _rx(
+    # own police-station visit / complaint
     r"\bpolice station\b",
     r"\bfiled a complaint\b",
     r"\blost (?:my )?phone\b",
@@ -152,6 +153,58 @@ _BENIGN_SENT = _rx(
     r"थाने",
     r"\bmaine\b.{0,40}\bcomplaint\b",
     r"\bthane\b",
+    r"\b(?:mummy|papa|mom|dad|mama|nani|dadi)\b ko\b",
+    # media / news / fiction narration
+    r"\bnews\b",
+    r"\bkhabar\b",
+    r"खबर",
+    r"\bfilm\b",
+    r"\bmovie\b",
+    r"\bserial\b",
+    r"\bweb series\b",
+    r"\b(?:tv|crime|reality) show\b",
+    r"\bvillain\b",
+    r"\bthriller\b",
+    r"\bdetective\b",
+    r"\bhero\b",
+    r"\bnewsletter\b",
+    r"\bdocumentary\b",
+    r"\bepisode\b",
+    r"\bin the film\b",
+    r"\bpretend(?:ed|ing|s)\b",
+    r"\blost .{0,25}\b(?:lakhs?|crores?)\b",
+    r"फिल्म",
+    r"सीरियल",
+    r"वेब सीरीज़?",
+    r"\bpicture me\b",
+    # relayed / quoted speech ("someone said you are under ...", "caller bol raha tha")
+    r"\b(?:someone|somebody|a man|a woman|a caller|the caller|they|he|she|mom|mum|mother|dad|papa|father|mummy|friend|neighbou?r|colleague)\b.{0,40}\b(?:said|says|told|tells|called|claimed|claiming|asked|saying)\b",
+    r"\bif (?:someone|somebody|anyone|a caller)\b",
+    r"\b(?:said|told me|tells you) that\b",
+    r"\b(?:bol raha tha|bol rahi thi|bola tha|kaha tha|keh raha tha|keh rahi thi|bata raha tha|call aaya tha|ne kaha tha|ne bola tha)\b",
+    r"\bcaller\b.{0,30}\b(?:bol|keh|kah)",
+    r"बोल रहा था",
+    r"बोल रही थी",
+    r"कहा था",
+    r"कॉल आया था",
+    r"कॉलर",
+    # visiting a branch / store is the legitimate channel
+    r"\b(?:visit|come to|go to|reach)\b.{0,30}\b(?:branch|store|office)\b",
+    r"शाखा",
+    # official payment channels (challan / portal / counter) and private surprises
+    r"\bchallan\b",
+    r"\becha[l]*lan\b",
+    r"\bofficial (?:portal|website|app)\b",
+    r"\bportal\b",
+    r"\bcourt counter\b",
+    r"चालान",
+    r"आधिकारिक (?:पोर्टल|वेबसाइट)",
+    r"\bsurprise\b",
+    r"\bbirthday\b",
+    r"\bparty\b",
+    r"\bcaterer\b",
+    r"सरप्राइज़?",
+    r"पार्टी",
 )
 
 _AUTH_NAME = _rx(
@@ -295,8 +348,8 @@ _LEGAL_WEAK = _rx(
     r"(?:नंबर|सिम).{0,50}(?:बंद|ब्लॉक)",
 )
 _DIGITAL_ARREST = _rx(
-    r"\byou\b.{0,40}\b(?:under|in)\s+digital(?:ly)?[\s_-]*arrest",
-    r"\b(?:placing|placed|put|putting|keep|keeping|kept) you\b.{0,25}digital[\s_-]*arrest",
+    r"\byou\b.{0,40}\b(?:under|in)\s+digital(?:ly)?[\s_-]*(?:arrest|custody|detention)",
+    r"\b(?:placing|placed|place|put|putting|keep|keeping|kept) you\b.{0,25}digital[\s_-]*(?:arrest|custody|detention)",
     r"\bwe (?:are|have|will)\b.{0,30}digital[\s_-]*arrest",
     r"\baap\b.{0,40}digital[\s_-]*arrest",
     r"\bdigital[\s_-]*arrest\s*(?:kiya|me daal|mein daal|me rakh|me hain|mein hain)",
@@ -313,10 +366,10 @@ _ISO_STAY = _rx(
     r"\bcall (?:mat |nahi )(?:disconnect|kaat|band)",
     r"\bcall (?:disconnect|kaat) (?:mat|nahi)\b",
     r"\bdisconnect (?:mat|nahi)\b",
-    r"\bvideo call\b.{0,20}\b(?:mat|nahi)\b",
+    r"\bvideo call\b.{0,12}\b(?:mat|nahi) (?:kaat|kat|band|chhod|disconnect)",
     r"\b(?:mat|nahi)\b.{0,25}\b(?:disconnect|kaat|chhod)",
-    r"\bline par (?:bane )?re[hk]",
-    r"\bbane re[hk]",
+    r"\bline par (?:bane )?r[ae][hk]",
+    r"\bbane r[ae][hk]",
     r"\bconnected rakh",
     r"\bcall par bane\b",
     r"लाइन पर (?:बने )?रह",
@@ -329,7 +382,7 @@ _ISO_STAY = _rx(
     r"(?:मत|नहीं)\s*(?:काट|छोड़|डिस्कनेक्ट)",
 )
 _ISO_SECRET = _rx(
-    r"\b(?:do not|don't|dont|not|never|mustn't|must not) (?:\w+ )?(?:tell|inform|mention|speak|talk|share this|disclose)\b.{0,40}\b(?:anyone|anybody|nobody|family|relatives|neighbours|neighbors|lawyer|bank|others|else)\b",
+    r"\b(?:do not|don't|dont|not|never|mustn't|must not) (?:\w+ )?(?:tell|inform|mention|speak|talk|share this|disclose)\b.{0,40}\b(?:anyone|anybody|nobody|family|relatives|neighbours|neighbors|lawyer|bank|others|else|wife|husband|colleagues?|friends|parents|mother|father|boss|office|son|daughter|brother|sister)\b",
     r"\btell (?:no one|nobody|no-one)\b",
     r"\bkeep (?:this|it|the matter) (?:a )?(?:secret|confidential|between us)\b",
     r"\bkeep this secret\b",
@@ -355,7 +408,9 @@ _ISO_SECRET = _rx(
     r"किसी और को कॉल",
 )
 _ISO_CONFINE = _rx(
-    r"\bkeep (?:your )?camera (?:on|switched on)\b",
+    r"\bkeep (?:your )?(?:phone )?camera (?:on|switched on|pointed|facing|focused)\b",
+    r"\bcamera (?:pointed|facing) (?:at|on) you\b",
+    r"\bkeep your (?:phone )?camera\b",
     r"\bcamera (?:on|chalu) rakh",
     r"\bswitch on your camera\b",
     r"\b(?:not|never|don't|do not) leave (?:the |your )?room\b",
@@ -459,7 +514,8 @@ _VERIFY_ASK = _rx(
     r"\baccount (?:aur savings )?verify\b",
     r"\bbank balance\b.{0,25}\b(?:bataiye|batayiye|batao|share)\b",
     r"\bbank ka naam\b.{0,30}\bbalance\b",
-    r"आधार\s*(?:और|&)?\s*पैन",
+    r"आधार\s*(?:और|&)?\s*पैन.{0,25}(?:बताइए|बताओ|शेयर|कन्फर्म|भेजिए|दीजिए)",
+    r"(?:बताइए|बताओ|शेयर|कन्फर्म|भेजिए|दीजिए).{0,25}आधार",
     r"(?:अकाउंट|खाता).{0,30}वेरिफ",
     r"बैलेंस\s*(?:बताइए|दिखाइए|बताओ)",
     r"बैंक बैलेंस.{0,25}बताइए",
@@ -513,7 +569,7 @@ _ORDER = tuple(_SPECS)
 _WEIGHT = {
     "DIGITAL_ARREST_PHRASE": 0.69,
     "SAFE_ACCOUNT_TRANSFER": 0.69,
-    "ISOLATION_DEMAND": 0.50,
+    "ISOLATION_DEMAND": 0.55,
     "PAYMENT_DEMAND": 0.50,
     "AUTHORITY_IMPERSONATION": 0.40,
     "LEGAL_THREAT": 0.55,
@@ -545,9 +601,7 @@ def _cues(s: str) -> dict[str, float]:
         out["PAYMENT_DEMAND"] = _WEIGHT["PAYMENT_DEMAND"]
     if _AUTH_NAME.search(s) and _AUTH_FRAME.search(s):
         out["AUTHORITY_IMPERSONATION"] = _WEIGHT["AUTHORITY_IMPERSONATION"]
-    # an announced "digital arrest" also counts as an arrest allegation (weak LEGAL_THREAT),
-    # so it reaches 0.78 on its own: the one deliberate exception to "two independent classes"
-    s_legal = s
+    s_legal = _DA_ANY.sub(" ", s)  # "arrest" inside "digital arrest" is its own cue
     if _LEGAL_STRONG.search(s_legal):
         out["LEGAL_THREAT"] = _WEIGHT["LEGAL_THREAT"]
     elif _LEGAL_WEAK.search(s_legal):

@@ -23,13 +23,13 @@ async def handle_event(
     ``published`` marker is advanced only after ``bus.publish`` succeeds, so a failed publish
     is retried by ``consume`` and never lost, and replays after success publish nothing.
     """
-    risk, pending = await scorer.update_with_crossing(event)
+    _, pending = await scorer.update_with_crossing(event)
     if not pending:
         return
-    n = await scorer.crossing_no(event.call_id)
-    if risk.score < scorer.threshold:  # stale crossing: score decayed before it was published
-        await scorer.mark_published(event.call_id, n)
+    risk = await scorer.crossing_risk(event)  # peak snapshot: still published after decay
+    if risk is None:
         return
+    n = await scorer.crossing_no(event.call_id)
     key = f"callrisk:{event.call_id}:x{n}"  # cross-instance guard on (call, crossing)
     if await store.seen(key) or not await store.claim(key):
         return

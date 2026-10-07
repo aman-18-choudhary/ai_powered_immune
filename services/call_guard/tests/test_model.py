@@ -32,7 +32,9 @@ def test_artifact_small_and_versioned():
 def test_fallback_to_rules_when_artifact_missing(tmp_path):
     assert load_classifier(tmp_path / "nope.joblib") is None
     s = Scorer(None)
-    score, reasons, version = s.score_text("You are under digital arrest.")
+    score, reasons, version = s.score_text(
+        "You are under digital arrest. Do not tell anyone about this."
+    )
     assert version == "rules-v1" and score >= 0.7 and reasons
 
 
@@ -179,3 +181,83 @@ def test_dev_set_blend_metrics():
     s = Scorer(load_classifier())
     assert sum(s.score_text(t)[0] >= 0.7 for t in SCAM) / len(SCAM) >= 0.9
     assert not [t for t in BENIGN if s.score_text(t)[0] >= 0.7]
+
+
+KYC_NOTICES = [
+    "This is your bank. Your account is under review by our compliance team. Please visit your branch with your Aadhaar and PAN to verify your KYC.",
+    "Your SIM will be deactivated if you do not complete re-verification at the nearest store with your Aadhaar. Visit today.",
+    "मैं बैंक से बोल रहा हूँ, आपका केवाईसी अपडेट बाकी है, कृपया आधार और पैन लेकर शाखा में आइए, वरना खाता बंद हो जाएगा।",
+    "Dear customer, your KYC is pending. Please submit Aadhaar and PAN at your home branch within 30 days to keep your account active.",
+]
+
+
+def test_classifier_alone_cannot_alert_without_rule_cues():
+    class Always:
+        version = "clf-v1"
+
+        def predict_proba(self, text):
+            return 1.0
+
+    s = Scorer(Always())  # type: ignore[arg-type]
+    for t in KYC_NOTICES:
+        assert s.score_text(t)[0] <= 0.6
+    # one rule class lifts it at most to 0.69, still not an alert
+    assert s.score_text("Please confirm your Aadhaar and PAN details now.")[0] < 0.7
+    # two independent classes: classifier may push to 1.0
+    two = "This is Inspector Rao from the CBI. Tell me your account balance."
+    assert s.score_text(two)[0] == 1.0
+
+
+def test_kyc_notices_low_with_real_classifier():
+    s = Scorer(load_classifier())
+    assert max(s.score_text(t)[0] for t in KYC_NOTICES) < 0.5
+
+
+def test_classifier_confidence_on_kyc_notices_without_cap():
+    clf = load_classifier()
+    assert clf is not None
+    assert max(clf.predict_proba(t) for t in KYC_NOTICES) < 0.7  # raw model itself, no rule cap
+
+
+def test_review2_set_gates():
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from scam_contracts.models import CallEvent
+
+    from call_guard.session import InMemorySessionStore, SessionScorer
+    from tests.data.review2_set import BENIGN, SCAM
+
+    async def run(scorer, chunks, cid):
+        ss = SessionScorer(InMemorySessionStore(), scorer)
+        crossed, worst = False, 0.0
+        for i, c in enumerate(chunks):
+            ev = CallEvent(
+                call_id=cid,
+                idempotency_key=f"{cid}{i}",
+                victim_token="v",
+                caller_number_hash="h",
+                ts=datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=20 * i),
+                transcript_chunk=c,
+                channel="pstn",
+                lang="en",
+            )
+            _, p = await ss.update_with_crossing(ev)
+            crossed |= p
+            worst = max(worst, scorer.score_text(c)[0])
+        return crossed, worst
+
+    async def main():
+        for use_clf, min_recall in ((True, 0.9), (False, 0.85)):
+            sc = Scorer(load_classifier() if use_clf else None)
+            hits = sum([(await run(sc, ch, f"s{i}"))[0] for i, ch in enumerate(SCAM)])
+            res = [await run(sc, ch, f"b{i}") for i, (_, ch) in enumerate(BENIGN)]
+            print(
+                f"review2 clf={use_clf}: recall {hits}/{len(SCAM)} benign FP {sum(c for c, _ in res)}/{len(BENIGN)}"
+            )
+            assert hits / len(SCAM) >= min_recall
+            assert not any(c for c, _ in res)
+            hard = [w for (kind, _), (_, w) in zip(BENIGN, res, strict=True) if kind == "hard"]
+            assert hard and max(hard) < 0.5
+
+    asyncio.run(main())

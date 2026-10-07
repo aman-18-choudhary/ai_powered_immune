@@ -13,18 +13,22 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from scam_contracts.models import CallEvent, CallRisk, Reason
 
-from .model import Scorer, no_risk_reason
+from .model import WEAK_CODES, Scorer, no_risk_reason
 from .rules import CALL_RISK_THRESHOLD
 
 log = logging.getLogger(__name__)
 
 HALF_LIFE_S = 300.0
 MIN_CHUNK_SCORE = 0.1
+SOFT_MAX = 0.6  # classifier-only evidence never reaches the 0.7 alert level
+CORROBORATION_MIN = 0.3  # rule evidence needed before soft evidence may add to it
 SESSION_TTL_S = 6 * 3600
+_RELEASE_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 LOCK_TTL_MS = 5000
 LOCK_RETRIES = 200
 LOCK_WAIT_S = 0.02
@@ -43,6 +47,11 @@ class SessionState:
     published: int = 0  # crossings whose CallRisk was successfully published
     armed: bool = True  # may count a new crossing
     last_cross_ts: float = 0.0
+    hard: float = 0.0  # decayed noisy-OR of chunks corroborated by a real rule cue class
+    soft: float = 0.0  # same for classifier-only chunks; capped below the threshold
+    peak_score: float = 0.0  # snapshot at the latest crossing, published even if it decays
+    peak_reasons: dict[str, list] = field(default_factory=dict)
+    cross_ts: float = 0.0
     seen: list[str] = field(default_factory=list)  # recent event idempotency keys
 
 
@@ -57,9 +66,19 @@ def accumulate(
 ) -> SessionState:
     prev = state or SessionState(ts=ts)
     dt = max(0.0, ts - prev.ts)
-    decayed = prev.score * 0.5 ** (dt / half_life_s)
+    decay = 0.5 ** (dt / half_life_s)
+    hard, soft = prev.hard * decay, prev.soft * decay
     contrib = chunk_score if chunk_score >= MIN_CHUNK_SCORE else 0.0
-    score = round(min(1.0, 1.0 - (1.0 - decayed) * (1.0 - contrib)), 4)
+    if any(r.code not in WEAK_CODES and r.weight > 0 for r in reasons):
+        hard = 1.0 - (1.0 - hard) * (1.0 - contrib)
+    else:  # classifier-only evidence: a "suspicious" signal that cannot reach the alert level alone
+        soft = min(SOFT_MAX, 1.0 - (1.0 - soft) * (1.0 - contrib))
+    score = round(
+        min(
+            1.0, 1.0 - (1.0 - hard) * (1.0 - soft) if hard >= CORROBORATION_MIN else max(hard, soft)
+        ),
+        4,
+    )
     merged = {k: list(v) for k, v in prev.reasons.items()}
     for r in reasons:
         if r.weight > 0 and (r.code not in merged or merged[r.code][0] < r.weight):
@@ -68,10 +87,12 @@ def accumulate(
     armed, crossings, last_cross = prev.armed, prev.crossings, prev.last_cross_ts
     if not armed and score < REARM_BELOW and ts - last_cross >= cooldown_s:
         armed = True  # hysteresis: dropped well below the threshold and cooled down
+    peak_score, peak_reasons, cross_ts = prev.peak_score, prev.peak_reasons, prev.cross_ts
     if above and armed:
         crossings += 1
         armed = False
         last_cross = ts
+        peak_score, peak_reasons, cross_ts = score, {k: list(v) for k, v in merged.items()}, ts
     return SessionState(
         score=score,
         ts=max(prev.ts, ts),
@@ -81,6 +102,11 @@ def accumulate(
         published=prev.published,
         armed=armed,
         last_cross_ts=last_cross,
+        hard=hard,
+        soft=soft,
+        peak_score=peak_score,
+        peak_reasons=peak_reasons,
+        cross_ts=cross_ts,
         seen=prev.seen,
     )
 
@@ -136,8 +162,7 @@ class RedisSessionStore:
         try:
             yield
         finally:
-            if (await self._c.get(key)) in (token, token.encode()):
-                await self._c.delete(key)
+            await self._c.eval(_RELEASE_LUA, 1, key, token)  # atomic compare-and-delete
 
 
 class SessionScorer:
@@ -181,6 +206,24 @@ class SessionScorer:
         pending = new.crossings > new.published
         log.info("call_id=%s score=%.3f pending=%s", event.call_id, new.score, pending)
         return self._risk(event, new), pending
+
+    async def crossing_risk(self, event: CallEvent) -> CallRisk | None:
+        """CallRisk for the pending crossing, built from the stored peak snapshot."""
+        state = await self._store.get(event.call_id)
+        if state is None or state.crossings <= state.published:
+            return None
+        reasons = [
+            Reason(code=c, weight=v[0], detail=v[1])
+            for c, v in sorted(state.peak_reasons.items(), key=lambda kv: -kv[1][0])
+        ] or [no_risk_reason()]
+        return CallRisk(
+            call_id=event.call_id,
+            victim_token=event.victim_token,
+            score=state.peak_score,
+            reasons=reasons,
+            model_version=self._scorer.model_version,
+            ts=datetime.fromtimestamp(state.cross_ts, tz=UTC),
+        )
 
     async def mark_published(self, call_id: str, crossing_no: int) -> None:
         async with self._store.lock(call_id):

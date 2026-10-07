@@ -100,3 +100,39 @@ async def test_new_events_while_above_threshold_do_not_republish(make_event):
     events.append(make_event(TEXTS[2], ts=T0 + timedelta(seconds=5)))
     await _drain(bus, events)
     assert len(bus.messages(Topics.CALL_RISK)) == 1
+
+
+class DownBus(InMemoryBus):
+    """CALL_RISK publishes fail while ``down`` is set."""
+
+    down = True
+
+    async def publish(self, topic, key, value):
+        if topic == Topics.CALL_RISK and self.down:
+            raise ConnectionError("broker down")
+        await super().publish(topic, key, value)
+
+
+async def test_pending_crossing_published_after_decay_with_peak_score(make_event):
+    bus = DownBus()
+    sc = SessionScorer(InMemorySessionStore())
+    store = InMemoryIdempotencyStore()
+    task = asyncio.create_task(run_consumer(bus, sc, store))
+    first = [make_event(t, ts=T0 + timedelta(seconds=30 * i)) for i, t in enumerate(TEXTS)]
+    for e in first:
+        await bus.publish(Topics.CALL_EVENTS, e.call_id, e)
+    await asyncio.sleep(0.3)
+    peak = (await sc._store.get("c1")).peak_score
+    assert bus.messages(Topics.CALL_RISK) == [] and peak >= 0.7  # outage: events went to the DLQ
+    bus.down = False
+    late = make_event(
+        "Thanks, see you soon, bye.", ts=T0 + timedelta(seconds=900)
+    )  # score long decayed
+    await bus.publish(Topics.CALL_EVENTS, "c1", late)
+    await asyncio.sleep(0.3)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    msgs = bus.messages(Topics.CALL_RISK)
+    assert len(msgs) == 1
+    risk = CallRisk.model_validate_json(msgs[0][1])
+    assert risk.score == peak and risk.reasons and risk.score >= 0.7
