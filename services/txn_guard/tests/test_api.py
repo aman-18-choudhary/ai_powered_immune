@@ -17,7 +17,11 @@ async def test_readyz_reports_model_version():
     assert r.json()["model_version"] == "gbm-v1" and r.json()["fallback_mode"] == "false"
 
 
-async def test_readyz_and_metrics_report_fallback(tmp_path: Path):
+async def test_readyz_and_metrics_report_fallback(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("METRICS_TOKEN", "tok")
     async with _client(create_app(Scorer(path=tmp_path / "nope.joblib"))) as c:
         assert (await c.get("/readyz")).json()["model_version"] == "rules-fallback-v1"
-        assert "txn_guard_fallback_mode 1" in (await c.get("/metrics")).text
+        assert (
+            "txn_guard_fallback_mode 1"
+            in (await c.get("/metrics", headers={"X-Metrics-Token": "tok"})).text
+        )

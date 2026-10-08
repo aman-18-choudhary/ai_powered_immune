@@ -147,29 +147,56 @@ booster ignores it: retrain with antibody-labelled data.
 ## Hold-and-verify service (Task 9)
 
 Modules: `service.py` (workflow), `consumer.py` (svckit `consume` on `txn.events` and
-`call.risk`, group `txn-guard`), `holds.py` (HoldStore protocol, in-memory + Redis, audit sinks),
-`redis_history.py` (Redis `HistoryStore`), `pending.py` (scored-but-unresolved transactions),
-`api.py` (HTTP).
+`call.risk`, group `txn-guard`), `holds.py` (HoldStore protocol, in-memory + Redis, audit outbox),
+`redis_history.py` (Redis `HistoryStore`, atomic Lua update), `pending.py` (durable record of what
+was decided), `api.py` (HTTP).
 
-* One decision and one hold per `txn_id`: replays (same or different idempotency key) are
-  no-ops. Order per transaction: hold -> pending -> publish `TxnDecision` (key = txn_id) ->
-  history update, so any failure is safe to retry; a hold-store outage retries, then dead-letters
-  (`txn.events.dlq`) and publishes nothing.
-* Late `CallRisk` (within 15 min of a pending/allowed/step-up transaction, not yet resolved)
-  re-scores it with the larger call risk; a strictly stronger verdict is published as a new
-  `TxnDecision` with `decision_seq + 1` and the open hold is upgraded. No automatic downgrades.
-* Holds are never auto-released or auto-blocked: past `HOLD_DEADLINE_S` (default 120) they stay
-  open, are flagged `overdue` and counted in `txn_guard_holds_overdue` (humans decide).
-* Resolve: non-empty actor required, idempotent for the same action, 409 on a conflicting action.
-  Every state change emits an audit event (`hold.created|upgraded|resolved`, ids/actor/model
-  version/payload hash only) to an `AuditSink` (`BusAuditSink` writes `LedgerEntryIn` to
-  `ledger.append`).
-* HTTP (only via the gateway; role headers trusted only if `GATEWAY_SHARED_SECRET` is set and the
-  `X-Gateway-Secret` header matches, or `TRUST_GATEWAY_HEADERS=1`): `GET /holds` (analyst, officer,
-  admin; soonest deadline first), `GET /holds/{txn_id}`, `POST /holds/{txn_id}/resolve`
-  (analyst, admin), `POST /holds/{txn_id}/verify` (citizen, own step_up only), `/healthz`,
-  `/readyz`, `/metrics`.
+What is and is not guaranteed:
+
+* **Ordering.** Per-payer order is required (history, velocity, call-risk window). `txn.events`
+  and `call.risk` MUST be keyed by the payer token (see `scam_contracts.topics`; the simulator
+  replay and call-guard now do this). Inside one process a bounded per-payer lock serialises
+  `handle_txn` / `handle_call_risk`; across processes a re-check after the pending record closes the
+  txn-vs-call-risk race. Without payer keying, swapped same-payer events change decisions.
+* **Replays.** The durable claim is the pending entry holding the exact first `TxnDecision` JSON
+  (kept 35 days, longer than the 7-day idempotency TTL). A replay, even after the idempotency
+  store was lost, republishes those identical bytes and never re-scores; one hold per `txn_id`.
+  The bus delivery is therefore *at-least-once with identical payloads*, not exactly-once:
+  consumers of `txn.decisions` must dedupe on `(txn_id, decision_seq)` and act on the highest
+  `decision_seq` (a missing `decision_seq` means 1).
+* **Retries.** Per transaction the steps hold -> pending -> publish -> history record are each
+  idempotent and retried by `consume` (then DLQ). A hold-store outage publishes and records nothing.
+  History updates in Redis are one atomic Lua script (nothing partial survives a failed call).
+* **Late CallRisk** (risk ts within +-15 min of the transaction, the same window as
+  `features.extract_features`): pending/unresolved transactions are re-scored with the larger risk;
+  a strictly stronger verdict is published as a new `TxnDecision` with `decision_seq + 1` and the
+  open hold is upgraded; never downgraded. An upgrade of an `allow` carries
+  `LATE_CALL_RISK_POST_SETTLEMENT` (the payment may already have completed; it is a recall/verify
+  request).
+* **Audit** is a transactional outbox: the entry is stored in the hold record in the same
+  compare-and-set as the state change and drained to the sink at-least-once (on every change, every
+  idempotent re-entry and a periodic sweep, `AUDIT_DRAIN_INTERVAL_S`, default 5). The
+  `payload_hash` (txn_id, decision, decision_seq, score, actor/action, model_version, reason codes)
+  is the ledger-side dedupe key. `hold.overdue` is emitted once per hold (durable marker).
+* **Deadlines.** Past `HOLD_DEADLINE_S` (default 120) holds stay open, flagged `overdue`
+  (`txn_guard_holds_overdue`, `txn_guard_holds_overdue_total`); never auto-released or auto-blocked.
+* **Resolve**: non-empty actor, idempotent for the same action, 409 on a conflicting action or when
+  the `decision_seq` / expected decision changed since it was read (verify only releases a
+  `step_up` at the seq the citizen saw).
+* **HTTP** (only via the gateway; role headers trusted only if `GATEWAY_SHARED_SECRET` is set and
+  `X-Gateway-Secret` matches, or `TRUST_GATEWAY_HEADERS=1`): `GET /holds?limit=` (analyst, officer,
+  admin; soonest deadline first, default 200, max 1000), `GET /holds/{txn_id}` (staff, or the
+  citizen's own; others get 404), `POST /holds/{txn_id}/resolve` (analyst, admin; optional
+  `decision_seq`), `POST /holds/{txn_id}/verify` (citizen, own step_up only), `/healthz`, `/readyz`,
+  `/metrics` (needs `X-Metrics-Token` = `METRICS_TOKEN`, or gateway trust with a staff role).
+* **Parity** covers: the same decisions as the direct `make_decision` path for the same event
+  order (in-memory and Redis stores, 0 differences), and for late-delivered call risks the final
+  (highest-seq) decision is never weaker or stronger than the in-order one; it does not cover
+  cross-partition reordering of different payers' events (irrelevant to per-payer features) or
+  the scorer's own model quality.
 
 Env: `REDIS_URL` (required), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
-consumers run), `HOLD_DEADLINE_S`, `GATEWAY_SHARED_SECRET`, `TRUST_GATEWAY_HEADERS`, `PORT`.
-Run: `python -m txn_guard`.
+consumers run), `HOLD_DEADLINE_S`, `AUDIT_DRAIN_INTERVAL_S`, `GATEWAY_SHARED_SECRET`,
+`TRUST_GATEWAY_HEADERS`, `METRICS_TOKEN`, `PORT`. Run: `python -m txn_guard`. The Scorer runs in a
+worker thread (`asyncio.to_thread`); measured consumer-path latency with fakeredis stores is
+p50 ~7 ms / p99 ~14 ms per transaction.

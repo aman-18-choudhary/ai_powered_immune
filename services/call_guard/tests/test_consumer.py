@@ -52,7 +52,7 @@ async def test_publishes_once_when_threshold_crossed(make_event):
     assert len(msgs) == 1
     risk = CallRisk.model_validate_json(msgs[0][1])
     assert risk.score >= 0.7 and risk.call_id == "c1" and risk.reasons
-    assert msgs[0][0] == "c1"
+    assert msgs[0][0] == risk.victim_token  # keyed by payer token (ordering contract)
 
 
 async def test_publish_failure_is_retried_not_lost(make_event):

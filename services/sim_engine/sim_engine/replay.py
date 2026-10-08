@@ -116,4 +116,7 @@ async def replay(
             if delay > 0:
                 await sleep(delay)
         prev = event.ts
-        await bus.publish(topic, event.idempotency_key, event)
+        # Keying contract (scam_contracts.topics): per-payer ordering needs the payer token as the
+        # partition key, not the unique idempotency key.
+        key = event.victim_token if isinstance(event, CallEvent) else event.payer_token
+        await bus.publish(topic, key, event)

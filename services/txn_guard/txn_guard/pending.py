@@ -1,7 +1,11 @@
-"""Pending transactions per payer, kept so a late CallRisk can re-score them.
+"""Scored transactions per payer: the durable record of what was decided.
 
-An entry stores the features computed at scoring time (so re-scoring needs no history lookup and
-is not affected by later payments) together with the verdict published so far.
+It serves two purposes: (1) a late CallRisk re-scores a payer's recent entries using the features
+stored at scoring time (no history lookup, unaffected by later payments); (2) it is the durable
+replay claim: the first ``add`` for a ``txn_id`` wins and stores the exact ``TxnDecision`` JSON, so
+a replay after the idempotency store was lost republishes those same bytes instead of re-scoring
+(the transaction is already in history by then, so re-scoring would give a different answer).
+Redis entries live 30+ days (longer than the 7-day idempotency TTL).
 """
 
 from datetime import datetime, timedelta
@@ -9,7 +13,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-PENDING_TTL = timedelta(minutes=45)
+SCAN_TTL = timedelta(hours=2)  # per-payer recency index
+ENTRY_TTL_S = 35 * 86400
 
 
 class PendingEntry(BaseModel):
@@ -21,10 +26,15 @@ class PendingEntry(BaseModel):
     seq: int
     model_version: str
     features: dict[str, float]
+    first_json: str = ""  # exact bytes of the first published TxnDecision (seq 1)
 
 
 class PendingStore(Protocol):
-    async def add(self, entry: PendingEntry) -> None: ...
+    async def add(self, entry: PendingEntry) -> bool:
+        """Durably claim ``entry.txn_id``; False if it was already there."""
+        ...
+
+    async def get(self, txn_id: str) -> PendingEntry | None: ...
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]: ...
 
@@ -33,33 +43,52 @@ class PendingStore(Protocol):
 
 class InMemoryPendingStore:
     def __init__(self) -> None:
-        self._by_payer: dict[str, dict[str, PendingEntry]] = {}
+        self._by_id: dict[str, PendingEntry] = {}
+        self._by_payer: dict[str, list[str]] = {}
 
-    async def add(self, entry: PendingEntry) -> None:
-        self._by_payer.setdefault(entry.payer_token, {}).setdefault(entry.txn_id, entry)
+    async def add(self, entry: PendingEntry) -> bool:
+        if entry.txn_id in self._by_id:
+            return False
+        self._by_id[entry.txn_id] = entry
+        self._by_payer.setdefault(entry.payer_token, []).append(entry.txn_id)
+        return True
+
+    async def get(self, txn_id: str) -> PendingEntry | None:
+        return self._by_id.get(txn_id)
 
     async def update(self, entry: PendingEntry) -> None:
-        self._by_payer.setdefault(entry.payer_token, {})[entry.txn_id] = entry
+        self._by_id[entry.txn_id] = entry
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]:
-        rows = self._by_payer.get(payer_token, {})
-        for k in [k for k, e in rows.items() if e.ts < since - PENDING_TTL]:
-            del rows[k]
-        return sorted((e for e in rows.values() if e.ts >= since), key=lambda e: e.ts)
+        rows = (self._by_id[i] for i in self._by_payer.get(payer_token, []))
+        return sorted((e for e in rows if e.ts >= since), key=lambda e: e.ts)
 
 
 class RedisPendingStore:
     def __init__(self, client: Any, prefix: str = "txnguard:pending:") -> None:
         self._r, self._p = client, prefix
 
-    async def add(self, entry: PendingEntry) -> None:
-        await self._r.hsetnx(self._p + entry.payer_token, entry.txn_id, entry.model_dump_json())
-        await self._r.expire(self._p + entry.payer_token, int(PENDING_TTL.total_seconds()) * 2)
+    async def add(self, entry: PendingEntry) -> bool:
+        ok = await self._r.set(
+            self._p + "e:" + entry.txn_id, entry.model_dump_json(), nx=True, ex=ENTRY_TTL_S
+        )
+        if ok:
+            idx = self._p + "i:" + entry.payer_token
+            await self._r.zadd(idx, {entry.txn_id: entry.ts.timestamp()})
+            await self._r.expire(idx, ENTRY_TTL_S)
+        return bool(ok)
+
+    async def get(self, txn_id: str) -> PendingEntry | None:
+        raw = await self._r.get(self._p + "e:" + txn_id)
+        return PendingEntry.model_validate_json(raw) if raw else None
 
     async def update(self, entry: PendingEntry) -> None:
-        await self._r.hset(self._p + entry.payer_token, entry.txn_id, entry.model_dump_json())
+        await self._r.set(self._p + "e:" + entry.txn_id, entry.model_dump_json(), ex=ENTRY_TTL_S)
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]:
-        raw = await self._r.hvals(self._p + payer_token)
-        rows = [PendingEntry.model_validate_json(r) for r in raw]
-        return sorted((e for e in rows if e.ts >= since), key=lambda e: e.ts)
+        ids = await self._r.zrangebyscore(self._p + "i:" + payer_token, since.timestamp(), "+inf")
+        if not ids:
+            return []
+        keys = [self._p + "e:" + (i.decode() if isinstance(i, bytes) else i) for i in ids]
+        raws = await self._r.mget(keys)
+        return sorted((PendingEntry.model_validate_json(r) for r in raws if r), key=lambda e: e.ts)

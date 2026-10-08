@@ -3,8 +3,9 @@
 Per payer: running log-amount stats, a 24 h sorted set of ``(ts, amount)``, a device set, recent
 call risks; per (payer, payee) pair: count, first-paid ts, largest amount, 24 h recent payments.
 Timestamps are stored as integer microseconds since the epoch (exact in a double score).
-``record_txn`` is idempotent per ``txn_id`` (``SET NX`` guard), so a retried or replayed message
-never double-counts. Missing / None / blank stored fields are coerced to 0, never raised on.
+``record_txn`` is one atomic Lua script (seen-marker + all counters), idempotent per ``txn_id``:
+a failed call leaves nothing behind and a replay never double-counts. Missing / None / blank
+stored fields are coerced to 0, never raised on.
 Payer and payee identifiers are already tokens/hashes. The client is blocking: call it from async
 code through ``asyncio.to_thread`` (``blocking = True`` tells the service to do that).
 """
@@ -46,6 +47,33 @@ def _s(v: Any) -> str:
     return v.decode() if isinstance(v, bytes) else str(v)
 
 
+_RECORD_LUA = """
+if not redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then return 0 end
+local x, us, amt = tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[5])
+local n = tonumber(redis.call('HGET', KEYS[2], 'n')) or 0
+local mean = tonumber(redis.call('HGET', KEYS[2], 'mean')) or 0
+local m2 = tonumber(redis.call('HGET', KEYS[2], 'm2')) or 0
+n = n + 1
+local d = x - mean
+mean = mean + d / n
+m2 = m2 + d * (x - mean)
+redis.call('HSET', KEYS[2], 'n', n, 'mean', string.format('%.17g', mean),
+           'm2', string.format('%.17g', m2))
+local cutoff = string.format('%.0f', us - tonumber(ARGV[6]))
+redis.call('ZADD', KEYS[3], ARGV[3], ARGV[4])
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', cutoff)
+redis.call('ZADD', KEYS[5], ARGV[3], ARGV[4])
+redis.call('ZREMRANGEBYSCORE', KEYS[5], '-inf', cutoff)
+redis.call('SADD', KEYS[6], ARGV[7])
+redis.call('HINCRBY', KEYS[4], 'n', 1)
+local first = tonumber(redis.call('HGET', KEYS[4], 'first'))
+if (not first) or us < first then redis.call('HSET', KEYS[4], 'first', ARGV[3]) end
+local mx = tonumber(redis.call('HGET', KEYS[4], 'max')) or 0
+if amt > mx then redis.call('HSET', KEYS[4], 'max', ARGV[5]) end
+return 1
+"""
+
+
 class RedisHistoryStore:
     blocking = True
 
@@ -57,47 +85,18 @@ class RedisHistoryStore:
         return self._p + ":".join(parts)
 
     def record_txn(self, txn: Transaction) -> None:
-        if not self._r.set(self._k("seen", txn.txn_id), "1", nx=True, ex=GUARD_TTL_S):
-            return  # already recorded
+        """One atomic Lua script: the ``seen`` marker and every counter change commit together or
+        not at all, so a failed call leaves nothing behind and the retry applies the full update."""
         payer, payee = txn.payer_token, txn.payee_hash
         amt, us = float(txn.amount_inr), _us(txn.ts)
-        self._update_stats(self._k(payer, "stats"), math.log(amt))
-        recent = self._k(payer, "recent")
-        pair, pair_recent = self._k(payer, "pair", payee), self._k(payer, "pairrecent", payee)
-        pipe = self._r.pipeline(transaction=True)
-        pipe.zadd(recent, {f"{txn.txn_id}|{amt!r}": us})
-        pipe.zremrangebyscore(recent, "-inf", us - _us(EPOCH + VELOCITY_WINDOW))
-        pipe.zadd(pair_recent, {f"{txn.txn_id}|{amt!r}": us})
-        pipe.zremrangebyscore(pair_recent, "-inf", us - _us(EPOCH + VELOCITY_WINDOW))
-        pipe.sadd(self._k(payer, "dev"), txn.device_id_token)
-        pipe.hincrby(pair, "n", 1)
-        pipe.execute()
-        # first-paid ts is the earliest, largest amount the max (HSETNX / compare)
-        self._r.hsetnx(pair, "first", us)
-        if _num(self._r.hget(pair, "first")) > us:
-            self._r.hset(pair, "first", us)
-        if amt > _num(self._r.hget(pair, "max")):
-            self._r.hset(pair, "max", repr(amt))
-
-    def _update_stats(self, key: str, x: float) -> None:
-        from redis.exceptions import WatchError
-
-        while True:
-            with self._r.pipeline() as pipe:
-                try:
-                    pipe.watch(key)
-                    n = int(_num(pipe.hget(key, "n")))
-                    mean, m2 = _num(pipe.hget(key, "mean")), _num(pipe.hget(key, "m2"))
-                    n += 1
-                    d = x - mean
-                    mean += d / n
-                    m2 += d * (x - mean)
-                    pipe.multi()
-                    pipe.hset(key, mapping={"n": n, "mean": repr(mean), "m2": repr(m2)})
-                    pipe.execute()
-                    return
-                except WatchError:
-                    continue
+        self._r.eval(
+            _RECORD_LUA, 6,
+            self._k("seen", txn.txn_id), self._k(payer, "stats"), self._k(payer, "recent"),
+            self._k(payer, "pair", payee), self._k(payer, "pairrecent", payee),
+            self._k(payer, "dev"),
+            GUARD_TTL_S, repr(math.log(amt)), us, f"{txn.txn_id}|{amt!r}", repr(amt),
+            _us(EPOCH + VELOCITY_WINDOW), txn.device_id_token,
+        )  # fmt: skip
 
     def record_call_risk(self, risk: CallRisk) -> None:
         key = self._k(risk.victim_token, "risk")

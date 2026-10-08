@@ -97,8 +97,13 @@ def make_decision(**o):
 
 def make_antibody(**o):
     b = dict(
-        antibody_id="a", kind="device", key_hash="h", source_bank="b", confirmed_by="x",
-        created_at=NOW, expires_at=NOW + timedelta(days=1),
+        antibody_id="a",
+        kind="device",
+        key_hash="h",
+        source_bank="b",
+        confirmed_by="x",
+        created_at=NOW,
+        expires_at=NOW + timedelta(days=1),
     )
     b.update(o)
     return Antibody(**b)
@@ -106,8 +111,14 @@ def make_antibody(**o):
 
 def make_entry(**o):
     b = dict(
-        seq=1, ts=NOW, service="s", actor="a", event_type="e", payload_hash="p",
-        prev_hash="0", entry_hash="1",
+        seq=1,
+        ts=NOW,
+        service="s",
+        actor="a",
+        event_type="e",
+        payload_hash="p",
+        prev_hash="0",
+        entry_hash="1",
     )
     b.update(o)
     return LedgerEntry(**b)
@@ -154,3 +165,15 @@ def test_keyed_hash_no_colon_collision():
 def test_keyed_hash_empty_key_rejected():
     with pytest.raises(ValueError):
         keyed_hash("v", "k", b"")
+
+
+def test_txn_decision_seq_defaults_to_1_for_old_payloads():
+    from scam_contracts.models import TxnDecision
+
+    old = (
+        '{"txn_id":"t","decision":"allow","score":0.1,"reasons":[],"model_version":"m",'
+        '"ts":"2026-03-10T12:00:00+00:00"}'
+    )
+    d = TxnDecision.model_validate_json(old)
+    assert d.decision_seq == 1  # consumers dedupe on (txn_id, decision_seq), take the highest
+    assert TxnDecision.model_validate_json(d.model_dump_json()).decision_seq == 1

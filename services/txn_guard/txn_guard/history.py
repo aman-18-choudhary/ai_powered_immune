@@ -73,6 +73,7 @@ class _Welford:
 
 class InMemoryHistoryStore:
     def __init__(self) -> None:
+        self._seen: set[str] = set()  # record_txn is idempotent per txn_id (replay safe)
         self._stats: dict[str, _Welford] = {}
         self._recent: dict[str, deque[tuple[datetime, float]]] = {}
         self._payees: dict[str, dict[str, datetime]] = {}
@@ -82,6 +83,9 @@ class InMemoryHistoryStore:
         self._risks: dict[str, deque[tuple[datetime, float]]] = {}
 
     def record_txn(self, txn: Transaction) -> None:
+        if txn.txn_id in self._seen:
+            return
+        self._seen.add(txn.txn_id)
         p, amt = txn.payer_token, float(txn.amount_inr)
         self._stats.setdefault(p, _Welford()).add(math.log(amt))
         q = self._recent.setdefault(p, deque())

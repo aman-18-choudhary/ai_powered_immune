@@ -44,9 +44,11 @@ async def test_events_published_in_timestamp_order(world_):
     for topic in (Topics.CALL_EVENTS, Topics.TXN_EVENTS):
         ts = [e["ts"] for _, e in _decode(bus, topic)]
         assert ts == sorted(ts)
-    # keyed by idempotency key
-    for k, e in _decode(bus, Topics.TXN_EVENTS) + _decode(bus, Topics.CALL_EVENTS):
-        assert k == e["idempotency_key"]
+    # keyed by payer token (txn.events) / victim token (call.events): per-payer ordering
+    for k, e in _decode(bus, Topics.TXN_EVENTS):
+        assert k == e["payer_token"]
+    for k, e in _decode(bus, Topics.CALL_EVENTS):
+        assert k == e["victim_token"]
 
 
 async def test_merged_publish_order_across_topics(world_):
@@ -189,5 +191,5 @@ async def test_second_post_while_running_is_409_then_new_seed_allowed(world_):
         assert second.status_code == 202
         await app.state.wait_idle()
     assert second.json()["campaign_id"] != first.json()["campaign_id"]
-    keys = [k for k, _ in bus.messages(Topics.TXN_EVENTS)]
-    assert len(keys) > n and len(set(keys)) == len(keys)
+    ids = [json.loads(v)["txn_id"] for _, v in bus.messages(Topics.TXN_EVENTS)]
+    assert len(ids) > n and len(set(ids)) == len(ids)

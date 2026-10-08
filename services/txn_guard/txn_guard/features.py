@@ -105,7 +105,7 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
 
     risk = 0.0
     for rts, score in ctx.call_risks:
-        if timedelta(0) <= ts - rts <= CALL_RISK_WINDOW:
+        if abs(ts - rts) <= CALL_RISK_WINDOW:  # same rule as the late-upgrade path (service)
             risk = max(risk, _finite(score, 0.0, 0.0, 1.0))
 
     first = ctx.payee_first_seen_ts

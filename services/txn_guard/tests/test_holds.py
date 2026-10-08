@@ -123,8 +123,8 @@ async def test_audit_payloads_have_no_raw_pii(make_store):
     await store.resolve("t1", "release", "analyst-7")
     blob = json.dumps(audit.events)
     assert "payer_secret_tok" not in blob and "First payment" not in blob
-    assert all(set(e) <= {"event_type", "txn_id", "decision", "actor", "model_version",
-                          "payload_hash"} for e in audit.events)  # fmt: skip
+    assert all(set(e) <= {"event_type", "txn_id", "decision", "decision_seq", "score", "actor",
+                          "model_version", "reason_codes", "payload_hash"} for e in audit.events)  # fmt: skip
 
 
 async def test_bus_audit_sink_publishes_ledger_entry_in():
@@ -194,7 +194,7 @@ async def test_overdue_flag_and_metric_not_auto_resolved(api):
     body = (await api.get("/holds", headers=H("analyst"))).json()
     assert {h["txn_id"]: h["overdue"] for h in body} == {"t_step": True, "t_hold": False}
     assert all(h["state"] == "open" for h in body)
-    assert "txn_guard_holds_overdue 1" in (await api.get("/metrics")).text
+    assert "txn_guard_holds_overdue 1" in (await api.get("/metrics", headers=H("analyst"))).text
 
 
 async def test_get_one_hold_and_404(api):

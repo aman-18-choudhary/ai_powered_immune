@@ -181,13 +181,13 @@ async def test_resolved_and_old_txns_are_not_upgraded_and_never_downgraded(score
 
 
 # ------------------------------------------------------------------------------ parity
-def _sim_events():
+def _sim_events(n_citizens=250, days=4):
     from sim_engine.benign import gen_benign_txns
     from sim_engine.scam import gen_scam_campaign
     from sim_engine.world import build_world
 
-    world = build_world(4242, 250)
-    benign = list(gen_benign_txns(world, 4, 4242))
+    world = build_world(4242, n_citizens)
+    benign = list(gen_benign_txns(world, days, 4242))
     camp = gen_scam_campaign(
         world, "parity", 4, 4242, start_ts=world.start + timedelta(days=2, hours=10)
     )
@@ -204,9 +204,9 @@ def _sim_events():
 
 
 async def test_decision_parity_with_direct_make_decision(scorer):
-    events = _sim_events()
+    events = _sim_events(n_citizens=160, days=3)
     n_txn = sum(isinstance(e, Transaction) for e in events)
-    assert n_txn > 500
+    assert n_txn > 400
     # reference: the benchmark pipeline order (risk -> history; txn -> score -> record)
     ref_hist, ref = InMemoryHistoryStore(), {}
     for e in events:

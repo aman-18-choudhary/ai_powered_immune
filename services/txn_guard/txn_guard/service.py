@@ -1,32 +1,37 @@
 """Hold-and-verify workflow around ``Scorer`` / ``make_decision``.
 
-Per transaction (in this order, so a failure at any step is safe to retry):
-  1. claim ``txn_id`` (a replay, even with a different idempotency key, is a no-op);
-  2. context -> features -> ``make_decision`` (ts = the transaction's own ts, so a replay would
-     produce the same bytes);
-  3. create the hold for step_up / hold_verify (idempotent: one hold per txn_id);
-  4. remember the scored features as *pending* (for late call risks);
-  5. publish the ``TxnDecision`` to ``txn.decisions`` keyed by txn_id (once per txn_id and
-     decision_seq: guarded by the idempotency store);
-  6. only then record the transaction in the history store (once per txn_id).
-If the hold store is down step 3 raises, nothing is published or recorded, and ``consume``
-retries and finally dead-letters the message.
+Guarantees (and their limits):
 
-Late CallRisk: the risk is recorded in history, then every pending (unresolved) transaction of the
-payer whose timestamp is within 15 minutes of the risk is re-scored with the larger call risk. A
-strictly stronger verdict is published as a new ``TxnDecision`` with ``decision_seq + 1`` and the
-open hold is upgraded; verdicts are never downgraded automatically and resolved holds are left
-alone. A pending transaction is any scored transaction in the window, including ``allow``
-(settlement can still be intercepted within the window).
+* One lock per payer token (bounded dict, evicts idle locks) serialises ``handle_txn`` and
+  ``handle_call_risk`` of the same payer inside one process. Across processes ordering depends on
+  the bus: ``txn.events`` / ``call.risk`` MUST be keyed by payer token (see
+  ``scam_contracts.topics``); a re-read after the pending record closes the remaining
+  txn/call-risk race between instances.
+* The durable replay claim is the *pending entry*, which stores the exact first ``TxnDecision``
+  JSON (kept >= 30 days, longer than the idempotency TTL). A replay, even after the idempotency
+  store was lost, republishes those same bytes (identical score and class) and never re-scores;
+  consumers dedupe on ``(txn_id, decision_seq)``. At the bus level this is at-least-once with
+  identical payloads, not exactly-once.
+* Per transaction: lock -> (replay?) -> context -> features -> ``make_decision`` -> hold ->
+  pending (durable claim) -> publish -> history record -> gap re-check. Every step is idempotent,
+  so a failure at any step is retried by ``consume`` (then DLQ); a hold-store outage publishes and
+  records nothing.
+* Late CallRisk (risk ts within +-15 minutes of the transaction, the same window rule as
+  ``features.extract_features``): every unresolved pending transaction of the payer is re-scored
+  with the larger risk; a strictly stronger verdict is published as a new ``TxnDecision`` with
+  ``decision_seq + 1`` and the open hold is upgraded; never downgraded; resolved holds untouched.
+  Upgrading an ``allow`` means the payment may already have settled: the verdict then carries
+  ``LATE_CALL_RISK_POST_SETTLEMENT`` (a recall/verify request, not a prevention).
 """
 
 import asyncio
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from scam_contracts.models import CallRisk, Transaction, TxnDecision
+from scam_contracts.models import CallRisk, Reason, Transaction, TxnDecision
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
 from svckit.idempotency import IdempotencyStore
@@ -41,9 +46,12 @@ from .pending import InMemoryPendingStore, PendingEntry, PendingStore
 log = logging.getLogger("txn_guard")
 
 DEFAULT_HOLD_DEADLINE_S = 120.0
+LATE_CODE = "LATE_CALL_RISK_POST_SETTLEMENT"
 
 
 class TxnGuardService:
+    MAX_LOCKS = 10_000
+
     def __init__(
         self,
         scorer: Scorer,
@@ -60,12 +68,30 @@ class TxnGuardService:
         self.pending: PendingStore = pending or InMemoryPendingStore()
         self.hold_deadline = timedelta(seconds=hold_deadline_s)
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self.handled = 0  # handler invocations completed (observability / tests)
+
+    def _lock(self, payer: str) -> asyncio.Lock:
+        lock = self._locks.get(payer)
+        if lock is None:
+            lock = self._locks[payer] = asyncio.Lock()
+            if len(self._locks) > self.MAX_LOCKS:
+                for k in [k for k, v in self._locks.items() if not v.locked()]:
+                    if len(self._locks) <= self.MAX_LOCKS:
+                        break
+                    if k != payer:
+                        del self._locks[k]
+        else:
+            self._locks.move_to_end(payer)
+        return lock
 
     async def _h(self, fn: Any, *args: Any) -> Any:
         if getattr(self.history, "blocking", False):
             return await asyncio.to_thread(fn, *args)
         return fn(*args)
+
+    async def _score(self, txn_id: str, feats: dict[str, float], ts: datetime) -> TxnDecision:
+        return await asyncio.to_thread(make_decision, txn_id, feats, self.scorer, ts)
 
     async def _publish(self, d: TxnDecision) -> None:
         key = f"txnguard:dec:{d.txn_id}:{d.decision_seq}"
@@ -78,83 +104,112 @@ class TxnGuardService:
             raise
         await self.idem.mark(key)
 
-    async def handle_txn(self, txn: Transaction) -> TxnDecision | None:
-        key = f"txnguard:txn:{txn.txn_id}"
-        if await self.idem.seen(key) or not await self.idem.claim(key):
-            self.handled += 1
-            return None  # replay / duplicate txn_id
-        try:
+    async def _ensure_hold(self, d: TxnDecision, payer: str) -> None:
+        if d.decision != "allow":
+            await self.holds.create(
+                d.txn_id, d.decision, d.reasons, self._clock() + self.hold_deadline,  # type: ignore[arg-type]
+                payer_token=payer, score=d.score, model_version=d.model_version,
+                decision_seq=d.decision_seq,
+            )  # fmt: skip
+
+    # ------------------------------------------------------------------------ transactions
+    async def handle_txn(self, txn: Transaction) -> TxnDecision:
+        async with self._lock(txn.payer_token):
+            existing = await self.pending.get(txn.txn_id)
+            if existing is not None:
+                return await self._replay(txn, existing)
             ctx = await self._h(self.history.context_for, txn, txn.ts)
             feats = extract_features(txn, ctx)
-            d = make_decision(txn.txn_id, feats, self.scorer, txn.ts)
-            if d.decision != "allow":
-                await self.holds.create(
-                    txn.txn_id, d.decision, d.reasons, self._clock() + self.hold_deadline,  # type: ignore[arg-type]
-                    payer_token=txn.payer_token, score=d.score, model_version=d.model_version,
-                    decision_seq=d.decision_seq,
-                )  # fmt: skip
-            await self.pending.add(
-                PendingEntry(
-                    txn_id=txn.txn_id,
-                    payer_token=txn.payer_token,
-                    ts=txn.ts,
-                    decision=d.decision,
-                    score=d.score,
-                    seq=d.decision_seq,
-                    model_version=d.model_version,
-                    features=feats,
-                )  # fmt: skip
-            )
+            d = await self._score(txn.txn_id, feats, txn.ts)
+            await self._ensure_hold(d, txn.payer_token)
+            entry = PendingEntry(
+                txn_id=txn.txn_id, payer_token=txn.payer_token, ts=txn.ts, decision=d.decision,
+                score=d.score, seq=d.decision_seq, model_version=d.model_version, features=feats,
+                first_json=d.model_dump_json(),
+            )  # fmt: skip
+            if not await self.pending.add(entry):  # lost a cross-instance race: replay the winner
+                winner = await self.pending.get(txn.txn_id)
+                assert winner is not None
+                return await self._replay(txn, winner)
             await self._publish(d)
             await self._h(self.history.record_txn, txn)
-        except BaseException:
-            await self.idem.release(key)
-            raise
-        await self.idem.mark(key)
+            await self._gap_check(txn, entry)
+            self.handled += 1
+            return d
+
+    async def _replay(self, txn: Transaction, entry: PendingEntry) -> TxnDecision:
+        """Same bytes, same hold, same history: never a fresh score."""
+        d = TxnDecision.model_validate_json(entry.first_json)
+        await self._ensure_hold(d, txn.payer_token)
+        await self._publish(d)
+        await self._h(self.history.record_txn, txn)  # idempotent per txn_id
         self.handled += 1
         return d
 
+    async def _gap_check(self, txn: Transaction, entry: PendingEntry) -> None:
+        """A risk recorded after our context read but before ``pending.add`` was invisible to both
+        the context and the risk's pending scan; re-read once now that the entry exists."""
+        ctx = await self._h(self.history.context_for, txn, txn.ts)
+        risk = extract_features(txn, ctx)["active_call_risk"]
+        if risk > entry.features.get("active_call_risk", 0.0):
+            cur = await self.pending.get(txn.txn_id) or entry
+            await self._upgrade(cur, risk)
+
+    # --------------------------------------------------------------------------- call risk
     async def handle_call_risk(self, risk: CallRisk) -> list[TxnDecision]:
-        await self._h(self.history.record_call_risk, risk)
-        upgrades: list[TxnDecision] = []
-        for e in await self.pending.recent(risk.victim_token, risk.ts - CALL_RISK_WINDOW):
-            if abs(e.ts - risk.ts) > CALL_RISK_WINDOW:
-                continue
-            if risk.score <= e.features.get("active_call_risk", 0.0):
-                continue  # this risk adds nothing the stored verdict has not seen
-            hold = await self.holds.get(e.txn_id)
-            if hold is not None and hold.state != "open":
-                continue  # a human already resolved it
-            feats = e.features | {"active_call_risk": risk.score}
-            d = make_decision(e.txn_id, feats, self.scorer, e.ts)
-            if RANK[d.decision] <= RANK[e.decision]:
-                await self.pending.update(e.model_copy(update={"features": feats}))
-                continue  # never downgrade; nothing stronger to say
-            seq = e.seq + 1
-            d = d.model_copy(update={"decision_seq": seq, "ts": max(e.ts, self._clock())})
-            if hold is None:
-                await self.holds.create(
-                    e.txn_id, d.decision, d.reasons, self._clock() + self.hold_deadline,  # type: ignore[arg-type]
-                    payer_token=e.payer_token, score=d.score, model_version=d.model_version,
-                    decision_seq=seq,
-                )  # fmt: skip
-            else:
-                await self.holds.upgrade(
-                    e.txn_id, d.decision, d.reasons, d.score, d.model_version, seq  # type: ignore[arg-type]
-                )  # fmt: skip
-            await self._publish(d)
-            await self.pending.update(
-                e.model_copy(
-                    update={
-                        "features": feats,
-                        "decision": d.decision,
-                        "seq": seq,
-                        "score": d.score,
-                        "model_version": d.model_version,
-                    }
-                )  # fmt: skip
-            )
-            upgrades.append(d)
-            log.info("txn_id=%s upgraded to %s seq=%d", e.txn_id, d.decision, seq)
-        self.handled += 1
-        return upgrades
+        async with self._lock(risk.victim_token):
+            await self._h(self.history.record_call_risk, risk)
+            upgrades: list[TxnDecision] = []
+            for e in await self.pending.recent(risk.victim_token, risk.ts - CALL_RISK_WINDOW):
+                if abs(e.ts - risk.ts) > CALL_RISK_WINDOW:
+                    continue  # same window rule as features.extract_features
+                if risk.score <= e.features.get("active_call_risk", 0.0):
+                    continue  # adds nothing the stored verdict has not seen
+                d = await self._upgrade(e, risk.score)
+                if d is not None:
+                    upgrades.append(d)
+            self.handled += 1
+            return upgrades
+
+    async def _upgrade(self, e: PendingEntry, risk_score: float) -> TxnDecision | None:
+        hold = await self.holds.get(e.txn_id)
+        if hold is not None and hold.state != "open":
+            return None  # a human already resolved it
+        feats = e.features | {"active_call_risk": risk_score}
+        d = await self._score(e.txn_id, feats, e.ts)
+        if RANK[d.decision] <= RANK[e.decision]:
+            await self.pending.update(e.model_copy(update={"features": feats}))
+            return None  # never downgrade; nothing stronger to say
+        seq = e.seq + 1
+        reasons = list(d.reasons)
+        if e.decision == "allow":  # an allowed payment may already have settled
+            reasons.append(
+                Reason(
+                    code=LATE_CODE, weight=0.0,
+                    detail="Call risk arrived after this payment was allowed; the payment may "
+                    "already have completed, so this hold is a recall/verify request",
+                )
+            )  # fmt: skip
+        d = d.model_copy(
+            update={"decision_seq": seq, "reasons": reasons, "ts": max(e.ts, self._clock())}
+        )
+        if hold is None:
+            await self._ensure_hold(d, e.payer_token)
+        else:
+            await self.holds.upgrade(
+                e.txn_id, d.decision, reasons, d.score, d.model_version, seq  # type: ignore[arg-type]
+            )  # fmt: skip
+        await self._publish(d)
+        await self.pending.update(
+            e.model_copy(
+                update={
+                    "features": feats,
+                    "decision": d.decision,
+                    "seq": seq,
+                    "score": d.score,
+                    "model_version": d.model_version,
+                }
+            )  # fmt: skip
+        )
+        log.info("txn_id=%s upgraded to %s seq=%d", e.txn_id, d.decision, seq)
+        return d

@@ -34,7 +34,7 @@ async def handle_event(
     if await store.seen(key) or not await store.claim(key):
         return
     try:
-        await bus.publish(Topics.CALL_RISK, event.call_id, risk)
+        await bus.publish(Topics.CALL_RISK, risk.victim_token, risk)  # keyed by payer token
     except BaseException:
         await store.release(key)
         raise
