@@ -12,6 +12,9 @@ import json
 import logging
 import os
 import re
+import time
+import unicodedata
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -45,19 +48,45 @@ Kind = Literal["mule_account", "script", "device"]
 HashStr = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
-_DIGIT_RUN = re.compile(r"\d(?:[ .\-]?\d){8,}")  # 9+ digits, separators allowed
-_IDENTIFIER_LIKE = [
-    _DIGIT_RUN,
-    re.compile(r"\S+@\S+"),  # e-mail or UPI handle
-    re.compile(r"\+\s?\d"),  # international phone prefix
-    re.compile(r"(?<!\d)[6-9]\d{9}(?!\d)"),  # 10-digit Indian mobile
-    re.compile(r"\b[A-Za-z]{4}0[A-Za-z0-9]{6}\b"),  # IFSC
-]
 FREE_TEXT_MAX = 200
+SOURCE_BANK_RE = r"^[a-z0-9_-]{2,32}$"
+
+_RULES = [
+    re.compile(r"\d(?:\D{0,3}\d){8,}"),  # 9+ digits, up to 3 non-digits between any two
+    re.compile(r"@\s*[a-z0-9]"),  # e-mail / UPI handle (also "name @ bank")
+    re.compile(r"\+\s*\d"),  # international prefix
+    re.compile(r"(?<!\d)0091"),
+    re.compile(r"\b[a-z]{5}\d{4}[a-z]\b"),  # PAN
+    re.compile(r"\b[a-z]{4}0[a-z0-9]{6}\b"),  # IFSC
+]
+
+
+def _flatten(s: str) -> str:
+    """NFKC + casefold; whitespace/separators -> one space; format/control chars removed."""
+    s = unicodedata.normalize("NFKC", s).casefold()
+    out = []
+    for ch in s:
+        cat = unicodedata.category(ch)
+        if ch.isspace() or cat.startswith("Z"):
+            out.append(" ")
+        elif cat in ("Cf", "Cc"):
+            continue
+        else:
+            out.append(ch)
+    return re.sub(r" +", " ", "".join(out))
+
+
+def contains_identifier(text: str) -> bool:
+    """Safety-net guard shared by evidence_ref, reason and note (see README for known limits)."""
+    flat = _flatten(text)
+    if any(rx.search(flat) for rx in _RULES):
+        return True
+    alnum = "".join(ch for ch in flat if ch.isalnum())
+    return re.search(r"\d{9,}", alnum) is not None  # digits split only by punctuation/space
 
 
 def _no_identifiers(v: str) -> str:
-    if any(rx.search(v) for rx in _IDENTIFIER_LIKE):
+    if contains_identifier(v):
         raise ValueError("free text must not contain account, phone, e-mail or UPI identifiers")
     return v
 
@@ -105,9 +134,13 @@ class SubmitBody(BaseModel):
     # confirmed_by is deliberately absent: it always comes from the authenticated principal
     kind: Kind
     key_hash: HashStr
-    source_bank: str = Field(min_length=1, max_length=64)
+    source_bank: str = Field(pattern=SOURCE_BANK_RE)
     evidence_ref: EvidenceRef | None = None
     extend: bool = False
+
+
+class RevokeBody(BaseModel):
+    reason: FreeText
 
 
 class ProtectedBody(BaseModel):
@@ -115,21 +148,23 @@ class ProtectedBody(BaseModel):
     note: FreeText | None = None
 
 
-def limited_view(rec: dict[str, Any]) -> dict[str, Any]:
-    """What a different bank learns when it re-submits an existing antibody."""
-    return {
-        "antibody_id": rec["antibody_id"], "active": True,
-        "expires_at": rec["expires_at"].isoformat(),
-    }  # fmt: skip
-
-
 def view(rec: dict[str, Any]) -> dict[str, Any]:
-    out = {k: v for k, v in rec.items() if k != "revoke_reason"} | {
-        "revoke_reason": rec.get("revoke_reason")
-    }
+    out = dict(rec)
     for k in ("created_at", "expires_at", "revoked_at"):
         out[k] = out[k].isoformat() if out.get(k) else None
     return out
+
+
+def scoped_view(rec: dict[str, Any], p: Principal, now: datetime) -> dict[str, Any]:
+    """Full view, except that an analyst bound to ANOTHER bank only sees the shared datum
+    (key_hash is already broadcast to every bank) and the lifecycle state."""
+    if p.bank is None or p.bank == rec["source_bank"] or p.role in ("officer", "admin"):
+        return view(rec)
+    return {
+        "antibody_id": rec["antibody_id"], "kind": rec["kind"], "key_hash": rec["key_hash"],
+        "active": not rec["revoked"] and rec["expires_at"] > now,
+        "expires_at": rec["expires_at"].isoformat(), "revoked": rec["revoked"],
+    }  # fmt: skip
 
 
 def create_app(
@@ -150,7 +185,8 @@ def create_app(
     store = AntibodyStore(
         database_url or os.getenv("HUB_DATABASE_URL", "sqlite://"), ttl_days=ttl, clock=clock,
         create_schema=os.getenv("HUB_CREATE_SCHEMA", "1") == "1",
-        max_attempts=int(os.getenv("HUB_OUTBOX_MAX_ATTEMPTS", "10")),
+        park_attempts=int(os.getenv("HUB_PARK_ATTEMPTS", "10")),
+        park_after_s=float(os.getenv("HUB_PARK_AFTER_S", "900")),
     )  # fmt: skip
     hub = Hub(
         store, bus or InMemoryBus(),
@@ -182,6 +218,28 @@ def create_app(
 
     app = FastAPI(title="antibody-hub", lifespan=lifespan)
     app.state.hub = hub
+
+    access_log = logging.getLogger("antibody_hub.access")
+
+    @app.middleware("http")
+    async def access(request: Request, call_next: Callable[[Request], Awaitable[Response]]):
+        """Minimal structured access log: method, route template, status, request id, duration.
+        Never the query string, headers or body (run uvicorn with access_log=False)."""
+        rid = uuid.uuid4().hex[:12]
+        t0 = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Request-Id"] = rid
+            return response
+        finally:
+            route = request.scope.get("route")
+            access_log.info(
+                "method=%s route=%s status=%d rid=%s ms=%d",
+                request.method, getattr(route, "path", "unmatched"), status, rid,
+                int((time.monotonic() - t0) * 1000),
+            )  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -224,6 +282,8 @@ def create_app(
             f"antibody_hub_outbox_pending {pending}\n"
             "# TYPE antibody_hub_outbox_parked gauge\n"
             f"antibody_hub_outbox_parked {await asyncio.to_thread(store.count_parked)}\n"
+            "# TYPE antibody_hub_outbox_unparked_total counter\n"
+            f"antibody_hub_outbox_unparked_total {hub.unparked_total}\n"
         )
         return Response(body, media_type="text/plain; version=0.0.4")
 
@@ -244,9 +304,7 @@ def create_app(
             raise HTTPException(409, "PROTECTED") from e
         if not res.created:
             response.status_code = 200
-            if p.bank is not None and p.bank != res.record["source_bank"]:
-                return limited_view(res.record)  # do not disclose the first bank's details
-        return view(res.record)
+        return scoped_view(res.record, p, clock())
 
     @app.api_route("/antibodies/bloom", methods=["GET", "HEAD"])
     async def bloom(
@@ -293,7 +351,10 @@ def create_app(
         limit: Annotated[int, Query(ge=1, le=1000)] = 200,
     ) -> list[dict[str, Any]]:
         need(p, READERS)
-        return [view(r) for r in await asyncio.to_thread(store.listing, state, limit)]
+        now = clock()
+        return [
+            scoped_view(r, p, now) for r in await asyncio.to_thread(store.listing, state, limit)
+        ]
 
     @app.get("/antibodies/{ab_id}")
     async def get_antibody(
@@ -303,19 +364,31 @@ def create_app(
         rec = await asyncio.to_thread(store.get, ab_id)
         if rec is None:
             raise HTTPException(404, "antibody not found")
-        return view(rec)
+        return scoped_view(rec, p, clock())
 
-    @app.delete("/antibodies/{ab_id}")
+    @app.post("/antibodies/{ab_id}/revoke")
     async def revoke(
-        ab_id: str,
-        p: Annotated[Principal, Depends(principal)],
-        reason: Annotated[FreeText, Query()],
+        ab_id: str, body: RevokeBody, p: Annotated[Principal, Depends(principal)]
     ) -> dict[str, Any]:
         need(p, ANALYSTS)
         try:
-            return view(await hub.revoke(ab_id, p.sub, reason, p.bank))
+            return scoped_view(await hub.revoke(ab_id, p.sub, body.reason, p.bank), p, clock())
         except NotFound as e:
             raise HTTPException(404, "antibody not found") from e
+
+    @app.delete("/antibodies/{ab_id}")
+    async def revoke_deprecated(
+        ab_id: str, p: Annotated[Principal, Depends(principal)]
+    ) -> dict[str, Any]:
+        """Removed: a reason in the query string would reach access logs. Use the POST form."""
+        need(p, ANALYSTS)
+        raise HTTPException(400, "use POST /antibodies/{id}/revoke with a JSON body {reason}")
+
+    @app.post("/admin/outbox/unpark")
+    async def unpark(p: Annotated[Principal, Depends(principal)]) -> dict[str, int]:
+        need(p, {"admin"})
+        n = await hub.unpark()
+        return {"unparked": n}
 
     @app.post("/protected", status_code=201)
     async def add_protected(

@@ -12,4 +12,5 @@ if __name__ == "__main__":
         factory=True,
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
+        access_log=False,  # the app logs method/route/status only; uvicorn would log query strings
     )

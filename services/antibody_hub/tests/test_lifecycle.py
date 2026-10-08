@@ -33,7 +33,9 @@ async def test_raw_account_number_never_persisted(client, app, db_url, bus, capl
     r = await client.post("/antibodies", json=body(h, evidence_ref="case-77"), headers=ANALYST)
     assert r.status_code == 201
     await app.state.hub.drain()
-    await client.delete(f"/antibodies/{r.json()['antibody_id']}?reason=test", headers=ANALYST)
+    await client.post(
+        f"/antibodies/{r.json()['antibody_id']}/revoke", json={"reason": "test"}, headers=ANALYST
+    )
     await app.state.hub.drain()
     con = sqlite3.connect(tmp_path / "hub.db")
     dump = "\n".join(con.iterdump())
@@ -99,8 +101,10 @@ async def test_citizens_and_officers_cannot_create_or_revoke(client):
         assert r.status_code == 403, role
     created = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
     for role in ("citizen", "officer", "bank"):
-        r = await client.delete(
-            f"/antibodies/{created['antibody_id']}?reason=x", headers=hdr(role, "u1", "bank_a")
+        r = await client.post(
+            f"/antibodies/{created['antibody_id']}/revoke",
+            json={"reason": "x"},
+            headers=hdr(role, "u1", "bank_a"),
         )
         assert r.status_code == 403, role
 
@@ -198,8 +202,10 @@ async def test_concurrent_duplicate_posts_create_one_antibody_one_event(client, 
 async def test_revoked_antibody_removed_and_tombstone_published(client, app, bus):
     ab = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
     assert BloomFilter.from_snapshot((await bloom(client)).json()).contains(ab["key_hash"])
-    r = await client.delete(
-        f"/antibodies/{ab['antibody_id']}?reason=false+positive", headers=ANALYST
+    r = await client.post(
+        f"/antibodies/{ab['antibody_id']}/revoke",
+        json={"reason": "false+positive"},
+        headers=ANALYST,
     )
     assert r.status_code == 200 and r.json()["revoked"] is True
     snap = (await bloom(client)).json()
@@ -214,19 +220,25 @@ async def test_revoked_antibody_removed_and_tombstone_published(client, app, bus
 async def test_revoke_idempotent_requires_reason_and_404(client, bus):
     ab = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
     url = f"/antibodies/{ab['antibody_id']}"
-    assert (await client.delete(url, headers=ANALYST)).status_code == 422  # reason required
-    assert (await client.delete(url + "?reason=", headers=ANALYST)).status_code == 422
-    assert (await client.delete(url + "?reason=r", headers=ANALYST)).status_code == 200
-    assert (await client.delete(url + "?reason=r", headers=ANALYST)).status_code == 200
+    rv = url + "/revoke"
+    assert (await client.post(rv, json={}, headers=ANALYST)).status_code == 422  # reason required
+    assert (await client.post(rv, json={"reason": ""}, headers=ANALYST)).status_code == 422
+    assert (await client.post(rv, json={"reason": "r"}, headers=ANALYST)).status_code == 200
+    assert (await client.post(rv, json={"reason": "r"}, headers=ANALYST)).status_code == 200
+    assert (await client.delete(url, headers=ANALYST)).status_code == 400  # deprecated form
     assert len(events(bus)) == 2  # create + exactly one tombstone
     assert (
-        await client.delete("/antibodies/" + "0" * 64 + "?reason=r", headers=ANALYST)
+        await client.post(
+            "/antibodies/" + "0" * 64 + "/revoke", json={"reason": "r"}, headers=ANALYST
+        )
     ).status_code == 404
 
 
 async def test_resubmission_after_revoke_new_generation(client, bus):
     a1 = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
-    await client.delete(f"/antibodies/{a1['antibody_id']}?reason=r", headers=ANALYST)
+    await client.post(
+        f"/antibodies/{a1['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
+    )
     r = await client.post("/antibodies", json=body(), headers=ANALYST)
     assert r.status_code == 201
     a2 = r.json()
@@ -252,7 +264,9 @@ async def test_expired_antibody_not_in_bloom_and_one_tombstone(client, app, bus,
     got = (await client.get(f"/antibodies/{ab['antibody_id']}", headers=ANALYST)).json()
     assert got["revoked"] and got["revoked_by"] == "system:expiry"
     # a later revoke does not publish a second tombstone
-    await client.delete(f"/antibodies/{ab['antibody_id']}?reason=r", headers=ANALYST)
+    await client.post(
+        f"/antibodies/{ab['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
+    )
     assert len(events(bus)) == 2
 
 
@@ -337,7 +351,9 @@ async def test_list_get_roles_and_bounds(client, clock):
         clock.advance(hours=1)
         h = mule(f"acct{i}")
         ids.append((await client.post("/antibodies", json=body(h), headers=ANALYST)).json())
-    await client.delete(f"/antibodies/{ids[0]['antibody_id']}?reason=r", headers=ANALYST)
+    await client.post(
+        f"/antibodies/{ids[0]['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
+    )
     officer = hdr("officer", "o1")
     active = (await client.get("/antibodies", headers=officer)).json()
     assert [a["antibody_id"] for a in active] == [

@@ -18,7 +18,7 @@ so every other bank's txn-guard can block the same mule within seconds (Task 11 
   only a deterministic `payload_hash` (binds antibody_id, event, generation, actor, expires_at).
 * `confirmed_by` is the authenticated principal's sub, never a body field. If the principal
   carries `X-Principal-Bank`, `source_bank` must equal it (bank A cannot publish as bank B).
-  `source_bank` must be listed in `HUB_BANKS` when that is set.
+  `source_bank` must be listed in `HUB_BANKS` when that is set; when it is empty (default) only `^[a-z0-9_-]{2,32}$` is accepted (no free text).
 
 ## Endpoints (behind the gateway)
 
@@ -28,7 +28,8 @@ matches `X-Gateway-Secret` (constant time) or `TRUST_GATEWAY_HEADERS=1`; otherwi
 | Endpoint | Roles | Notes |
 |---|---|---|
 | `POST /antibodies` | analyst, admin | body `kind, key_hash, source_bank, evidence_ref?, extend?` (`evidence_ref` is an opaque case reference `^[A-Za-z0-9._:-]{1,64}$`). 201 new; 200 idempotent repeat (same id, no event, expiry untouched); `extend:true` pushes expiry out (one audit entry + updated event); protected hash 409 `PROTECTED` |
-| `DELETE /antibodies/{id}?reason=` | analyst, admin | reason required (free text); idempotent; publishes tombstone (`revoked=true`) |
+| `POST /antibodies/{id}/revoke` | analyst, admin | JSON `{reason}` required (free text); idempotent; publishes tombstone (`revoked=true`). `DELETE /antibodies/{id}` is removed and answers 400 (a query-string reason would reach access logs) |
+| `POST /admin/outbox/unpark` | admin | re-queue parked outbox rows |
 | `GET /antibodies?state=active\|all&limit=` | officer, analyst, admin | limit 1..1000, soonest expiry first |
 | `GET /antibodies/{id}` | officer, analyst, admin | 404 if missing |
 | `GET /antibodies/bloom?bank_id=` | bank, admin | Bloom snapshot `{version,n,m,k,fp_rate,count,bits(base64),generated_at}`; `ETag`/`If-None-Match` -> 304 (checked before any build; builds are cached by version); `HEAD` returns the ETag only. `bank_id` must be in `HUB_BANKS` (else 403); role `bank` must be that bank |
@@ -55,17 +56,35 @@ matches `X-Gateway-Secret` (constant time) or `TRUST_GATEWAY_HEADERS=1`; otherwi
 
 ## Free text, validation errors and logs
 
-`reason` and `note` (max 200 chars) are rejected with 422 if they contain 9+ digits (separators
-allowed), an e-mail / UPI handle (`x@y`), a `+NN` phone prefix, a 10-digit mobile number or an
-IFSC-shaped token; `evidence_ref` must be an opaque reference and also passes that check. 422
-bodies contain only `loc`/`msg`/`type`, never the submitted value. Nothing submitted is logged.
+`evidence_ref` is an opaque reference `^[A-Za-z0-9._:-]{1,64}$`; `reason` and `note` are free text
+(max 200). All three go through ONE guard (`contains_identifier`): NFKC + casefold, whitespace and
+separators collapsed, zero-width/format/control characters removed, then 422 if it finds 9+ digits
+with up to 3 non-digits between any two (or 9+ digits once all punctuation is stripped), an `@`
+followed by an alphanumeric (e-mail / UPI, spaces allowed), a `+` prefix or `0091`, a PAN
+(`ABCDE1234F`) or an IFSC. Table-driven tests cover parentheses, double spaces, Aadhaar groups,
+NBSP/tab/newline/NUL/zero-width separators, circled/superscript digits and full-width `＋`/`＠`.
+
+**Known limits** (the guard is a safety net; analysts are trained not to paste identifiers):
+spelled-out numbers, base64/hex-encoded values, and fragments of 8 digits or fewer split across
+fields or requests are not detected; unusual scripts' digits are caught only if NFKC maps them.
+
+422 bodies contain only `loc`/`msg`/`type`, never the submitted value. The hub logs no request
+bodies and no query strings: the only access log is a minimal line (method, route template,
+status, request id, duration); run uvicorn with `access_log=False` (the entrypoint does).
 
 ## Cross-bank behaviour and trust model
 
-* A second bank re-submitting an existing antibody gets 200 with only
-  `{antibody_id, active, expires_at}` (the first bank's `confirmed_by` / `source_bank` are not
-  disclosed). Its corroboration is stored (`corroborations`) and audited in the ledger
-  (`antibody.corroborated`); no new bus event.
+* Antibody **events carry `source_bank` and `confirmed_by`** (the analyst's pseudonymous principal
+  subject, not a name) to every subscribed bank, by design: they are part of the shared datum.
+  `expires_at` also reveals `created_at` (= expires_at - TTL). Cross-bank `extend:true` is allowed
+  by design; the audit trail records actor and bank.
+* HTTP reads are scoped: an analyst bound to another bank (`X-Principal-Bank` != `source_bank`)
+  gets only `{antibody_id, kind, key_hash, active, expires_at, revoked}` from `GET /antibodies`,
+  `GET /antibodies/{id}`, repeat `POST` and revoke responses. Officers, admins and bank-less
+  principals see the full record (incl. `evidence_ref`, `revoke_reason`, `revoked_by`).
+* A second bank re-submitting an existing antibody gets 200 with that limited view. Its
+  corroboration is stored in `corroborations` (one row per antibody x bank x actor) and audited as
+  `antibody.corroborated`; no new bus event.
 * Prototype trust model: any analyst/admin may revoke any antibody (false-positive handling must
   not wait on the originating bank). The actor and `revoked_by_bank` are recorded, and a revoke by a
   bank other than `source_bank` is audited as `antibody.revoked.cross_bank`.
@@ -76,10 +95,13 @@ bodies contain only `loc`/`msg`/`type`, never the submitted value. Nothing submi
 ## Operations
 
 * Outbox: sent rows are purged after `HUB_OUTBOX_RETENTION_DAYS` (default 7) by the periodic sweep.
-  A row whose publish keeps failing is retried each drain; after `HUB_OUTBOX_MAX_ATTEMPTS` (10) it
-  is **parked** (gauge `antibody_hub_outbox_parked`, alert on > 0). Rows for other keys keep
-  flowing; later rows for the parked row's key (key_hash on the antibody topic) are held back so
-  per-key order is preserved until an operator resolves it.
+  A failing row is retried each drain; it is **parked** only after `HUB_PARK_ATTEMPTS` (10)
+  failures AND `HUB_PARK_AFTER_S` (900) seconds since its first failure, so a short broker blip
+  parks nothing (gauge `antibody_hub_outbox_parked`, alert on > 0). Rows for other keys keep
+  flowing, and held keys are filtered before the batch limit so a backlog cannot starve others;
+  later rows for a parked row's key (key_hash on the antibody topic) are held back to preserve
+  per-key order. `POST /admin/outbox/unpark` (admin) re-queues them
+  (`antibody_hub_outbox_unparked_total`).
 * Schema: `python -m antibody_hub.migrate` creates tables once per deploy (run replicas with
   `HUB_CREATE_SCHEMA=0`); with the default `1`, replicas serialise `create_all` on a Postgres
   advisory lock. Submit and protect on one hash serialise on `pg_advisory_xact_lock(hashtext(hash))`

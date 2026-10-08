@@ -104,6 +104,7 @@ audit_outbox = Table(
     Column("sent_at", DateTime(timezone=True)),
     Column("attempts", Integer, nullable=False, default=0),
     Column("parked", Boolean, nullable=False, default=False),
+    Column("first_failed_at", DateTime(timezone=True)),
     Index("ix_outbox_pending", "sent_at", "id"),
 )  # fmt: skip
 
@@ -192,9 +193,10 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
 class AntibodyStore:
     def __init__(
         self, url: str, *, ttl_days: int = ANTIBODY_TTL_DAYS, clock: Any = None,
-        create_schema: bool = True, max_attempts: int = 10,
+        create_schema: bool = True, park_attempts: int = 10, park_after_s: float = 900.0,
     ) -> None:  # fmt: skip
-        self.max_attempts = max_attempts
+        self.park_attempts = park_attempts
+        self.park_after_s = park_after_s
         self.ttl = timedelta(days=ttl_days)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock: threading.RLock | None = None
@@ -548,24 +550,23 @@ class AntibodyStore:
 
     # ------------------------------------------------------------------ outbox
     def pending(self, limit: int = 200) -> list[tuple[int, str, str, str]]:
-        """Unsent, unparked rows in id order, excluding keys held back by a parked row."""
+        """Unsent, unparked rows in id order. Keys held back by a parked row are filtered out
+        BEFORE the limit, so a backlog of held rows cannot starve other keys."""
+        held = audit_outbox.alias("held")
+        held_keys = select(held.c.msg_key).where(held.c.parked.is_(True), held.c.sent_at.is_(None))
+        q = (
+            select(audit_outbox.c.id, audit_outbox.c.topic, audit_outbox.c.msg_key,
+                   audit_outbox.c.body)
+            .where(
+                audit_outbox.c.sent_at.is_(None),
+                audit_outbox.c.parked.is_(False),
+                audit_outbox.c.msg_key.not_in(held_keys),
+            )
+            .order_by(audit_outbox.c.id)
+            .limit(limit)
+        )  # fmt: skip
         with self.engine.connect() as c:
-            held = {
-                r[0]
-                for r in c.execute(
-                    select(audit_outbox.c.msg_key).where(
-                        audit_outbox.c.parked.is_(True), audit_outbox.c.sent_at.is_(None)
-                    )
-                )
-            }
-            q = (
-                select(audit_outbox.c.id, audit_outbox.c.topic, audit_outbox.c.msg_key,
-                       audit_outbox.c.body)
-                .where(audit_outbox.c.sent_at.is_(None), audit_outbox.c.parked.is_(False))
-                .order_by(audit_outbox.c.id)
-                .limit(limit)
-            )  # fmt: skip
-            return [(r[0], r[1], r[2], r[3]) for r in c.execute(q) if r[2] not in held]
+            return [(r[0], r[1], r[2], r[3]) for r in c.execute(q)]
 
     def mark_sent(self, row_id: int) -> None:
         with self._tx() as conn:
@@ -576,22 +577,39 @@ class AntibodyStore:
             )
 
     def record_failure(self, row_id: int) -> bool:
-        """Count a failed publish; park the row after ``max_attempts``. Returns True if parked."""
+        """Count a failed publish. A row is parked only after ``park_attempts`` failures AND
+        ``park_after_s`` since its first failure, so a short broker blip never parks anything.
+        Returns True if parked."""
+        now = self._clock()
         with self._tx() as conn:
+            row = conn.execute(
+                select(audit_outbox.c.attempts, audit_outbox.c.first_failed_at).where(
+                    audit_outbox.c.id == row_id
+                )
+            ).first()
+            if row is None:
+                return False
+            attempts = (row[0] or 0) + 1
+            first = _aware(row[1]) or now
+            park = (
+                attempts >= self.park_attempts
+                and (now - first).total_seconds() >= self.park_after_s
+            )
             conn.execute(
                 update(audit_outbox)
                 .where(audit_outbox.c.id == row_id)
-                .values(attempts=audit_outbox.c.attempts + 1)
+                .values(attempts=attempts, first_failed_at=first, parked=park)
             )
-            attempts = conn.execute(
-                select(audit_outbox.c.attempts).where(audit_outbox.c.id == row_id)
-            ).scalar()
-            if attempts is not None and attempts >= self.max_attempts:
-                conn.execute(
-                    update(audit_outbox).where(audit_outbox.c.id == row_id).values(parked=True)
-                )
-                return True
-            return False
+            return park
+
+    def unpark(self) -> int:
+        with self._tx() as conn:
+            res = conn.execute(
+                update(audit_outbox)
+                .where(audit_outbox.c.parked.is_(True), audit_outbox.c.sent_at.is_(None))
+                .values(parked=False, attempts=0, first_failed_at=None)
+            )
+            return int(res.rowcount)
 
     def purge_sent(self, retention_days: float) -> int:
         cutoff = self._clock() - timedelta(days=retention_days)
@@ -621,7 +639,7 @@ class AntibodyStore:
             )
 
     def bloom_version(self) -> str:
-        """Cheap change detector for the active set: (active count, newest write, params)."""
+        """Cheap change detector: (active count, total row count, newest updated_at)."""
         now = self._clock()
         with self.engine.connect() as c:
             active = c.execute(

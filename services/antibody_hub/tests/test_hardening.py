@@ -54,8 +54,8 @@ async def test_free_text_fields_reject_raw_identifiers(client, app, db_url, tmp_
     assert (await client.get("/antibodies?state=all", headers=ANALYST)).json() == []
     # revoke reason
     ab = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
-    r = await client.delete(
-        f"/antibodies/{ab['antibody_id']}", params={"reason": text}, headers=ANALYST
+    r = await client.post(
+        f"/antibodies/{ab['antibody_id']}/revoke", json={"reason": text}, headers=ANALYST
     )
     assert r.status_code == 422 and raw not in r.text
     assert (await client.get(f"/antibodies/{ab['antibody_id']}", headers=ANALYST)).json()[
@@ -76,9 +76,9 @@ async def test_clean_free_text_accepted(client):
     ab = (
         await client.post("/antibodies", json=body(evidence_ref="case:2026-0042"), headers=ANALYST)
     ).json()
-    r = await client.delete(
-        f"/antibodies/{ab['antibody_id']}",
-        params={"reason": "false positive, case 42"},
+    r = await client.post(
+        f"/antibodies/{ab['antibody_id']}/revoke",
+        json={"reason": "false positive, case 42"},
         headers=ANALYST,
     )
     assert r.status_code == 200
@@ -96,7 +96,7 @@ async def test_422_bodies_never_echo_input(client, caplog):
         await client.post("/antibodies", json=body(source_bank=raw, kind=raw), headers=ANALYST),
         await client.post("/antibodies", json=body(evidence_ref=raw), headers=ANALYST),
         await client.post("/protected", json={"key_hash": raw}, headers=ADMIN),
-        await client.delete("/antibodies/x", params={"reason": raw}, headers=ANALYST),
+        await client.post("/antibodies/x/revoke", json={"reason": raw}, headers=ANALYST),
         await client.delete(f"/protected/{raw}", headers=ADMIN),
         await client.post("/antibodies", content=raw, headers=ANALYST),
     ]
@@ -154,7 +154,8 @@ async def test_remove_protected_idempotent_audited(client, bus, app):
 # ------------------------------------------------------------------ outbox policy
 async def test_poison_row_parks_only_its_key_and_rest_continue(client, app, bus):
     hub = app.state.hub
-    hub.store.max_attempts = 2
+    hub.store.park_attempts = 2
+    hub.store.park_after_s = 0
     poisoned = mule("poison")
     orig = bus.publish_raw
 
@@ -170,11 +171,11 @@ async def test_poison_row_parks_only_its_key_and_rest_continue(client, app, bus)
     assert hub.store.count_parked() == 1
     ab1 = (await client.get("/antibodies", headers=ANALYST)).json()[0]
     # a later tombstone for the poisoned key is held back (ordering), others still flow
-    await client.delete(
-        f"/antibodies/{ab1['antibody_id']}", params={"reason": "r"}, headers=ANALYST
+    await client.post(
+        f"/antibodies/{ab1['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
     )
-    await client.delete(
-        f"/antibodies/{ab2['antibody_id']}", params={"reason": "r"}, headers=ANALYST
+    await client.post(
+        f"/antibodies/{ab2['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
     )
     await hub.drain()
     got = [(e["key_hash"], e["revoked"]) for e in events(bus)]
@@ -221,7 +222,9 @@ async def test_bloom_cached_by_version_and_304_does_not_build(client, app):
 async def test_bloom_version_changes_when_one_revoked_and_one_created(client, clock):
     a = (await client.post("/antibodies", json=body(mule("1")), headers=ANALYST)).json()
     v1 = (await client.head("/antibodies/bloom?bank_id=bank_a", headers=BANK_A)).headers["etag"]
-    await client.delete(f"/antibodies/{a['antibody_id']}", params={"reason": "r"}, headers=ANALYST)
+    await client.post(
+        f"/antibodies/{a['antibody_id']}/revoke", json={"reason": "r"}, headers=ANALYST
+    )
     await client.post("/antibodies", json=body(mule("2")), headers=ANALYST)
     r = await client.get("/antibodies/bloom?bank_id=bank_a", headers=BANK_A)
     assert r.headers["etag"] != v1
@@ -247,7 +250,7 @@ async def test_second_bank_gets_limited_view_and_corroboration_audited(client, a
     b = hdr("analyst", "b1", "bank_b")
     r = await client.post("/antibodies", json=body(source_bank="bank_b"), headers=b)
     assert r.status_code == 200
-    assert set(r.json()) == {"antibody_id", "active", "expires_at"}
+    assert set(r.json()) == {"antibody_id", "kind", "key_hash", "active", "expires_at", "revoked"}
     assert r.json()["antibody_id"] == first["antibody_id"]
     assert "bank_a" not in r.text and "confirmed_by" not in r.text
     await client.post("/antibodies", json=body(source_bank="bank_b"), headers=b)  # repeat
@@ -263,19 +266,21 @@ async def test_second_bank_gets_limited_view_and_corroboration_audited(client, a
 
 async def test_cross_bank_revoke_audited_with_bank(client, app, bus):
     ab = (await client.post("/antibodies", json=body(), headers=ANALYST)).json()
-    r = await client.delete(
-        f"/antibodies/{ab['antibody_id']}",
-        params={"reason": "r"},
+    r = await client.post(
+        f"/antibodies/{ab['antibody_id']}/revoke",
+        json={"reason": "r"},
         headers=hdr("analyst", "b1", "bank_b"),
     )
-    assert r.status_code == 200 and r.json()["revoked_by_bank"] == "bank_b"
+    assert r.status_code == 200 and "revoked_by_bank" not in r.json()  # bank_b sees limited view
+    full = await client.get(f"/antibodies/{ab['antibody_id']}", headers=ADMIN)
+    assert full.json()["revoked_by_bank"] == "bank_b"
     types = [e["event_type"] for e in events(bus, Topics.LEDGER)]
     assert "antibody.revoked.cross_bank" in types and "antibody.revoked" not in types
     # same-bank revoke is a plain revoke
     ab2 = (await client.post("/antibodies", json=body(mule("x")), headers=ANALYST)).json()
-    await client.delete(
-        f"/antibodies/{ab2['antibody_id']}",
-        params={"reason": "r"},
+    await client.post(
+        f"/antibodies/{ab2['antibody_id']}/revoke",
+        json={"reason": "r"},
         headers=hdr("analyst", "a", "bank_a"),
     )
     assert "antibody.revoked" in [e["event_type"] for e in events(bus, Topics.LEDGER)]

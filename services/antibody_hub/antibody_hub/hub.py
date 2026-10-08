@@ -18,6 +18,7 @@ class Hub:
         retention_days: float = 7.0,
     ) -> None:  # fmt: skip
         self.retention_days = retention_days
+        self.unparked_total = 0
         self._bloom_cache: tuple[str, dict[str, Any]] | None = None
         self.store = store
         self.bus = bus
@@ -80,6 +81,12 @@ class Hub:
             except Exception:
                 log.warning("outbox drain interrupted after %d rows", sent, exc_info=True)
         return sent
+
+    async def unpark(self) -> int:
+        n = await self._run(self.store.unpark)
+        self.unparked_total += n
+        await self.drain()
+        return n
 
     async def bloom_version(self) -> str:
         return await self._run(self.store.bloom_version)
