@@ -27,13 +27,14 @@ matches `X-Gateway-Secret` (constant time) or `TRUST_GATEWAY_HEADERS=1`; otherwi
 
 | Endpoint | Roles | Notes |
 |---|---|---|
-| `POST /antibodies` | analyst, admin | body `kind, key_hash, source_bank, evidence_ref?, extend?`. 201 new; 200 idempotent repeat (same id, no event, expiry untouched); `extend:true` pushes expiry out (one audit entry + updated event); protected hash 409 `PROTECTED` |
-| `DELETE /antibodies/{id}?reason=` | analyst, admin | reason required; idempotent; publishes tombstone (`revoked=true`) |
+| `POST /antibodies` | analyst, admin | body `kind, key_hash, source_bank, evidence_ref?, extend?` (`evidence_ref` is an opaque case reference `^[A-Za-z0-9._:-]{1,64}$`). 201 new; 200 idempotent repeat (same id, no event, expiry untouched); `extend:true` pushes expiry out (one audit entry + updated event); protected hash 409 `PROTECTED` |
+| `DELETE /antibodies/{id}?reason=` | analyst, admin | reason required (free text); idempotent; publishes tombstone (`revoked=true`) |
 | `GET /antibodies?state=active\|all&limit=` | officer, analyst, admin | limit 1..1000, soonest expiry first |
 | `GET /antibodies/{id}` | officer, analyst, admin | 404 if missing |
-| `GET /antibodies/bloom?bank_id=` | bank, admin | Bloom snapshot `{version,n,m,k,fp_rate,count,bits(base64),generated_at}`; `ETag`/`If-None-Match` -> 304. `bank_id` must be in `HUB_BANKS` (else 403); role `bank` must be that bank |
+| `GET /antibodies/bloom?bank_id=` | bank, admin | Bloom snapshot `{version,n,m,k,fp_rate,count,bits(base64),generated_at}`; `ETag`/`If-None-Match` -> 304 (checked before any build; builds are cached by version); `HEAD` returns the ETag only. `bank_id` must be in `HUB_BANKS` (else 403); role `bank` must be that bank |
 | `GET /antibodies/exact?bank_id=&since=&limit=` | bank, admin | active hashes, cursor paginated (`next_cursor`) |
-| `POST /protected` | admin | add allowlisted hash; any active antibody for it is revoked with a tombstone |
+| `POST /protected` | admin | add allowlisted hash (note: free text, see below); any active antibody for it is revoked with a tombstone. Idempotent: 201 new, 200 existing |
+| `DELETE /protected/{key_hash}` | admin | remove an allowlist entry (idempotent, audited in the ledger) |
 | `/healthz`, `/readyz`, `/metrics` | metrics: `HUB_METRICS_TOKEN` or staff role | |
 
 ## Semantics
@@ -52,6 +53,40 @@ matches `X-Gateway-Secret` (constant time) or `TRUST_GATEWAY_HEADERS=1`; otherwi
 * Storage: SQLAlchemy Core, `HUB_DATABASE_URL` (SQLite in tests, Postgres via the `postgres`
   extra). Env: `KAFKA_BOOTSTRAP` (else an in-memory bus, dev only).
 
+## Free text, validation errors and logs
+
+`reason` and `note` (max 200 chars) are rejected with 422 if they contain 9+ digits (separators
+allowed), an e-mail / UPI handle (`x@y`), a `+NN` phone prefix, a 10-digit mobile number or an
+IFSC-shaped token; `evidence_ref` must be an opaque reference and also passes that check. 422
+bodies contain only `loc`/`msg`/`type`, never the submitted value. Nothing submitted is logged.
+
+## Cross-bank behaviour and trust model
+
+* A second bank re-submitting an existing antibody gets 200 with only
+  `{antibody_id, active, expires_at}` (the first bank's `confirmed_by` / `source_bank` are not
+  disclosed). Its corroboration is stored (`corroborations`) and audited in the ledger
+  (`antibody.corroborated`); no new bus event.
+* Prototype trust model: any analyst/admin may revoke any antibody (false-positive handling must
+  not wait on the originating bank). The actor and `revoked_by_bank` are recorded, and a revoke by a
+  bank other than `source_bank` is audited as `antibody.revoked.cross_bank`.
+* Recoverability (plan Review Focus 3): a wrongful block is bounded by the 14-day TTL and cleared
+  by revoke (tombstone reaches banks in seconds); a wrongful revoke is undone by re-submission,
+  which creates a new generation and event. Allowlisted (`protected`) hashes can never be blocked.
+
+## Operations
+
+* Outbox: sent rows are purged after `HUB_OUTBOX_RETENTION_DAYS` (default 7) by the periodic sweep.
+  A row whose publish keeps failing is retried each drain; after `HUB_OUTBOX_MAX_ATTEMPTS` (10) it
+  is **parked** (gauge `antibody_hub_outbox_parked`, alert on > 0). Rows for other keys keep
+  flowing; later rows for the parked row's key (key_hash on the antibody topic) are held back so
+  per-key order is preserved until an operator resolves it.
+* Schema: `python -m antibody_hub.migrate` creates tables once per deploy (run replicas with
+  `HUB_CREATE_SCHEMA=0`); with the default `1`, replicas serialise `create_all` on a Postgres
+  advisory lock. Submit and protect on one hash serialise on `pg_advisory_xact_lock(hashtext(hash))`
+  so a protected hash can never end up with an active antibody. No in-place migration of older
+  tables (prototype).
+* Opt-in Postgres tests: `PYTHON=.../python scripts/with_postgres.sh` (disposable local instance).
+
 ## Guidance for txn-guard (Task 11)
 
 Bloom snapshots use fp_rate 1e-6 with 2x capacity headroom (effective rate far lower). A Bloom
@@ -59,3 +94,15 @@ filter never misses a member but can false-positive: a Bloom hit that would BLOC
 be verified against the exact active set (bootstrap with `/antibodies/exact`, keep it current from
 the event stream, honouring tombstones); use Bloom alone only as a pre-filter or hold trigger.
 Refresh snapshots with `If-None-Match`; events give seconds-level propagation between refreshes.
+
+### Consuming the antibody topic
+
+Delivery is at-least-once, and with several hub replicas events for one antibody may be reordered.
+* Dedupe key: `(antibody_id, revoked, expires_at)`. An `extend:true` event repeats
+  `(antibody_id, revoked=false)` with a later `expires_at`, so deduping on the shorter key would drop it.
+* Merge rule per `antibody_id`: `revoked` is sticky (once any event says revoked, it stays revoked);
+  otherwise the event with the greatest `expires_at` wins. No contract change is needed.
+* Expiry tombstones and manual-revoke tombstones look identical on the topic (`revoked=true`);
+  only the ledger `event_type` (`antibody.expired` vs `antibody.revoked[.cross_bank]`) differs.
+* A re-submission after revoke has a new `antibody_id` (new generation), so it is not blocked by the
+  sticky tombstone of the old one.

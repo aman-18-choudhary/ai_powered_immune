@@ -40,6 +40,7 @@ from sqlalchemy import (
     Text,
     and_,
     create_engine,
+    delete,
     func,
     insert,
     or_,
@@ -72,7 +73,9 @@ antibodies = Table(
     Column("revoked_at", DateTime(timezone=True)),
     Column("revoke_reason", String(500)),
     Column("generation", Integer, nullable=False),
-    Column("evidence_ref", String(256)),
+    Column("evidence_ref", String(64)),
+    Column("revoked_by_bank", String(64)),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("uq_antibody_generation", "kind", "key_hash", "generation", unique=True),
     Index(
         "uq_antibody_active", "kind", "key_hash", unique=True,
@@ -99,7 +102,17 @@ audit_outbox = Table(
     Column("dedupe", String(128), nullable=False, unique=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("sent_at", DateTime(timezone=True)),
+    Column("attempts", Integer, nullable=False, default=0),
+    Column("parked", Boolean, nullable=False, default=False),
     Index("ix_outbox_pending", "sent_at", "id"),
+)  # fmt: skip
+
+corroborations = Table(
+    "corroborations", metadata,
+    Column("antibody_id", String(64), primary_key=True),
+    Column("bank_id", String(64), primary_key=True),
+    Column("actor", String(256), primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )  # fmt: skip
 
 
@@ -120,6 +133,7 @@ class SubmitResult:
     record: dict[str, Any]
     created: bool
     extended: bool = False
+    corroborated: bool = False
 
 
 def antibody_id(kind: str, key_hash: str, generation: int) -> str:
@@ -178,7 +192,9 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
 class AntibodyStore:
     def __init__(
         self, url: str, *, ttl_days: int = ANTIBODY_TTL_DAYS, clock: Any = None,
+        create_schema: bool = True, max_attempts: int = 10,
     ) -> None:  # fmt: skip
+        self.max_attempts = max_attempts
         self.ttl = timedelta(days=ttl_days)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock: threading.RLock | None = None
@@ -192,7 +208,29 @@ class AntibodyStore:
             self.engine: Engine = create_engine(url, **kw)
         else:
             self.engine = create_engine(url, pool_pre_ping=True)
-        metadata.create_all(self.engine)
+        if create_schema:
+            self.create_schema()
+
+    def create_schema(self) -> None:
+        """Idempotent DDL. On Postgres replicas starting together serialise on an advisory lock;
+        production deploys may instead run ``python -m antibody_hub.migrate`` once."""
+        with self.engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                conn.execute(text("SELECT pg_advisory_xact_lock(727001)"))
+            metadata.create_all(conn)
+
+    def _lock_hash(self, conn: Connection, key_hash: str) -> None:
+        """Serialise submit/protect on one hash across processes (SQLite: process lock)."""
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:h))"), {"h": key_hash})
+
+    def _insert_ignore(self, conn: Connection, table: Table, **values: Any) -> bool:
+        if conn.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dins
+        else:
+            from sqlalchemy.dialects.sqlite import insert as dins
+        res = conn.execute(dins(table).values(**values).on_conflict_do_nothing())
+        return res.rowcount == 1
 
     def close(self) -> None:
         self.engine.dispose()
@@ -227,7 +265,7 @@ class AntibodyStore:
 
     def _emit(
         self, conn: Connection, rec: dict[str, Any], event: str, actor: str, now: datetime,
-        *, revoked: bool,
+        *, revoked: bool, ledger_event: str | None = None,
     ) -> None:  # fmt: skip
         ab = antibody_model(rec, revoked=revoked)
         exp = rec["expires_at"].isoformat()
@@ -236,8 +274,8 @@ class AntibodyStore:
             f"ab:{rec['antibody_id']}:{event}:{exp}", now,
         )  # fmt: skip
         entry = LedgerEntryIn(
-            service=SERVICE, actor=actor, event_type=f"antibody.{event}",
-            payload_hash=payload_hash(rec, event, actor),
+            service=SERVICE, actor=actor, event_type=f"antibody.{ledger_event or event}",
+            payload_hash=payload_hash(rec, ledger_event or event, actor),
         )  # fmt: skip
         self._enqueue(
             conn, Topics.LEDGER, rec["antibody_id"], entry.model_dump_json(),
@@ -246,17 +284,28 @@ class AntibodyStore:
 
     def _revoke_row(
         self, conn: Connection, rec: dict[str, Any], actor: str, reason: str, event: str,
-        now: datetime,
+        now: datetime, bank: str | None = None,
     ) -> bool:  # fmt: skip
         res = conn.execute(
             update(antibodies)
             .where(antibodies.c.antibody_id == rec["antibody_id"], antibodies.c.revoked.is_(False))
-            .values(revoked=True, revoked_by=actor, revoked_at=now, revoke_reason=reason[:500])
+            .values(
+                revoked=True,
+                revoked_by=actor,
+                revoked_at=now,
+                revoke_reason=reason[:500],
+                revoked_by_bank=bank,
+                updated_at=now,
+            )
         )
         if res.rowcount != 1:
             return False
         rec = rec | {"revoked": True}
-        self._emit(conn, rec, event, actor, now, revoked=True)
+        cross = event == "revoked" and bank is not None and bank != rec["source_bank"]
+        self._emit(
+            conn, rec, event, actor, now, revoked=True,
+            ledger_event="revoked.cross_bank" if cross else None,
+        )  # fmt: skip
         return True
 
     # ------------------------------------------------------------------ commands
@@ -280,6 +329,7 @@ class AntibodyStore:
     ) -> SubmitResult:  # fmt: skip
         now = self._clock()
         with self._tx() as conn:
+            self._lock_hash(conn, key_hash)  # then re-check protected: races add_protected safely
             if conn.execute(
                 select(protected_hashes.c.key_hash).where(protected_hashes.c.key_hash == key_hash)
             ).first():
@@ -294,7 +344,7 @@ class AntibodyStore:
                 if rec["expires_at"] <= now:  # lapsed but not yet swept: expire, then re-create
                     self._revoke_row(conn, rec, EXPIRY_ACTOR, "expired", "expired", now)
                 else:
-                    return self._reenter(conn, rec, extend, confirmed_by, now)
+                    return self._reenter(conn, rec, extend, confirmed_by, source_bank, now)
             gen = (
                 conn.execute(
                     select(func.max(antibodies.c.generation)).where(
@@ -309,19 +359,30 @@ class AntibodyStore:
                 "created_at": now, "expires_at": now + self.ttl, "revoked": False,
                 "revoked_by": None, "revoked_at": None, "revoke_reason": None,
                 "generation": gen, "evidence_ref": evidence_ref,
+                "revoked_by_bank": None, "updated_at": now,
             }  # fmt: skip
             conn.execute(insert(antibodies).values(**rec))
             self._emit(conn, rec, "created", confirmed_by, now, revoked=False)
             return SubmitResult(rec, created=True)
 
     def _reenter(
-        self, conn: Connection, rec: dict[str, Any], extend: bool, actor: str, now: datetime
+        self, conn: Connection, rec: dict[str, Any], extend: bool, actor: str, bank: str,
+        now: datetime,
     ) -> SubmitResult:  # fmt: skip
+        corroborated = False
+        if bank != rec["source_bank"]:
+            # a second bank independently confirms: record it (audit only, no new bus event)
+            corroborated = self._insert_ignore(
+                conn, corroborations, antibody_id=rec["antibody_id"], bank_id=bank, actor=actor,
+                created_at=now,
+            )  # fmt: skip
+            if corroborated:
+                self._ledger_only(conn, rec, "corroborated", f"{actor}@{bank}", now)
         if not extend:
-            return SubmitResult(rec, created=False)
+            return SubmitResult(rec, created=False, corroborated=corroborated)
         new_exp = now + self.ttl
         if new_exp <= rec["expires_at"]:
-            return SubmitResult(rec, created=False)
+            return SubmitResult(rec, created=False, corroborated=corroborated)
         res = conn.execute(
             update(antibodies)
             .where(
@@ -329,14 +390,30 @@ class AntibodyStore:
                 antibodies.c.revoked.is_(False),
                 antibodies.c.expires_at < new_exp,
             )
-            .values(expires_at=new_exp)
+            .values(expires_at=new_exp, updated_at=now)
         )
         rec = rec | {"expires_at": new_exp}
         if res.rowcount == 1:
             self._emit(conn, rec, "extended", actor, now, revoked=False)
-        return SubmitResult(rec, created=False, extended=res.rowcount == 1)
+        return SubmitResult(
+            rec, created=False, extended=res.rowcount == 1, corroborated=corroborated
+        )
 
-    def revoke(self, ab_id: str, actor: str, reason: str) -> dict[str, Any]:
+    def _ledger_only(
+        self, conn: Connection, rec: dict[str, Any], event: str, actor: str, now: datetime
+    ) -> None:  # fmt: skip
+        entry = LedgerEntryIn(
+            service=SERVICE, actor=actor, event_type=f"antibody.{event}",
+            payload_hash=payload_hash(rec, event, actor),
+        )  # fmt: skip
+        self._enqueue(
+            conn, Topics.LEDGER, rec["antibody_id"], entry.model_dump_json(),
+            f"led:{entry.payload_hash}", now,
+        )  # fmt: skip
+
+    def revoke(
+        self, ab_id: str, actor: str, reason: str, bank: str | None = None
+    ) -> dict[str, Any]:  # fmt: skip
         now = self._clock()
         with self._tx() as conn:
             row = conn.execute(select(antibodies).where(antibodies.c.antibody_id == ab_id)).first()
@@ -344,7 +421,7 @@ class AntibodyStore:
                 raise NotFound(ab_id)
             rec = _row(row)
             if not rec["revoked"]:
-                self._revoke_row(conn, rec, actor, reason, "revoked", now)
+                self._revoke_row(conn, rec, actor, reason, "revoked", now, bank)
             return _row(
                 conn.execute(select(antibodies).where(antibodies.c.antibody_id == ab_id)).first()
             )
@@ -352,15 +429,12 @@ class AntibodyStore:
     def add_protected(self, key_hash: str, actor: str, note: str | None) -> tuple[bool, list[str]]:
         now = self._clock()
         with self._tx() as conn:
-            exists = conn.execute(
-                select(protected_hashes.c.key_hash).where(protected_hashes.c.key_hash == key_hash)
-            ).first()
-            if not exists:
-                conn.execute(
-                    insert(protected_hashes).values(
-                        key_hash=key_hash, added_by=actor, added_at=now, note=note
-                    )
-                )
+            self._lock_hash(conn, key_hash)
+            created = self._insert_ignore(
+                conn, protected_hashes, key_hash=key_hash, added_by=actor, added_at=now, note=note
+            )
+            if created:
+                self._protected_audit(conn, "protected.added", key_hash, actor, now)
             revoked_ids = []
             rows = conn.execute(
                 select(antibodies).where(
@@ -371,7 +445,31 @@ class AntibodyStore:
                 rec = _row(row)
                 if self._revoke_row(conn, rec, actor, "protected hash", "revoked", now):
                     revoked_ids.append(rec["antibody_id"])
-            return (not exists, revoked_ids)
+            return (created, revoked_ids)
+
+    def remove_protected(self, key_hash: str, actor: str) -> bool:
+        now = self._clock()
+        with self._tx() as conn:
+            self._lock_hash(conn, key_hash)
+            res = conn.execute(
+                delete(protected_hashes).where(protected_hashes.c.key_hash == key_hash)
+            )
+            if res.rowcount == 1:
+                self._protected_audit(conn, "protected.removed", key_hash, actor, now)
+            return res.rowcount == 1
+
+    def _protected_audit(
+        self, conn: Connection, event: str, key_hash: str, actor: str, now: datetime
+    ) -> None:  # fmt: skip
+        raw = json.dumps([event, key_hash[:8], actor, now.isoformat()], separators=(",", ":"))
+        entry = LedgerEntryIn(
+            service=SERVICE, actor=actor, event_type=event,
+            payload_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        )  # fmt: skip
+        self._enqueue(
+            conn, Topics.LEDGER, f"protected:{key_hash[:8]}", entry.model_dump_json(),
+            f"led:{entry.payload_hash}", now,
+        )  # fmt: skip
 
     def expire_due(self) -> int:
         """Mark lapsed antibodies revoked-by-expiry; one tombstone each (CAS on revoked)."""
@@ -450,15 +548,24 @@ class AntibodyStore:
 
     # ------------------------------------------------------------------ outbox
     def pending(self, limit: int = 200) -> list[tuple[int, str, str, str]]:
-        q = (
-            select(audit_outbox.c.id, audit_outbox.c.topic, audit_outbox.c.msg_key,
-                   audit_outbox.c.body)
-            .where(audit_outbox.c.sent_at.is_(None))
-            .order_by(audit_outbox.c.id)
-            .limit(limit)
-        )  # fmt: skip
+        """Unsent, unparked rows in id order, excluding keys held back by a parked row."""
         with self.engine.connect() as c:
-            return [(r[0], r[1], r[2], r[3]) for r in c.execute(q)]
+            held = {
+                r[0]
+                for r in c.execute(
+                    select(audit_outbox.c.msg_key).where(
+                        audit_outbox.c.parked.is_(True), audit_outbox.c.sent_at.is_(None)
+                    )
+                )
+            }
+            q = (
+                select(audit_outbox.c.id, audit_outbox.c.topic, audit_outbox.c.msg_key,
+                       audit_outbox.c.body)
+                .where(audit_outbox.c.sent_at.is_(None), audit_outbox.c.parked.is_(False))
+                .order_by(audit_outbox.c.id)
+                .limit(limit)
+            )  # fmt: skip
+            return [(r[0], r[1], r[2], r[3]) for r in c.execute(q) if r[2] not in held]
 
     def mark_sent(self, row_id: int) -> None:
         with self._tx() as conn:
@@ -468,13 +575,64 @@ class AntibodyStore:
                 .values(sent_at=self._clock())
             )
 
+    def record_failure(self, row_id: int) -> bool:
+        """Count a failed publish; park the row after ``max_attempts``. Returns True if parked."""
+        with self._tx() as conn:
+            conn.execute(
+                update(audit_outbox)
+                .where(audit_outbox.c.id == row_id)
+                .values(attempts=audit_outbox.c.attempts + 1)
+            )
+            attempts = conn.execute(
+                select(audit_outbox.c.attempts).where(audit_outbox.c.id == row_id)
+            ).scalar()
+            if attempts is not None and attempts >= self.max_attempts:
+                conn.execute(
+                    update(audit_outbox).where(audit_outbox.c.id == row_id).values(parked=True)
+                )
+                return True
+            return False
+
+    def purge_sent(self, retention_days: float) -> int:
+        cutoff = self._clock() - timedelta(days=retention_days)
+        with self._tx() as conn:
+            res = conn.execute(
+                delete(audit_outbox).where(
+                    audit_outbox.c.sent_at.is_not(None), audit_outbox.c.sent_at < cutoff
+                )
+            )
+            return int(res.rowcount)
+
     def count_pending(self) -> int:
+        return self._count_outbox(audit_outbox.c.parked.is_(False))
+
+    def count_parked(self) -> int:
+        return self._count_outbox(audit_outbox.c.parked.is_(True))
+
+    def _count_outbox(self, cond: Any) -> int:
         with self.engine.connect() as c:
             return int(
                 c.execute(
                     select(func.count())
                     .select_from(audit_outbox)
-                    .where(audit_outbox.c.sent_at.is_(None))
+                    .where(audit_outbox.c.sent_at.is_(None), cond)
                 ).scalar()
                 or 0
             )
+
+    def bloom_version(self) -> str:
+        """Cheap change detector for the active set: (active count, newest write, params)."""
+        now = self._clock()
+        with self.engine.connect() as c:
+            active = c.execute(
+                select(func.count())
+                .select_from(antibodies)
+                .where(antibodies.c.revoked.is_(False), antibodies.c.expires_at > now)
+            ).scalar()
+            total = c.execute(select(func.count()).select_from(antibodies)).scalar()
+            newest = c.execute(select(func.max(antibodies.c.updated_at))).scalar()
+        if isinstance(newest, str):
+            newest = datetime.fromisoformat(newest)
+        newest = _aware(newest)
+        stamp = newest.isoformat() if newest else ""
+        return hashlib.sha256(f"{active}:{total}:{stamp}".encode()).hexdigest()[:32]

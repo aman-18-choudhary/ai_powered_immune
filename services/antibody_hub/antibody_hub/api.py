@@ -8,6 +8,7 @@ and the request carries it in ``X-Gateway-Secret`` (constant-time, bytes compare
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import re
@@ -17,8 +18,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import AfterValidator, BaseModel, Field
 from svckit.bus import Bus, InMemoryBus
 from svckit.health import make_health_router
 
@@ -40,6 +43,31 @@ READERS = {"officer", "analyst", "admin"}
 BANK_READERS = {"bank", "admin"}
 Kind = Literal["mule_account", "script", "device"]
 HashStr = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+_DIGIT_RUN = re.compile(r"\d(?:[ .\-]?\d){8,}")  # 9+ digits, separators allowed
+_IDENTIFIER_LIKE = [
+    _DIGIT_RUN,
+    re.compile(r"\S+@\S+"),  # e-mail or UPI handle
+    re.compile(r"\+\s?\d"),  # international phone prefix
+    re.compile(r"(?<!\d)[6-9]\d{9}(?!\d)"),  # 10-digit Indian mobile
+    re.compile(r"\b[A-Za-z]{4}0[A-Za-z0-9]{6}\b"),  # IFSC
+]
+FREE_TEXT_MAX = 200
+
+
+def _no_identifiers(v: str) -> str:
+    if any(rx.search(v) for rx in _IDENTIFIER_LIKE):
+        raise ValueError("free text must not contain account, phone, e-mail or UPI identifiers")
+    return v
+
+
+FreeText = Annotated[
+    str, Field(min_length=1, max_length=FREE_TEXT_MAX), AfterValidator(_no_identifiers)
+]
+EvidenceRef = Annotated[
+    str, Field(pattern=r"^[A-Za-z0-9._:-]{1,64}$"), AfterValidator(_no_identifiers)
+]
 
 
 @dataclass(frozen=True)
@@ -78,13 +106,21 @@ class SubmitBody(BaseModel):
     kind: Kind
     key_hash: HashStr
     source_bank: str = Field(min_length=1, max_length=64)
-    evidence_ref: str | None = Field(default=None, max_length=256)
+    evidence_ref: EvidenceRef | None = None
     extend: bool = False
 
 
 class ProtectedBody(BaseModel):
     key_hash: HashStr
-    note: str | None = Field(default=None, max_length=500)
+    note: FreeText | None = None
+
+
+def limited_view(rec: dict[str, Any]) -> dict[str, Any]:
+    """What a different bank learns when it re-submits an existing antibody."""
+    return {
+        "antibody_id": rec["antibody_id"], "active": True,
+        "expires_at": rec["expires_at"].isoformat(),
+    }  # fmt: skip
 
 
 def view(rec: dict[str, Any]) -> dict[str, Any]:
@@ -112,9 +148,14 @@ def create_app(
     )
     ttl = int(os.getenv("ANTIBODY_TTL_DAYS", str(ANTIBODY_TTL_DAYS)))
     store = AntibodyStore(
-        database_url or os.getenv("HUB_DATABASE_URL", "sqlite://"), ttl_days=ttl, clock=clock
-    )
-    hub = Hub(store, bus or InMemoryBus())
+        database_url or os.getenv("HUB_DATABASE_URL", "sqlite://"), ttl_days=ttl, clock=clock,
+        create_schema=os.getenv("HUB_CREATE_SCHEMA", "1") == "1",
+        max_attempts=int(os.getenv("HUB_OUTBOX_MAX_ATTEMPTS", "10")),
+    )  # fmt: skip
+    hub = Hub(
+        store, bus or InMemoryBus(),
+        retention_days=float(os.getenv("HUB_OUTBOX_RETENTION_DAYS", "7")),
+    )  # fmt: skip
     if drain_interval_s is None:
         drain_interval_s = float(os.getenv("HUB_DRAIN_INTERVAL_S", "5"))
     tasks: list[asyncio.Task[None]] = []
@@ -141,6 +182,19 @@ def create_app(
 
     app = FastAPI(title="antibody-hub", lifespan=lifespan)
     app.state.hub = hub
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # never echo the submitted value (FastAPI's default includes "input"/"ctx")
+        return JSONResponse(
+            {
+                "detail": [
+                    {"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()
+                ]
+            },
+            status_code=422,
+        )
+
     app.include_router(make_health_router(ready))
 
     def bank_check(p: Principal, bank_id: str) -> None:
@@ -168,6 +222,8 @@ def create_app(
             f"antibody_hub_active {active}\n"
             "# TYPE antibody_hub_outbox_pending gauge\n"
             f"antibody_hub_outbox_pending {pending}\n"
+            "# TYPE antibody_hub_outbox_parked gauge\n"
+            f"antibody_hub_outbox_parked {await asyncio.to_thread(store.count_parked)}\n"
         )
         return Response(body, media_type="text/plain; version=0.0.4")
 
@@ -188,20 +244,23 @@ def create_app(
             raise HTTPException(409, "PROTECTED") from e
         if not res.created:
             response.status_code = 200
+            if p.bank is not None and p.bank != res.record["source_bank"]:
+                return limited_view(res.record)  # do not disclose the first bank's details
         return view(res.record)
 
-    @app.get("/antibodies/bloom")
+    @app.api_route("/antibodies/bloom", methods=["GET", "HEAD"])
     async def bloom(
         request: Request, bank_id: str, p: Annotated[Principal, Depends(principal)]
     ) -> Response:
         bank_check(p, bank_id)
-        snap = await hub.bloom()
-        etag = f'"{snap["version"]}"'
+        version = await hub.bloom_version()
+        etag = f'"{version}"'
         inm = request.headers.get("if-none-match", "")
         if etag in [t.strip().removeprefix("W/") for t in inm.split(",")] or inm.strip() == "*":
             return Response(status_code=304, headers={"ETag": etag})
-        import json
-
+        if request.method == "HEAD":
+            return Response(media_type="application/json", headers={"ETag": etag})
+        snap = await hub.bloom(version)
         return Response(json.dumps(snap), media_type="application/json", headers={"ETag": etag})
 
     @app.get("/antibodies/exact")
@@ -250,11 +309,11 @@ def create_app(
     async def revoke(
         ab_id: str,
         p: Annotated[Principal, Depends(principal)],
-        reason: Annotated[str, Query(min_length=1, max_length=500)],
+        reason: Annotated[FreeText, Query()],
     ) -> dict[str, Any]:
         need(p, ANALYSTS)
         try:
-            return view(await hub.revoke(ab_id, p.sub, reason))
+            return view(await hub.revoke(ab_id, p.sub, reason, p.bank))
         except NotFound as e:
             raise HTTPException(404, "antibody not found") from e
 
@@ -267,6 +326,14 @@ def create_app(
         if not created:
             response.status_code = 200
         return {"key_hash": body.key_hash, "revoked_antibodies": revoked}
+
+    @app.delete("/protected/{key_hash}")
+    async def remove_protected(
+        key_hash: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+        p: Annotated[Principal, Depends(principal)],
+    ) -> dict[str, Any]:
+        need(p, {"admin"})
+        return {"key_hash": key_hash, "removed": await hub.remove_protected(key_hash, p.sub)}
 
     return app
 
