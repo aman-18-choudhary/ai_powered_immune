@@ -27,13 +27,31 @@ from .test_consumer import _sim_events
 RANK = {"allow": 0, "step_up": 1, "hold_verify": 2}
 
 
+def _lookup():
+    """Antibody lookup on (Redis-backed cache with 500 unrelated entries): costs one hash lookup."""
+    import hashlib
+    from datetime import UTC, datetime
+
+    from scam_contracts.models import Antibody
+
+    from txn_guard.antibody_cache import AntibodyLookup, RedisAntibodyCache
+
+    cache = RedisAntibodyCache(fakeredis.FakeRedis())
+    now = datetime.now(UTC)
+    for i in range(500):
+        h = hashlib.sha256(f"x{i}".encode()).hexdigest()
+        cache.apply(Antibody(antibody_id=h, kind="mule_account", key_hash=h, source_bank="b",
+                             confirmed_by="a", created_at=now, expires_at=now + timedelta(days=14)))  # fmt: skip
+    return AntibodyLookup(cache)
+
+
 def _redis_service(scorer):
     bus = InMemoryBus()
     ar = fakeredis.aioredis.FakeRedis()
     svc = TxnGuardService(
         scorer, RedisHistoryStore(fakeredis.FakeRedis()),
         RedisHoldStore(ar, audit=InMemoryAuditSink()), bus, InMemoryIdempotencyStore(),
-        pending=RedisPendingStore(ar),
+        pending=RedisPendingStore(ar), antibodies=_lookup(),
     )  # fmt: skip
     return svc, bus
 
