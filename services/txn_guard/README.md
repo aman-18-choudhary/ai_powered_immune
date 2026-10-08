@@ -143,3 +143,33 @@ Training data attaches an imperfect call risk (85% recall, 1-3 chunk lag, 1.5% s
 benign) so the model cannot learn "call risk == scam" (`simdata.py`).
 When Task 11 fills `payee_in_antibody`, the feature is constant in training data today, so the
 booster ignores it: retrain with antibody-labelled data.
+
+## Hold-and-verify service (Task 9)
+
+Modules: `service.py` (workflow), `consumer.py` (svckit `consume` on `txn.events` and
+`call.risk`, group `txn-guard`), `holds.py` (HoldStore protocol, in-memory + Redis, audit sinks),
+`redis_history.py` (Redis `HistoryStore`), `pending.py` (scored-but-unresolved transactions),
+`api.py` (HTTP).
+
+* One decision and one hold per `txn_id`: replays (same or different idempotency key) are
+  no-ops. Order per transaction: hold -> pending -> publish `TxnDecision` (key = txn_id) ->
+  history update, so any failure is safe to retry; a hold-store outage retries, then dead-letters
+  (`txn.events.dlq`) and publishes nothing.
+* Late `CallRisk` (within 15 min of a pending/allowed/step-up transaction, not yet resolved)
+  re-scores it with the larger call risk; a strictly stronger verdict is published as a new
+  `TxnDecision` with `decision_seq + 1` and the open hold is upgraded. No automatic downgrades.
+* Holds are never auto-released or auto-blocked: past `HOLD_DEADLINE_S` (default 120) they stay
+  open, are flagged `overdue` and counted in `txn_guard_holds_overdue` (humans decide).
+* Resolve: non-empty actor required, idempotent for the same action, 409 on a conflicting action.
+  Every state change emits an audit event (`hold.created|upgraded|resolved`, ids/actor/model
+  version/payload hash only) to an `AuditSink` (`BusAuditSink` writes `LedgerEntryIn` to
+  `ledger.append`).
+* HTTP (only via the gateway; role headers trusted only if `GATEWAY_SHARED_SECRET` is set and the
+  `X-Gateway-Secret` header matches, or `TRUST_GATEWAY_HEADERS=1`): `GET /holds` (analyst, officer,
+  admin; soonest deadline first), `GET /holds/{txn_id}`, `POST /holds/{txn_id}/resolve`
+  (analyst, admin), `POST /holds/{txn_id}/verify` (citizen, own step_up only), `/healthz`,
+  `/readyz`, `/metrics`.
+
+Env: `REDIS_URL` (required), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
+consumers run), `HOLD_DEADLINE_S`, `GATEWAY_SHARED_SECRET`, `TRUST_GATEWAY_HEADERS`, `PORT`.
+Run: `python -m txn_guard`.

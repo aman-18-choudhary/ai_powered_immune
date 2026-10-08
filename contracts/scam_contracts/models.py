@@ -77,6 +77,7 @@ class TxnDecision(_Frozen):
     reasons: list[Reason]
     model_version: str
     ts: AwareDatetime
+    decision_seq: int = 1  # 1 = first verdict; >1 = an upgrade of the same transaction
 
 
 class Antibody(_Frozen):

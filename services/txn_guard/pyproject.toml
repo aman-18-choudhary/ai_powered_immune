@@ -9,11 +9,11 @@ description = "Transaction scoring: gradient-boosted risk model + isotonic calib
 requires-python = ">=3.11"
 dependencies = [
     "scam-contracts", "svckit", "fastapi>=0.110", "uvicorn>=0.29",
-    "scikit-learn>=1.4", "joblib>=1.3", "numpy>=1.26",
+    "scikit-learn>=1.4", "joblib>=1.3", "numpy>=1.26", "redis>=5", "aiokafka>=0.10",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "httpx>=0.27", "sim-engine"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "httpx>=0.27", "fakeredis[lua]>=2.20", "sim-engine"]
 train = ["sim-engine"]
 
 [tool.setuptools.packages.find]
