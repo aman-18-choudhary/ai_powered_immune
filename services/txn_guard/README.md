@@ -54,24 +54,50 @@ and the model-derived reason weights are untouched (overlay weight = lift over t
 
 ### Per-rail scales (task 7b)
 
-Absolute-rupee thresholds above (Rs 5k / 10k / 25k / 50k) are multiplied by a per-rail scale
-(`policy.RAIL_AMOUNT_SCALE`). Derivation: benign median amount on the 4 held-out simulator seeds is
-UPI Rs 452, IMPS Rs 4,288, NEFT Rs 24,157 (p90 2.7k / 19.5k / 135k); NEFT / IMPS = 5.6x, rounded
-down to 5 so Rs 3L NEFT with z >= 10 is still caught (3L >= 50k x 5).
+Every absolute-rupee threshold (Rs 5k / 10k / 25k / 50k and the Rs 10k "repeat large" amount) is
+multiplied by a per-rail scale (`features.RAIL_AMOUNT_SCALE`). Derivation: benign median amount on
+the 4 held-out simulator seeds is UPI Rs 452, IMPS Rs 4,288, NEFT Rs 24,157 (p90 2.7k / 19.5k /
+135k); NEFT / IMPS = 5.6x, rounded down to 5 so Rs 3L NEFT with z >= 10 is still caught.
 
-| rail | scale | thresholds (young-payee abs / call-guard abs / short-history / hold / extreme) | z threshold for overlays |
+| rail | scale | young-payee abs / call-guard abs / short-history / hold / extreme | overlay z | call-guard z |
+|---|---|---|---|---|
+| UPI | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) | 3 |
+| IMPS | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) | 3 |
+| NEFT | 5 | 25k / 50k / 125k / 250k / 250k | 6 (extreme 10) | 3 if payee young / recently new / repeat, else 4 |
+
+**Model damper** (`RAIL_TYPICAL_AMOUNT_DAMPER`, NEFT only): the booster is rail-blind and measures
+amounts against the payer's UPI-dominated history, so ordinary large NEFT payments look anomalous.
+A model score above 0.49 (`STEP_UP_AT - 0.01`) is capped at 0.49 unless z >= 6. It is **skipped**
+when an active call risk >= 0.7 exists or the payer has < 3 prior transfers (z is then "unknown",
+not "typical"). The damper reason states the original and capped score and appears only when the
+cap changed the score. It is a model-path correction only: in rules-fallback mode there is no
+damper (the fallback does not use z-scored amounts for its score); overlays apply in both modes.
+The booster itself stays rail-invariant (`rail` is not in `MODEL_FEATURES`; tested).
+
+**Derivation of the NEFT z values** (benign NEFT, 4 held-out seeds, n=7,769; hold / flag %):
+
+| overlay z (NEFT) | call-guard z 3 | call-guard z 4 | call-guard z 5 |
 |---|---|---|---|
-| UPI | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) |
-| IMPS | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) |
-| NEFT | 5 | 25k / 50k / 125k / 250k / 250k | 6 (extreme 10) |
+| 3 | 0.49 / 2.28 | 0.39 / 2.06 | 0.37 / 2.03 |
+| 4 | 0.36 / 1.44 | 0.26 / 1.22 | 0.25 / 1.20 |
+| 5 | 0.28 / 1.24 | 0.18 / 1.02 | 0.17 / 0.99 |
+| 6 | 0.22 / 1.08 | **0.12 / 0.86** | 0.10 / 0.84 |
+| 8 | 0.22 / 1.04 | 0.12 / 0.82 | 0.10 / 0.80 |
 
-On NEFT the booster's score is also capped just below step-up (`RAIL_TYPICAL_AMOUNT_DAMPER`, own
-reason code) unless z >= 6: the booster is rail-blind and measures amounts against the payer's
-UPI-dominated history, so ordinary large NEFT payments look anomalous to it. The booster itself
-stays rail-invariant (smoke test and `test_policy_thresholds_are_rail_scaled_...`); only the policy
-layer knows the rail. Anomalous transfers still hold on NEFT (Rs 2L to a 2-day payee from a
-Rs 500-typical payer: hold_verify; Rs 3L to a 40-day payee at z >= 10: step_up). NEFT detection is
-tested by scenarios only; the simulator has no NEFT scams.
+(call-guard z 3 column is for payees that are not young/recently new; young payees always use 3.)
+Targets: NEFT hold <= 0.2%, flag <= 1.0%. z = 6 is the smallest overlay z meeting both with margin
+(z = 5 is on the 1.0% line); z = 6 is partly a round number chosen from this simulator sweep, not
+a real-data estimate.
+
+**What the NEFT scaling costs (read this).**
+* The Rs 25k-250k NEFT band is open for payees >= 30 days old with no call: a Rs 500-typical
+  payer sending Rs 60k-240k to a 35-45 day payee is `allow` (tested as a documented gap).
+* Test-then-escalate on NEFT holds only for payees < 7 days old (hold needs Rs 2.5L or age < 7);
+  at 10 and 25 days it is step_up (tested).
+* NEFT-typical payers (e.g. Rs 24k typical) are only escalated when z reaches the NEFT thresholds.
+* NEFT scams in the Rs 25k-125k range rely on the young-payee floors.
+* The simulator has zero NEFT scams, so NEFT recall is by hand-written scenarios only.
+* The scale, z thresholds and damper are derived from simulator benign amounts, not real data.
 
 ### Reliability (raw model, 4 held-out eval seeds, 144,993 benign + 1,032 scam txns)
 

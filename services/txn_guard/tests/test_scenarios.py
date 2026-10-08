@@ -293,6 +293,7 @@ def test_neft_3L_to_40_day_payee_extreme_still_step_up(scorer, store, make_txn):
 def test_policy_thresholds_are_rail_scaled_but_booster_is_rail_invariant(scorer):
     import numpy as np
 
+    from txn_guard.features import POLICY_ONLY_FEATURES
     from txn_guard.policy import RAIL_AMOUNT_SCALE, rail_scale
 
     assert RAIL_AMOUNT_SCALE["UPI"] == RAIL_AMOUNT_SCALE["IMPS"] == 1.0
@@ -300,9 +301,154 @@ def test_policy_thresholds_are_rail_scaled_but_booster_is_rail_invariant(scorer)
     assert (rail_scale(0.0), rail_scale(1.0), rail_scale(2.0)) == (
         1.0, 1.0, RAIL_AMOUNT_SCALE["NEFT"],
     )  # fmt: skip
+    assert "rail" not in model_mod.MODEL_FEATURES
+    assert {"rail", "amount_log", "payee_established"} <= POLICY_ONLY_FEATURES
+    # rows that differ only in rail-derived / policy-only inputs get identical booster scores
     scam = model_mod.SMOKE_SCAM
-    rows = np.array(
-        [[(scam | {"rail": r})[k] for k in model_mod.MODEL_FEATURES] for r in (0.0, 1.0, 2.0)]
-    )
+    variants = [
+        scam | {"rail": 0.0},
+        scam | {"rail": 1.0, "amount_log": 11.5},
+        scam | {"rail": 2.0, "amount_log": 12.5, "payee_established": 1.0},
+        scam | {"rail": 2.0, "payee_repeat_large_1h": 1.0, "payee_recently_new": 1.0,
+                "payee_max_prior_log": 7.0},
+    ]  # fmt: skip
+    rows = np.array([[v[k] for k in model_mod.MODEL_FEATURES] for v in variants])
     p = scorer._model.proba(rows)
     assert p.max() - p.min() == 0.0 and p.min() >= 0.5
+
+
+# ---- 7b round 1: damper exemptions, call guard on NEFT, honest gaps ----
+def _wide_store(make_txn):
+    """Payer with widely varying amounts (lognormal-like), so NEFT z stays below the rail z."""
+    import math
+
+    st = InMemoryHistoryStore()
+    for i in range(60):
+        st.record_txn(
+            make_txn(
+                amount=str(int(math.exp(5 + (i % 12) * 0.4))),
+                ts=T0 - timedelta(days=20) + timedelta(hours=i * 7),
+            )
+        )
+    return st
+
+
+def _fresh_store():
+    return InMemoryHistoryStore()
+
+
+@pytest.mark.parametrize("rail", ["IMPS", "NEFT"])
+@pytest.mark.parametrize("amount", ["50000", "100000", "120000"])
+def test_cold_start_call_risk_young_payee_held_like_imps(rail, amount, scorer, make_txn):
+    st = _fresh_store()
+    _call(st)
+    d, score, _ = _decide(scorer, st, make_txn(amount=amount, age=1, payee="p_y", rail=rail))
+    assert d == "hold_verify", (rail, amount, score)
+
+
+@pytest.mark.parametrize("rail", ["IMPS", "NEFT"])
+@pytest.mark.parametrize("amount", ["100000", "150000"])
+def test_neft_typical_payer_call_risk_young_payee_held(rail, amount, scorer, make_txn):
+    st = _neft_store(make_txn)
+    _call(st)
+    d, score, _ = _decide(scorer, st, make_txn(amount=amount, age=1, payee="p_y", rail=rail))
+    assert d == "hold_verify", (rail, amount, score)
+
+
+@pytest.mark.parametrize("rail", ["IMPS", "NEFT"])
+@pytest.mark.parametrize("amount", ["150000", "300000"])
+def test_neft_typical_payer_call_risk_known_payee_at_least_step_up(rail, amount, scorer, make_txn):
+    st = _neft_store(make_txn)
+    _call(st)
+    d, score, reasons = _decide(scorer, st, make_txn(amount=amount, rail=rail))  # known 900 d
+    assert d in ("step_up", "hold_verify"), (rail, amount, score)
+    assert "CALL_RISK_AMOUNT_GUARD" in {r.code for r in reasons}
+
+
+def test_damper_reason_only_when_cap_changed_the_score(scorer, make_txn):
+    import numpy as np
+
+    from txn_guard.policy import DAMPER_CODE, RAIL_DAMPED_CAP, damper_applies
+
+    seen = 0
+    for amount, age, call, cold in [
+        ("30000", 20, False, False), ("150000", 15, False, False), ("60000", 10, False, False),
+        ("150000", 10, False, "wide"), ("150000", 10, True, "wide"), ("150000", 15, True, False), ("30000", 20, False, True), ("500", 900, False, False),
+    ]:  # fmt: skip
+        st = (
+            _wide_store(make_txn)
+            if cold == "wide"
+            else _fresh_store()
+            if cold
+            else _neft_store(make_txn)
+        )
+        if call:
+            _call(st)
+        t = make_txn(amount=amount, age=age, payee="p_x", rail="NEFT")
+        f = extract_features(t, st.context_for(t, T0))
+        model_score = float(
+            scorer._model.proba(np.array([[f[k] for k in model_mod.MODEL_FEATURES]]))[0]
+        )
+        _, reasons = scorer.score(f)
+        damper = [r for r in reasons if r.code == DAMPER_CODE]
+        assert bool(damper) == damper_applies(f, model_score), (amount, age, call, cold)
+        if damper:
+            seen += 1
+            assert (
+                f"{model_score:.2f}" in damper[0].detail
+                and f"{RAIL_DAMPED_CAP:.2f}" in damper[0].detail
+            )
+    assert seen == 1  # exactly the wide-history, no-call scenario is capped
+
+
+def test_damper_skipped_under_call_risk_and_short_history(make_txn):
+    from txn_guard.policy import damper_applies
+
+    base = {"rail": 2.0, "amount_zscore": 2.0, "active_call_risk": 0.0, "history_len": 3.0}
+    assert damper_applies(base, 0.9)
+    assert not damper_applies(base | {"active_call_risk": 0.9}, 0.9)
+    assert not damper_applies(base | {"history_len": 0.5}, 0.9)  # z unknown, not typical
+    assert not damper_applies(base | {"rail": 1.0}, 0.9)  # IMPS never damped
+    assert not damper_applies(base | {"amount_zscore": 6.0}, 0.9)
+    assert not damper_applies(base, 0.3)
+
+
+def test_damper_cap_derived_from_step_up():
+    from txn_guard.policy import RAIL_DAMPED_CAP
+    from txn_guard.thresholds import STEP_UP_AT
+
+    assert RAIL_DAMPED_CAP == pytest.approx(STEP_UP_AT - 0.01)
+    assert decide(RAIL_DAMPED_CAP) == "allow"
+
+
+@pytest.mark.parametrize(
+    ("age", "min_class"), [(3, "hold_verify"), (10, "step_up"), (25, "step_up")]
+)
+def test_neft_test_then_escalate(age, min_class, scorer, store, make_txn):
+    store.record_txn(
+        make_txn(amount="1000", age=age, payee="p_young", rail="NEFT", ts=T0 - timedelta(hours=2))
+    )
+    d, score, _ = _decide(
+        scorer, store, make_txn(amount="90000", age=age, payee="p_young", rail="NEFT")
+    )
+    order = ["allow", "step_up", "hold_verify"]
+    assert order.index(d) >= order.index(min_class), (age, score)
+    # NEFT is rail-scaled: the hold at 10/25 days needs Rs 2.5L (documented gap, see README)
+
+
+@pytest.mark.parametrize("amount", ["260000", "300000"])
+def test_neft_extreme_amount_step_up_to_40_day_payee(amount, scorer, store, make_txn):
+    d, _, reasons = _decide(
+        scorer, store, make_txn(amount=amount, age=40, payee="p_n40", rail="NEFT")
+    )
+    assert d in ("step_up", "hold_verify")
+    assert "NEW_PAYEE_EXTREME_AMOUNT" in {r.code for r in reasons}
+
+
+def test_documented_neft_gap_mid_band_old_payee_no_call_is_allowed(scorer, store, make_txn):
+    """Known cost of NEFT scaling (README): Rs 60k-240k to a 35-45 day payee, no call, passes."""
+    for amount in ("60000", "240000"):
+        d, _, _ = _decide(
+            scorer, store, make_txn(amount=amount, age=40, payee="p_n40", rail="NEFT")
+        )
+        assert d == "allow", amount

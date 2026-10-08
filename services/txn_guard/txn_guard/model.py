@@ -44,7 +44,7 @@ from scam_contracts.models import Reason
 
 from . import artifact_pin
 from .features import FEATURE_NAMES, MODEL_FEATURES
-from .policy import DAMPER_CODE, OVERLAY_CODES, damp_model_score, overlays
+from .policy import DAMPER_CODE, OVERLAY_CODES, RAIL_DAMPED_CAP, damper_applies, overlays
 from .reasons import BASELINES, NO_RISK, TOP_K, triggers
 from .rules import RULES_VERSION, rules_score
 from .thresholds import STEP_UP_AT
@@ -193,18 +193,20 @@ class Scorer:
         if out is None:
             out = rules_score(f)
         score, reasons = out
-        if version != RULES_VERSION:  # the damper corrects the booster's rail-blind amount features
-            damped = damp_model_score(f, score)
-            if damped < score:
-                reasons = [
-                    *reasons,
-                    Reason(
-                        code=DAMPER_CODE, weight=round(score - damped, 4),
-                        detail="Amount is large only relative to this payer's history; typical "
-                        "for this payment rail, so the model score was capped below step-up",
-                    ),
-                ]  # fmt: skip
-                score = damped
+        # The damper corrects the booster's rail-blind amount features. It is a model-path
+        # correction only: rules-fallback scoring does not use z-scored amounts for its score, so
+        # it is not damped (overlays still apply in both modes).
+        if version != RULES_VERSION and damper_applies(f, score):
+            capped = RAIL_DAMPED_CAP
+            reasons = [
+                *reasons,
+                Reason(
+                    code=DAMPER_CODE, weight=round(score - capped, 4),
+                    detail=f"Amount is large only relative to this payer's history and typical for "
+                    f"this payment rail; model score {score:.2f} capped to {capped:.2f}",
+                ),
+            ]  # fmt: skip
+            score = capped
         lifted = [o for o in overlays(f) if o.floor > score]
         if lifted:
             new_score = max(o.floor for o in lifted)

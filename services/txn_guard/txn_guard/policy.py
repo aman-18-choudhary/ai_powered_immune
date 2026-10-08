@@ -35,7 +35,7 @@ are rail-agnostic in structure and read only the feature dict (the absolute amou
 import math
 from dataclasses import dataclass
 
-from .features import MIN_HISTORY_FOR_Z
+from .features import MIN_HISTORY_FOR_Z, RAIL_AMOUNT_SCALE
 from .thresholds import HOLD_AT, STEP_UP_AT
 
 # Per-rail scale for every absolute-rupee threshold below. Derivation (simulator benign traffic,
@@ -45,7 +45,6 @@ from .thresholds import HOLD_AT, STEP_UP_AT
 # extreme Rs 3L NEFT transfer, 300k >= 50k x 5 = 250k, is still caught). z-score and payee-age
 # conditions are NOT scaled, and the booster never sees the rail: only these thresholds do.
 # Re-derive when real per-rail amount distributions are available.
-RAIL_AMOUNT_SCALE: dict[str, float] = {"UPI": 1.0, "IMPS": 1.0, "NEFT": 5.0}
 _RAIL_BY_CODE = {0.0: "UPI", 1.0: "IMPS", 2.0: "NEFT"}
 
 
@@ -53,27 +52,46 @@ def rail_scale(rail_code: float) -> float:
     return RAIL_AMOUNT_SCALE[_RAIL_BY_CODE.get(rail_code, "UPI")]
 
 
-# Model damper for rails with scale > 1. The booster is rail-blind and its amount features (z,
-# amount vs typical) are measured against the payer's UPI-dominated history, so every large but
-# ordinary NEFT payment to a young payee looks anomalous to it (model-only hold rate on benign NEFT
-# was 0.25% vs 0.003% on UPI). On such rails a model score at or above step-up is capped just
-# below step-up unless the amount is anomalous for the payer even after allowing for the rail
-# (z >= RAIL_MODEL_MIN_Z). The overlays below are unaffected and still floor the score, so
-# anomalous young-payee transfers hold on every rail.
-RAIL_MODEL_MIN_Z = 6.0
-RAIL_DAMPED_CAP = 0.49
+# Overlay / damper z threshold on rails with scale > 1 (NEFT). z is measured against the payer's
+# UPI-dominated history, which inflates it for ordinary NEFT payments, so UPI/IMPS use 3 and NEFT
+# uses RAIL_MIN_Z. Chosen from the sweep in the README (z = 3, 4, 5, 6, 8 x call-guard z 3, 4, 5):
+# 6 is the smallest overlay z that meets the NEFT benign targets (hold <= 0.2%, flag <= 1.0%) with
+# margin once the call guard uses z >= 4 on NEFT (z = 5 sits at 1.004% flag, i.e. on the limit).
+RAIL_MIN_Z = 6.0
+# The call-risk guard uses z >= 3 on UPI/IMPS and z >= CALL_GUARD_Z_SCALED on NEFT, always together
+# with the *scaled* absolute floor. Measured tradeoff on NEFT benign (spurious call risk is 1.5% of
+# benign in the simulator): guard z = 3 gives 1.04-1.24% flagged (breaches the 1.0% target), z = 4
+# gives 0.85% flagged / 0.09% held, z = 5 gives 0.82% / 0.08%. 4 keeps the most scam coverage.
+CALL_GUARD_Z_SCALED = 4.0
+# Model damper. The booster is rail-blind; on rails with scale > 1 a model score at or above
+# step-up is capped just below step-up when the amount is not anomalous for the payer after
+# allowing for the rail (z < RAIL_MIN_Z). NOT applied (the score is kept) when
+#  * an active call risk >= 0.7 exists, or
+#  * the payer's history is short (z is forced to 0 = "unknown", not "typical").
+# The overlays below still floor the score after the damper in all cases.
+RAIL_DAMPED_CAP = STEP_UP_AT - 0.01
+assert 0.0 < RAIL_DAMPED_CAP < STEP_UP_AT
 DAMPER_CODE = "RAIL_TYPICAL_AMOUNT_DAMPER"
+CALL_RISK_MIN = 0.7
+
+
+def _short_history(f: dict[str, float]) -> bool:
+    return f["history_len"] < math.log1p(MIN_HISTORY_FOR_Z) - 1e-9
+
+
+def damper_applies(f: dict[str, float], score: float) -> bool:
+    return (
+        rail_scale(f["rail"]) > 1.0
+        and f["amount_zscore"] < RAIL_MIN_Z
+        and f["active_call_risk"] < CALL_RISK_MIN
+        and not _short_history(f)
+        and score > RAIL_DAMPED_CAP
+    )
 
 
 def damp_model_score(f: dict[str, float], score: float) -> float:
     """Capped model score on rails whose typical amounts are larger; unchanged elsewhere."""
-    if (
-        rail_scale(f["rail"]) > 1.0
-        and f["amount_zscore"] < RAIL_MODEL_MIN_Z
-        and score > RAIL_DAMPED_CAP
-    ):
-        return RAIL_DAMPED_CAP
-    return score
+    return RAIL_DAMPED_CAP if damper_applies(f, score) else score
 
 
 HOLD_FLOOR = 0.85
@@ -87,7 +105,6 @@ HOLD_ABS_INR = 50_000.0
 VERY_YOUNG_DAYS = 7
 ESCALATION_RATIO = 10.0
 EXTREME_Z = 10.0
-CALL_RISK_MIN = 0.7
 OVERLAY_CODES = frozenset(
     {
         "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR",
@@ -108,19 +125,22 @@ class Overlay:
 
 
 def _z_min(f: dict[str, float]) -> float:
-    """z threshold of the overlays: 3 on UPI/IMPS; RAIL_MODEL_MIN_Z on rails with larger typical
+    """z threshold of the overlays: 3 on UPI/IMPS; RAIL_MIN_Z on rails with larger typical
     amounts, where the payer's (UPI-dominated) history inflates z for ordinary payments."""
-    return RAIL_MODEL_MIN_Z if rail_scale(f["rail"]) > 1.0 else Z_MIN
+    return RAIL_MIN_Z if rail_scale(f["rail"]) > 1.0 else Z_MIN
 
 
-def _large(f: dict[str, float], z_min_abs: float) -> bool:
+def _call_z(f: dict[str, float]) -> float:
+    return CALL_GUARD_Z_SCALED if rail_scale(f["rail"]) > 1.0 else Z_MIN
+
+
+def _large(f: dict[str, float], z_min_abs: float, z_min: float | None = None) -> bool:
     k = rail_scale(f["rail"])
     z_min_abs *= k
     amount = math.exp(min(f["amount_log"], 40.0))
-    short = f["history_len"] < math.log1p(MIN_HISTORY_FOR_Z) - 1e-9
-    if short:
+    if _short_history(f):
         return amount >= SHORT_HISTORY_ABS_MIN_INR * k
-    return f["amount_zscore"] >= _z_min(f) and amount >= z_min_abs
+    return f["amount_zscore"] >= (_z_min(f) if z_min is None else z_min) and amount >= z_min_abs
 
 
 def overlays(f: dict[str, float]) -> list[Overlay]:
@@ -169,8 +189,13 @@ def overlays(f: dict[str, float]) -> list[Overlay]:
                 f"floor to step-up",
             )
         )  # fmt: skip
-    if f["active_call_risk"] >= CALL_RISK_MIN and _large(f, CALL_ABS_MIN_INR):
-        strong = new or young or f["payee_recently_new"] >= 1.0 or f["payee_repeat_large_1h"] >= 1.0
+    strong = new or young or f["payee_recently_new"] >= 1.0 or f["payee_repeat_large_1h"] >= 1.0
+    call_z = (
+        Z_MIN
+        if young or f["payee_recently_new"] >= 1.0 or f["payee_repeat_large_1h"] >= 1.0
+        else _call_z(f)
+    )
+    if f["active_call_risk"] >= CALL_RISK_MIN and _large(f, CALL_ABS_MIN_INR, call_z):
         out.append(
             Overlay(
                 "CALL_RISK_AMOUNT_GUARD", HOLD_FLOOR if strong else STEP_FLOOR,

@@ -26,7 +26,10 @@ AGE_CAP_DAYS = 3650.0
 YOUNG_PAYEE_DAYS = 30
 RECENTLY_NEW_PAYEE = timedelta(hours=24)
 REPEAT_LARGE_WINDOW = timedelta(hours=1)
-REPEAT_LARGE_INR = 10_000.0
+REPEAT_LARGE_INR = 10_000.0  # UPI/IMPS value; multiplied by the rail's RAIL_AMOUNT_SCALE
+# Per-rail scale applied to every absolute-rupee threshold (policy.py and REPEAT_LARGE_INR);
+# derivation in policy.py / README.
+RAIL_AMOUNT_SCALE: dict[str, float] = {"UPI": 1.0, "IMPS": 1.0, "NEFT": 5.0}
 ESTABLISHED_MIN_PAYMENTS = 3
 ESTABLISHED_MIN_AGE = timedelta(days=7)
 RAIL_CODE = {"UPI": 0.0, "IMPS": 1.0, "NEFT": 2.0}
@@ -106,7 +109,8 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
     first = ctx.payee_first_seen_ts
     recently_new = first is not None and timedelta(0) <= ts - first < RECENTLY_NEW_PAYEE
     repeat_large = any(
-        timedelta(0) <= ts - rts < REPEAT_LARGE_WINDOW and _finite(ramt) >= REPEAT_LARGE_INR
+        timedelta(0) <= ts - rts < REPEAT_LARGE_WINDOW
+        and _finite(ramt) >= REPEAT_LARGE_INR * RAIL_AMOUNT_SCALE[txn.rail]
         for rts, ramt in ctx.payee_recent
     )
 
