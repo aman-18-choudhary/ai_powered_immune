@@ -833,7 +833,7 @@ def render_report(
         f"NEFT benign transactions are held at {_pct(_rate_of(m, 'NEFT', 'fpr'), None, 2)} (hold) "
         f"and flagged at {_pct(_rate_of(m, 'NEFT', 'flagged_fpr'), None, 2)} (step-up or hold) in "
         "this run. The scaling has a cost: Rs 25k-250k NEFT to payees >= 30 days old with no call "
-        "passes, test-then-escalate on NEFT holds only below 7 days, and NEFT scams in the "
+        "passes, NEFT test-then-escalate holds for payees < 7 days old or at amounts >= Rs 2.5L at any age, and NEFT scams in the "
         "Rs 25k-125k range rely on the young-payee floors. NEFT detection is tested by "
         "hand-written scenarios only (no NEFT scams in the simulator) and the scale and z values "
         "are simulator-derived, not real-data-derived.",

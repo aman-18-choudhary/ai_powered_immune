@@ -12,7 +12,7 @@ in this docstring are the UPI/IMPS values.
 Why they exist: the simulator's scams are almost all UPI to young accounts, so the booster has
 blind spots (call risk with an old/known payee, large IMPS/NEFT transfers). The overlays
 are rail-agnostic in structure and read only the feature dict (the absolute amount comes from
-``amount_log``).
+``amount_inr``, the raw INR amount).
 
 * YOUNG_PAYEE_LARGE_AMOUNT_FLOOR: payee account < 30 days old AND payee not *established* for
   this payer (established = >= 3 prior payments AND first paid >= 7 days ago; so a small "test"
@@ -134,18 +134,21 @@ def _call_z(f: dict[str, float]) -> float:
     return CALL_GUARD_Z_SCALED if rail_scale(f["rail"]) > 1.0 else Z_MIN
 
 
-def _large(f: dict[str, float], z_min_abs: float, z_min: float | None = None) -> bool:
+def _large(
+    f: dict[str, float], z_min_abs: float, z_min: float | None = None, unscaled_short: bool = False
+) -> bool:
+    """``unscaled_short``: use the UPI/IMPS short-history floor on every rail (call-risk guard)."""
     k = rail_scale(f["rail"])
     z_min_abs *= k
-    amount = math.exp(min(f["amount_log"], 40.0))
+    amount = f["amount_inr"]
     if _short_history(f):
-        return amount >= SHORT_HISTORY_ABS_MIN_INR * k
+        return amount >= SHORT_HISTORY_ABS_MIN_INR * (1.0 if unscaled_short else k)
     return f["amount_zscore"] >= (_z_min(f) if z_min is None else z_min) and amount >= z_min_abs
 
 
 def overlays(f: dict[str, float]) -> list[Overlay]:
     out: list[Overlay] = []
-    amount = math.exp(min(f["amount_log"], 40.0))
+    amount = f["amount_inr"]
     k = rail_scale(f["rail"])
     young = f["payee_age_young"] >= 1.0
     new = f["new_payee"] >= 1.0
@@ -195,7 +198,9 @@ def overlays(f: dict[str, float]) -> list[Overlay]:
         if young or f["payee_recently_new"] >= 1.0 or f["payee_repeat_large_1h"] >= 1.0
         else _call_z(f)
     )
-    if f["active_call_risk"] >= CALL_RISK_MIN and _large(f, CALL_ABS_MIN_INR, call_z):
+    if f["active_call_risk"] >= CALL_RISK_MIN and _large(
+        f, CALL_ABS_MIN_INR, call_z, unscaled_short=True
+    ):
         out.append(
             Overlay(
                 "CALL_RISK_AMOUNT_GUARD", HOLD_FLOOR if strong else STEP_FLOOR,

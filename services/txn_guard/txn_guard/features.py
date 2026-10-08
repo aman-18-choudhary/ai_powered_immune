@@ -36,6 +36,7 @@ RAIL_CODE = {"UPI": 0.0, "IMPS": 1.0, "NEFT": 2.0}
 
 FEATURE_NAMES: tuple[str, ...] = (
     "amount_log",
+    "amount_inr",
     "amount_zscore",
     "amount_vs_typical_log",
     "history_len",
@@ -64,6 +65,7 @@ FEATURE_NAMES: tuple[str, ...] = (
 POLICY_ONLY_FEATURES = frozenset(
     {
         "rail",
+        "amount_inr",
         "amount_log",
         "payee_recently_new",
         "payee_repeat_large_1h",
@@ -124,6 +126,7 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
     hour = ts.astimezone(IST).hour
     feats = {
         "amount_log": la,
+        "amount_inr": amount,
         "amount_zscore": z,
         "amount_vs_typical_log": vs_typical,
         "history_len": math.log1p(n),

@@ -452,3 +452,65 @@ def test_documented_neft_gap_mid_band_old_payee_no_call_is_allowed(scorer, store
             scorer, store, make_txn(amount=amount, age=40, payee="p_n40", rail="NEFT")
         )
         assert d == "allow", amount
+
+
+# ---- 7b round 2: cold-start call risk on NEFT, exact threshold boundaries ----
+@pytest.mark.parametrize("n_prior", [0, 2])
+@pytest.mark.parametrize("age", [1, 5, 45, 900])
+@pytest.mark.parametrize("amount", ["25000", "60000", "120000", "300000"])
+def test_short_history_call_risk_neft_matches_imps(n_prior, age, amount, scorer, make_txn):
+    out = {}
+    for rail in ("IMPS", "NEFT"):
+        st = _fresh_store()
+        for i in range(n_prior):
+            st.record_txn(make_txn(amount="400", ts=T0 - timedelta(days=3, hours=i)))
+        _call(st)
+        t = make_txn(amount=amount, age=age, payee="p_x", rail=rail)
+        out[rail] = _decide(scorer, st, t)[0]
+    assert out["NEFT"] == out["IMPS"], (n_prior, age, amount, out)
+
+
+def _feat(**kw):
+    from txn_guard.features import FEATURE_NAMES
+
+    f = dict.fromkeys(FEATURE_NAMES, 0.0) | {
+        "rail": 2.0, "history_len": 3.5, "payee_age_days": 900.0, "hour_ist": 14.0,
+    }  # fmt: skip
+    f |= kw
+    f["amount_log"] = __import__("math").log(f["amount_inr"])
+    return f
+
+
+def _codes(f, floor_min=0.0):
+    from txn_guard.policy import overlays
+
+    return {o.code for o in overlays(f) if o.floor >= floor_min}
+
+
+YOUNG = {"payee_age_young": 1.0, "payee_age_days": 12.0, "new_payee": 1.0}
+SHORT = {"history_len": 0.5}
+CALL = {"active_call_risk": 0.9}
+
+
+@pytest.mark.parametrize(
+    ("what", "extra", "threshold", "code", "floor_min"),
+    [
+        ("young z-path abs 5k x5", YOUNG | {"amount_zscore": 6.0}, 25_000, "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR", 0.5),
+        ("young short-history 25k x5", YOUNG | SHORT, 125_000, "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR", 0.5),
+        ("young hold 50k x5", YOUNG | {"amount_zscore": 6.0}, 250_000, "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR", 0.85),
+        ("call guard abs 10k x5", CALL | {"amount_zscore": 4.0}, 50_000, "CALL_RISK_AMOUNT_GUARD", 0.5),
+        ("call guard short history (unscaled 25k)", CALL | SHORT, 25_000, "CALL_RISK_AMOUNT_GUARD", 0.5),
+        ("extreme 50k x5", {"amount_zscore": 10.0, "new_payee": 1.0}, 250_000, "NEW_PAYEE_EXTREME_AMOUNT", 0.5),
+        ("escalation 25k x5", YOUNG | {"payee_max_prior_log": 1.0, "payee_established": 1.0}, 125_000, "PAYEE_AMOUNT_ESCALATION", 0.5),
+    ],
+)  # fmt: skip
+def test_threshold_boundaries_exact_and_one_rupee_below(what, extra, threshold, code, floor_min):
+    at = _feat(amount_inr=float(threshold), **extra)
+    below = _feat(amount_inr=float(threshold - 1), **extra)
+    assert code in _codes(at, floor_min), what
+    assert code not in _codes(below, floor_min), what
+
+
+def test_amount_inr_feature_is_the_raw_amount(make_txn, ctx_empty):
+    f = extract_features(make_txn(amount="125000", rail="NEFT"), ctx_empty)
+    assert f["amount_inr"] == 125000.0

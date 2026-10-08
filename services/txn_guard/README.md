@@ -76,7 +76,7 @@ The booster itself stays rail-invariant (`rail` is not in `MODEL_FEATURES`; test
 
 **Derivation of the NEFT z values** (benign NEFT, 4 held-out seeds, n=7,769; hold / flag %):
 
-| overlay z (NEFT) | call-guard z 3 | call-guard z 4 | call-guard z 5 |
+| overlay z (NEFT) | call-guard z 3 (all payees) | call-guard z 4 (non-young payees) | call-guard z 5 (non-young payees) |
 |---|---|---|---|
 | 3 | 0.49 / 2.28 | 0.39 / 2.06 | 0.37 / 2.03 |
 | 4 | 0.36 / 1.44 | 0.26 / 1.22 | 0.25 / 1.20 |
@@ -84,16 +84,22 @@ The booster itself stays rail-invariant (`rail` is not in `MODEL_FEATURES`; test
 | 6 | 0.22 / 1.08 | **0.12 / 0.86** | 0.10 / 0.84 |
 | 8 | 0.22 / 1.04 | 0.12 / 0.82 | 0.10 / 0.80 |
 
-(call-guard z 3 column is for payees that are not young/recently new; young payees always use 3.)
+(In the z 4 / z 5 columns young, recently-new and repeat payees always use call-guard z 3.)
 Targets: NEFT hold <= 0.2%, flag <= 1.0%. z = 6 is the smallest overlay z meeting both with margin
 (z = 5 is on the 1.0% line); z = 6 is partly a round number chosen from this simulator sweep, not
 a real-data estimate.
 
+**Short-history payers and the call-risk guard.** For a payer with fewer than 3 prior transfers
+the call-risk guard uses the *unscaled* Rs 25,000 short-history floor on NEFT as well (not
+Rs 1.25L), so cold-start NEFT decisions with an active call match IMPS (tested over payee age
+1/5/45/900 x Rs 25k-300k). Amount thresholds compare the raw INR amount (`amount_inr`), so exact
+boundaries (e.g. Rs 1,25,000 vs Rs 1,24,999) behave as documented (tested for every scaled floor).
+
 **What the NEFT scaling costs (read this).**
 * The Rs 25k-250k NEFT band is open for payees >= 30 days old with no call: a Rs 500-typical
   payer sending Rs 60k-240k to a 35-45 day payee is `allow` (tested as a documented gap).
-* Test-then-escalate on NEFT holds only for payees < 7 days old (hold needs Rs 2.5L or age < 7);
-  at 10 and 25 days it is step_up (tested).
+* NEFT test-then-escalate holds for payees < 7 days old, or at amounts >= Rs 2.5L at any age;
+  Rs 90k at 10 or 25 days is step_up (tested).
 * NEFT-typical payers (e.g. Rs 24k typical) are only escalated when z reaches the NEFT thresholds.
 * NEFT scams in the Rs 25k-125k range rely on the young-payee floors.
 * The simulator has zero NEFT scams, so NEFT recall is by hand-written scenarios only.
