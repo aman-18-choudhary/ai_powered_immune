@@ -22,6 +22,13 @@ from svckit.bus import Bus
 from svckit.health import make_health_router
 from svckit.idempotency import IdempotencyStore, InMemoryIdempotencyStore
 
+from .antibody_cache import (
+    DEFAULT_CAPACITY,
+    AntibodyLookup,
+    HttpxHubClient,
+    RedisAntibodyCache,
+    bootstrap,
+)
 from .consumer import run_consumers
 from .holds import (
     ActorRequired,
@@ -82,6 +89,9 @@ def create_app(
     redis: Any = None,
     closers: list[Callable[[], Awaitable[None]]] | None = None,
     sweep_interval_s: float | None = None,
+    startup: list[Callable[[], Awaitable[Any]]] | None = None,
+    bootstrap_fn: Callable[[], Awaitable[int]] | None = None,
+    bank_id: str | None = None,
 ) -> FastAPI:
     scorer = scorer or (service.scorer if service else Scorer())
     clock = clock or (lambda: datetime.now(UTC))
@@ -102,8 +112,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        for fn in startup or []:
+            try:
+                await fn()
+            except Exception:
+                log.warning("startup step failed", exc_info=True)  # never crash on the hub
         if service is not None and bus is not None:
-            tasks.extend(run_consumers(bus, service, idem or InMemoryIdempotencyStore()))
+            tasks.extend(
+                run_consumers(bus, service, idem or InMemoryIdempotencyStore(), bank_id=bank_id)
+            )
         if sweep_interval_s > 0:
             tasks.append(asyncio.create_task(sweeper()))
         try:
@@ -172,10 +189,19 @@ def create_app(
             f"txn_guard_holds_open {await holds.count_open()}\n"  # type: ignore[union-attr]
             "# TYPE txn_guard_holds_overdue gauge\n"
             f"txn_guard_holds_overdue {await holds.count_overdue()}\n"  # type: ignore[union-attr]
-            "# TYPE txn_guard_holds_overdue_total counter\n"
+            + _antibody_metrics(service)
+            + "# TYPE txn_guard_holds_overdue_total counter\n"
             f"txn_guard_holds_overdue_total {await holds.overdue_total()}\n"  # type: ignore[union-attr]
         )
         return Response(body, media_type="text/plain; version=0.0.4")
+
+    @app.post("/admin/antibodies/bootstrap")
+    async def rebootstrap(p: Annotated[Principal, Depends(principal)]) -> dict[str, Any]:
+        """Reload the exact active set from the hub on request (admin)."""
+        need(p, {"admin"})
+        if bootstrap_fn is None:
+            raise HTTPException(404, "antibody hub not configured")
+        return {"loaded": await bootstrap_fn()}
 
     @app.get("/holds")
     async def list_holds(
@@ -228,6 +254,23 @@ def create_app(
     return app
 
 
+def _antibody_metrics(service: TxnGuardService | None) -> str:
+    look = getattr(service, "antibodies", None)
+    if look is None:
+        return ""
+    s = look.stats
+    return (
+        "# TYPE txn_guard_antibody_cache_size gauge\n"
+        f"txn_guard_antibody_cache_size {look.cache.size()}\n"
+        "# TYPE txn_guard_antibody_matches_total counter\n"
+        f"txn_guard_antibody_matches_total {int(s['hits'])}\n"
+        "# TYPE txn_guard_antibody_bootstrap_failed gauge\n"
+        f"txn_guard_antibody_bootstrap_failed {int(s['bootstrap_failed'])}\n"
+        "# TYPE txn_guard_antibody_bloom_unconfirmed_total counter\n"
+        f"txn_guard_antibody_bloom_unconfirmed_total {int(s['bloom_unconfirmed'])}\n"
+    )
+
+
 def create_service_app() -> FastAPI:
     """Env-configured app: REDIS_URL (required), KAFKA_BOOTSTRAP (consumers + decision/ledger
     publishing), HOLD_DEADLINE_S, plus the gateway trust variables described above."""
@@ -247,16 +290,51 @@ def create_service_app() -> FastAPI:
     hist_client = redis_sync.Redis.from_url(url)
     idem = RedisIdempotencyStore(aredis)
     holds = RedisHoldStore(aredis, audit=BusAuditSink(bus))
+    bank_id = os.getenv("TXN_BANK_ID", "bank")
+    cache = RedisAntibodyCache(
+        hist_client,
+        capacity=int(os.getenv("ANTIBODY_CACHE_CAPACITY", str(DEFAULT_CAPACITY))),
+        prefix=f"txnguard:{bank_id}:ab:",
+    )
+    lookup = AntibodyLookup(cache, use_bloom=os.getenv("ANTIBODY_BLOOM", "0") == "1")
     service = TxnGuardService(
-        Scorer(), RedisHistoryStore(hist_client), holds, bus, idem,
+        Scorer(), RedisHistoryStore(hist_client), holds, bus, idem, antibodies=lookup,
         pending=RedisPendingStore(aredis),
         hold_deadline_s=float(os.getenv("HOLD_DEADLINE_S", str(DEFAULT_HOLD_DEADLINE_S))),
     )  # fmt: skip
+    startup: list[Callable[[], Awaitable[Any]]] = []
+    bootstrap_fn = None
     closers: list[Callable[[], Awaitable[None]]] = [aredis.aclose, _close_sync(hist_client)]
+    hub_url = os.getenv("HUB_URL")
+    if hub_url:
+        client = HttpxHubClient(hub_url, bank_id, os.getenv("HUB_GATEWAY_SECRET"))
+        closers.append(client.aclose)
+
+        async def bootstrap_fn() -> int:  # noqa: F811
+            n = await bootstrap(cache, client, bank_id, stats=lookup.stats)
+            if lookup.use_bloom:
+                try:
+                    snap = await client.bloom(bank_id)
+                    if snap:
+                        lookup.load_bloom(snap)
+                except Exception:
+                    log.warning("antibody bloom snapshot unavailable; exact cache only")
+            return n
+
+        startup.append(bootstrap_fn)
+    else:
+        log.warning("HUB_URL not set: antibody cache runs on events only (no bootstrap)")
     if hasattr(bus, "close"):
         closers.append(bus.close)
     return create_app(
-        service=service, bus=bus if kafka else None, idem=idem, redis=aredis, closers=closers
+        service=service,
+        bus=bus if kafka else None,
+        idem=idem,
+        redis=aredis,
+        closers=closers,
+        startup=startup,
+        bootstrap_fn=bootstrap_fn,
+        bank_id=bank_id,
     )
 
 

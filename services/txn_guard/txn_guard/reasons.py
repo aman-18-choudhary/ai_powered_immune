@@ -23,7 +23,6 @@ BASELINES: dict[str, dict[str, float]] = {
     },  # fmt: skip
     "NIGHT_TRANSFER": {"night": 0.0, "hour_ist": 12.0},
     "NEW_DEVICE": {"device_novel": 0.0},
-    "PAYEE_IN_ANTIBODY": {"payee_in_antibody": 0.0},
 }
 
 
@@ -36,8 +35,6 @@ class Trigger:
 
 def triggers(f: dict[str, float]) -> list[Trigger]:
     out: list[Trigger] = []
-    if f["payee_in_antibody"] >= 1.0:
-        out.append(Trigger("PAYEE_IN_ANTIBODY", 0.9, "Payee matches a confirmed mule antibody"))
     if f["active_call_risk"] >= CALL_RISK_THRESHOLD:
         out.append(
             Trigger(

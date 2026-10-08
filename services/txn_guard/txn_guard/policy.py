@@ -34,6 +34,7 @@ are rail-agnostic in structure and read only the feature dict (the absolute amou
 
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from .features import MIN_HISTORY_FOR_Z, RAIL_AMOUNT_SCALE
 from .thresholds import HOLD_AT, STEP_UP_AT
@@ -94,6 +95,8 @@ def damp_model_score(f: dict[str, float], score: float) -> float:
     return RAIL_DAMPED_CAP if damper_applies(f, score) else score
 
 
+ANTIBODY_FLOOR = 0.9  # confirmed cross-bank mule: hold_verify
+ALWAYS_REPORTED = frozenset({"ANTIBODY_MATCH", "ANTIBODY_MATCH_KNOWN_PAYEE"})
 HOLD_FLOOR = 0.85
 STEP_FLOOR = STEP_UP_AT
 assert STEP_FLOOR < HOLD_AT < HOLD_FLOOR
@@ -107,6 +110,8 @@ ESCALATION_RATIO = 10.0
 EXTREME_Z = 10.0
 OVERLAY_CODES = frozenset(
     {
+        "ANTIBODY_MATCH",
+        "ANTIBODY_MATCH_KNOWN_PAYEE",
         "YOUNG_PAYEE_LARGE_AMOUNT_FLOOR",
         "PAYEE_AMOUNT_ESCALATION",
         "NEW_PAYEE_EXTREME_AMOUNT",
@@ -152,6 +157,25 @@ def overlays(f: dict[str, float]) -> list[Overlay]:
     k = rail_scale(f["rail"])
     young = f["payee_age_young"] >= 1.0
     new = f["new_payee"] >= 1.0
+    if f["payee_in_antibody"] >= 1.0:
+        short = f"{int(f['antibody_id_prefix']):08x}"
+        exp = datetime.fromtimestamp(f["antibody_expires_ts"], UTC).strftime("%Y-%m-%d")
+        if f["payee_established"] >= 1.0:
+            out.append(
+                Overlay(
+                    "ANTIBODY_MATCH_KNOWN_PAYEE", STEP_FLOOR,
+                    f"Payee matches a mule_account antibody {short} (expires {exp}) but this "
+                    "payer has an established relationship with it; step-up instead of a hold",
+                )
+            )  # fmt: skip
+        else:
+            out.append(
+                Overlay(
+                    "ANTIBODY_MATCH", ANTIBODY_FLOOR,
+                    f"Payee matches a confirmed mule_account antibody {short} (expires {exp}); "
+                    "policy floor to hold_verify",
+                )
+            )  # fmt: skip
     if f["future_dated"] >= 1.0:
         out.append(
             Overlay(

@@ -58,6 +58,8 @@ FEATURE_NAMES: tuple[str, ...] = (
     "payee_repeat_large_1h",
     "payee_established",
     "payee_max_prior_log",
+    "antibody_id_prefix",
+    "antibody_expires_ts",
 )
 # Used by the policy overlays / reason text only, never by the booster: ``rail`` (simulated scams
 # are almost all UPI, so the booster would learn "IMPS/NEFT == benign"), the absolute amount, and
@@ -71,6 +73,8 @@ POLICY_ONLY_FEATURES = frozenset(
         "payee_repeat_large_1h",
         "payee_established",
         "payee_max_prior_log",
+        "antibody_id_prefix",
+        "antibody_expires_ts",
     }
 )
 MODEL_FEATURES: tuple[str, ...] = tuple(n for n in FEATURE_NAMES if n not in POLICY_ONLY_FEATURES)
@@ -142,7 +146,10 @@ def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:
         "night": 1.0 if hour < 5 else 0.0,
         "active_call_risk": risk,
         "device_novel": 1.0 if (n > 0 and not ctx.device_seen) else 0.0,
-        "payee_in_antibody": 0.0,  # Task 11 fills this from the antibody cache
+        # set by the service from the antibody cache (policy-only; the booster ignores it)
+        "payee_in_antibody": 0.0,
+        "antibody_id_prefix": 0.0,
+        "antibody_expires_ts": 0.0,
         "future_dated": 1.0 if ts - ctx.now > FUTURE_TOLERANCE else 0.0,
         "payee_recently_new": 1.0 if recently_new else 0.0,
         "payee_repeat_large_1h": 1.0 if repeat_large else 0.0,

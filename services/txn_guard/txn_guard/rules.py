@@ -13,7 +13,7 @@ from .reasons import NO_RISK, TOP_K, triggers
 
 RULES_VERSION = "rules-fallback-v1"
 CORROBORATED_FLOOR = 0.85
-_CORROBORATORS = {"YOUNG_PAYEE_ACCOUNT", "AMOUNT_ANOMALY", "PAYEE_IN_ANTIBODY"}
+_CORROBORATORS = {"YOUNG_PAYEE_ACCOUNT", "AMOUNT_ANOMALY"}
 
 
 def rules_score(f: dict[str, float]) -> tuple[float, list[Reason]]:

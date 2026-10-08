@@ -200,3 +200,44 @@ consumers run), `HOLD_DEADLINE_S`, `AUDIT_DRAIN_INTERVAL_S`, `GATEWAY_SHARED_SEC
 `TRUST_GATEWAY_HEADERS`, `METRICS_TOKEN`, `PORT`. Run: `python -m txn_guard`. The Scorer runs in a
 worker thread (`asyncio.to_thread`); measured consumer-path latency with fakeredis stores is
 p50 ~7 ms / p99 ~14 ms per transaction.
+
+## Cross-bank antibodies (Task 11)
+
+`antibody_cache.py` keeps this bank's copy of the hub's active mule set; `service.handle_antibody`
+and `consumer.run_antibody_consumer` feed it.
+
+* **Cache**: `apply(Antibody)`, `contains(key_hash, kind)`. Hub merge rules: `revoked` is sticky per
+  `antibody_id` (a tombstone removes the entry; an older or later non-revoked event for the same id
+  never resurrects it), a NEW `antibody_id` for the same key re-activates, otherwise the greatest
+  `expires_at` wins, expired entries (`expires_at <= now`) are ignored and purged. `apply` is
+  idempotent. In-memory (default capacity 100,000, soonest-expiring evicted) or Redis
+  (`RedisAntibodyCache`, memory bounded by per-key TTL).
+* **Consumer**: `antibody.published`, one consumer group per bank instance
+  (`txn-guard-antibody-<TXN_BANK_ID>`, so every bank sees every event); malformed events are
+  retried then dead-lettered.
+* **Bootstrap**: at startup (and `POST /admin/antibodies/bootstrap`, admin) the exact active set is
+  loaded from `GET /antibodies/exact` (cursor paginated) with `X-Principal-Role: bank`,
+  `X-Principal-Bank` and `X-Gateway-Secret`. Optional Bloom snapshot (`ANTIBODY_BLOOM=1`) is a
+  negative pre-check only: a Bloom hit never blocks (it is confirmed against the exact cache), and a
+  Bloom miss is ignored for keys touched by an event since the snapshot.
+* **Staleness / failure**: a new antibody is enforced after bus latency (about 6 ms in-process in the
+  acceptance test); a bank that was offline only catches up through bootstrap, so an unknown
+  antibody is not enforced until then (fail-open). If the hub is unreachable at boot a WARNING is
+  logged, `txn_guard_antibody_bootstrap_failed` is 1 and the service runs on events only; it never
+  crashes.
+* **Decision**: `payee_in_antibody` (policy-only; the booster/artifact are unchanged and always see
+  0) is set from the cache using `Transaction.payee_hash`. Overlay `ANTIBODY_MATCH` floors the score
+  at 0.9 (hold_verify) for any payer; reason detail shows the kind, an 8-character antibody id prefix
+  and expiry date, never the source bank/analyst. If the payer has an *established* relationship with
+  the payee (>= 3 payments, first paid >= 7 days ago) the floor is step_up with reason
+  `ANTIBODY_MATCH_KNOWN_PAYEE` so a wrongly published merchant cannot freeze long-standing customers
+  (plan Review Focus 3); a tombstone or TTL ends the effect for new transactions immediately and
+  never auto-releases existing holds.
+* **Late antibody**: a newly active antibody re-scores the unresolved transactions to that payee
+  inside the 15-minute pending window (payee index in the pending store): stronger verdict ->
+  `decision_seq + 1`, `LATE_ANTIBODY_POST_SETTLEMENT` on settled allows, at most one upgrade per
+  transaction per antibody, never a downgrade.
+* **Env**: `TXN_BANK_ID`, `HUB_URL`, `HUB_GATEWAY_SECRET`, `ANTIBODY_BLOOM` (0/1),
+  `ANTIBODY_CACHE_CAPACITY`. Metrics: `txn_guard_antibody_cache_size`,
+  `txn_guard_antibody_matches_total`, `txn_guard_antibody_bootstrap_failed`,
+  `txn_guard_antibody_bloom_unconfirmed_total`.

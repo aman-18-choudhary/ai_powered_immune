@@ -27,6 +27,8 @@ class PendingEntry(BaseModel):
     model_version: str
     features: dict[str, float]
     first_json: str = ""  # exact bytes of the first published TxnDecision (seq 1)
+    payee_hash: str = ""
+    antibody_ids: list[str] = []  # antibodies already applied to this entry (one upgrade each)
 
 
 class PendingStore(Protocol):
@@ -38,6 +40,8 @@ class PendingStore(Protocol):
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]: ...
 
+    async def recent_by_payee(self, payee_hash: str, since: datetime) -> list[PendingEntry]: ...
+
     async def update(self, entry: PendingEntry) -> None: ...
 
 
@@ -45,12 +49,15 @@ class InMemoryPendingStore:
     def __init__(self) -> None:
         self._by_id: dict[str, PendingEntry] = {}
         self._by_payer: dict[str, list[str]] = {}
+        self._by_payee: dict[str, list[str]] = {}
 
     async def add(self, entry: PendingEntry) -> bool:
         if entry.txn_id in self._by_id:
             return False
         self._by_id[entry.txn_id] = entry
         self._by_payer.setdefault(entry.payer_token, []).append(entry.txn_id)
+        if entry.payee_hash:
+            self._by_payee.setdefault(entry.payee_hash, []).append(entry.txn_id)
         return True
 
     async def get(self, txn_id: str) -> PendingEntry | None:
@@ -61,6 +68,10 @@ class InMemoryPendingStore:
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]:
         rows = (self._by_id[i] for i in self._by_payer.get(payer_token, []))
+        return sorted((e for e in rows if e.ts >= since), key=lambda e: e.ts)
+
+    async def recent_by_payee(self, payee_hash: str, since: datetime) -> list[PendingEntry]:
+        rows = (self._by_id[i] for i in self._by_payee.get(payee_hash, []))
         return sorted((e for e in rows if e.ts >= since), key=lambda e: e.ts)
 
 
@@ -76,6 +87,10 @@ class RedisPendingStore:
             idx = self._p + "i:" + entry.payer_token
             await self._r.zadd(idx, {entry.txn_id: entry.ts.timestamp()})
             await self._r.expire(idx, ENTRY_TTL_S)
+            if entry.payee_hash:
+                pidx = self._p + "p:" + entry.payee_hash
+                await self._r.zadd(pidx, {entry.txn_id: entry.ts.timestamp()})
+                await self._r.expire(pidx, ENTRY_TTL_S)
         return bool(ok)
 
     async def get(self, txn_id: str) -> PendingEntry | None:
@@ -87,6 +102,14 @@ class RedisPendingStore:
 
     async def recent(self, payer_token: str, since: datetime) -> list[PendingEntry]:
         ids = await self._r.zrangebyscore(self._p + "i:" + payer_token, since.timestamp(), "+inf")
+        if not ids:
+            return []
+        keys = [self._p + "e:" + (i.decode() if isinstance(i, bytes) else i) for i in ids]
+        raws = await self._r.mget(keys)
+        return sorted((PendingEntry.model_validate_json(r) for r in raws if r), key=lambda e: e.ts)
+
+    async def recent_by_payee(self, payee_hash: str, since: datetime) -> list[PendingEntry]:
+        ids = await self._r.zrangebyscore(self._p + "p:" + payee_hash, since.timestamp(), "+inf")
         if not ids:
             return []
         keys = [self._p + "e:" + (i.decode() if isinstance(i, bytes) else i) for i in ids]

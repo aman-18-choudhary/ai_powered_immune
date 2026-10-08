@@ -44,7 +44,14 @@ from scam_contracts.models import Reason
 
 from . import artifact_pin
 from .features import FEATURE_NAMES, MODEL_FEATURES
-from .policy import DAMPER_CODE, OVERLAY_CODES, RAIL_DAMPED_CAP, damper_applies, overlays
+from .policy import (
+    ALWAYS_REPORTED,
+    DAMPER_CODE,
+    OVERLAY_CODES,
+    RAIL_DAMPED_CAP,
+    damper_applies,
+    overlays,
+)
 from .reasons import BASELINES, NO_RISK, TOP_K, triggers
 from .rules import RULES_VERSION, rules_score
 from .thresholds import STEP_UP_AT
@@ -84,7 +91,10 @@ class GbmModel:
 
 
 def _vector(f: dict[str, float]) -> list[float]:
-    return [_clean(f.get(k, 0.0)) for k in MODEL_FEATURES]
+    row = [_clean(f.get(k, 0.0)) for k in MODEL_FEATURES]
+    # the booster was trained with payee_in_antibody == 0; the antibody effect is a policy overlay
+    row[MODEL_FEATURES.index("payee_in_antibody")] = 0.0
+    return row
 
 
 def _clean(x: float) -> float:
@@ -207,12 +217,12 @@ class Scorer:
                 ),
             ]  # fmt: skip
             score = capped
-        lifted = [o for o in overlays(f) if o.floor > score]
+        lifted = [o for o in overlays(f) if o.floor > score or o.code in ALWAYS_REPORTED]
         if lifted:
-            new_score = max(o.floor for o in lifted)
+            new_score = max(score, *(o.floor for o in lifted))
             reasons = [
                 *reasons,
-                *(Reason(code=o.code, weight=round(o.floor - score, 4), detail=o.detail) for o in lifted),
+                *(Reason(code=o.code, weight=round(max(0.0, o.floor - score), 4), detail=o.detail) for o in lifted),
             ]  # fmt: skip
             reasons = [r for r in reasons if r.code != NO_RISK]
             score = new_score
