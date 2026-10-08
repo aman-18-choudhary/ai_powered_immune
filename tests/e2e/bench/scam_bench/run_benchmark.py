@@ -32,6 +32,7 @@ from typing import Any
 import numpy as np
 from scam_contracts.models import CallEvent, CallRisk, Transaction, TxnDecision
 
+from .antibody_stage import DEFAULT_CONFIRM_DELAY_S
 from .metrics import (
     Metrics,
     Protection,
@@ -45,7 +46,6 @@ from .metrics import (
 FeatureTransform = Callable[[dict[str, float]], dict[str, float]]
 
 TXN_GUARD_RISK_WINDOW_MIN = 15
-ANTIBODY_UNAVAILABLE = "antibody-hub not built yet; wired in a later task"
 
 
 # ------------------------------------------------------------------------------- ablations
@@ -59,6 +59,9 @@ class Ablation:
 
     transform: FeatureTransform | None = None
     call_source: str = "real"
+    antibody: bool = (
+        True  # the antibody stage is part of the baseline; ``no_antibody`` turns it off
+    )
 
 
 def _no_call_signal() -> Ablation:
@@ -73,7 +76,7 @@ def _degraded_call_signal() -> Ablation:
 
 
 def _no_antibody() -> Ablation:
-    raise NotImplementedError(ANTIBODY_UNAVAILABLE)
+    return Ablation(None, "real", antibody=False)
 
 
 ABLATIONS: dict[str, Callable[[], Ablation]] = {
@@ -81,7 +84,7 @@ ABLATIONS: dict[str, Callable[[], Ablation]] = {
     "degraded_call_signal": _degraded_call_signal,
     "no_antibody": _no_antibody,
 }
-DEFAULT_ABLATIONS = ["no_call_signal", "degraded_call_signal"]
+DEFAULT_ABLATIONS = ["no_call_signal", "degraded_call_signal", "no_antibody"]
 
 
 def resolve_ablations(names: Sequence[str]) -> list[Ablation]:
@@ -236,8 +239,12 @@ class Pipeline:
         feature_stages: Sequence[FeatureTransform] = (),
         degraded_risks: Sequence[CallRisk] = (),
         with_reasons: bool = False,
+        truth: Any = None,
+        antibody_stage: bool = True,
     ) -> None:
         from txn_guard.history import InMemoryHistoryStore
+
+        from .antibody_stage import AntibodyStage
 
         self.store = InMemoryHistoryStore()
         self.degraded_store = InMemoryHistoryStore()  # call risks only, for degraded variants
@@ -246,6 +253,15 @@ class Pipeline:
         self.scorer = scorer
         self.variants = variants
         self.with_reasons = with_reasons
+        self.truth = truth
+        self._idx: dict[str, int] = {}
+        # one antibody stage per variant that has it: each variant issues its own holds, so its
+        # analyst confirmations (and the antibodies they create) differ
+        self.stages = {
+            name: AntibodyStage(truth)
+            for name, ab in variants.items()
+            if antibody_stage and ab.antibody and truth is not None
+        }
         self.feature_stages = list(feature_stages)  # shared by every variant (antibody goes here)
         self.latencies_ms: list[float] = []
         self._n = 0
@@ -289,8 +305,19 @@ class Pipeline:
                 f = {**f, "active_call_risk": self._degraded_call_feature(txn)}
             if ab.transform is not None:
                 f = ab.transform(f)
-            if self.with_reasons:
-                out[name] = make_decision(txn.txn_id, f, self.scorer, txn.ts)
+            stage = self.stages.get(name)
+            if stage is not None:
+                f = {**f, **stage.patch(txn)}
+            # A stage needs the decision at once only for campaign victim transfers (a first
+            # hold there schedules the analyst confirmation); every other transaction can still
+            # be scored in the deferred batch because the cache only changes on those holds.
+            now_needed = stage is not None and self.truth.txn_role(txn.txn_id) == "victim_transfer"
+            if self.with_reasons or now_needed:
+                out[name] = make_decision(
+                    txn.txn_id, f, self.scorer, txn.ts, with_reasons=self.with_reasons
+                )
+                if stage is not None:
+                    stage.observe(txn, out[name])
             else:
                 self._pending[name].append((txn.txn_id, f, txn.ts))
             if i == 0:  # baseline is first: its per-transaction latency is what we report
@@ -301,6 +328,7 @@ class Pipeline:
                     t1 = time.perf_counter()
                     make_decision(txn.txn_id, f, self.scorer, txn.ts, with_reasons=True)
                     self.latencies_ms.append(((t_feat - t0) + (time.perf_counter() - t1)) * 1000.0)
+        self._idx[txn.txn_id] = self._n
         self._n += 1
         self.store.record_txn(txn)
         for name, d in out.items():
@@ -314,6 +342,8 @@ class Pipeline:
         for name, items in self._pending.items():
             self.decisions[name].extend(make_decisions(items, self.scorer))
             items.clear()
+        for name in self.stages:  # immediate and batched decisions back into stream order
+            self.decisions[name].sort(key=lambda d: self._idx[d.txn_id])
         return self.decisions
 
 
@@ -401,6 +431,7 @@ def run_benchmark(
     include_volatile: bool = False,
     generated_at: str | None = None,
     with_reasons: bool = False,
+    antibody_stage: bool = True,
 ) -> dict[str, Any]:
     """Run baseline + ``ablations`` over a fresh world; write the markdown report to ``out``
     (default ``docs/benchmark_report.md`` at the repo root; ``out=''`` skips writing).
@@ -421,7 +452,10 @@ def run_benchmark(
         if any(a.call_source == "degraded" for a in variants.values())
         else []
     )
-    pipe = Pipeline(TxnScorer(None), variants, degraded_risks=degraded, with_reasons=with_reasons)
+    pipe = Pipeline(
+        TxnScorer(None), variants, degraded_risks=degraded, with_reasons=with_reasons,
+        truth=sc.truth, antibody_stage=antibody_stage,
+    )  # fmt: skip
     decisions, risks, versions = asyncio.run(_run_stream(sc, pipe))
 
     txn_by_id = {t.txn_id: t for t in sc.txns}
@@ -472,7 +506,13 @@ def run_benchmark(
         "txns": txn_by_id,
         "decisions": decisions,
         "call_risks": risks,
-    }
+        "antibody_stats": {
+            name: {"published": st.published, "matches": st.matches,
+                   "scam_matches": st.scam_matches, "benign_matches": st.benign_matches}
+            for name, st in pipe.stages.items()
+        },
+        "antibody_stage": antibody_stage,
+    }  # fmt: skip
     path = default_report_path() if out is None else (Path(out) if out != "" else None)
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -717,7 +757,9 @@ def render_report(
     L += [
         "",
         f"Mule-forward recall ({_pct(mule.recall if mule else None, None, 1)}) is the weakest "
-        "role; it is what the antibody stage (shared mule intelligence) is meant to improve.",
+        "role. The antibody stage blocks the mule payees of confirmed victim transfers, so it lifts "
+        "victim-transfer recall; it does not change mule-forward recall here, because forwards "
+        "go to a different (cash-out) payee_hash that no analyst confirmation covers.",
     ]
     plines, tot = _protection_rows(base["lead"])
     mass = [r for r in base["lead"] if r.lead_hold.reaches_mass]
@@ -777,10 +819,10 @@ def render_report(
         "call-guard output is replaced by training-like imperfect call risk (seeded): each scam "
         f"victim's call is detected with probability {dp['call_recall']:.0%}, 1-3 chunks late, "
         f"and {dp['spurious_rate']:.1%} of benign transactions receive a spurious risk. "
-        "`no_antibody` is registered but not runnable until the antibody-hub exists; requesting "
-        "it raises `NotImplementedError`.",
+        "`no_antibody` turns the antibody stage off (see the next section).",
         "",
     ]
+    L += _antibody_section(result)
     if include_volatile:
         lt = result["latency_ms"]
         L += [
@@ -854,11 +896,77 @@ def render_report(
         "exercised here.",
         "- Lead time uses the simulator's 10th victim as the mass-victimisation point; it is "
         "measured per campaign with few campaigns, so it carries wide uncertainty.",
-        "- Antibody (cross-bank mule sharing) is not part of the pipeline yet; the `no_antibody` "
-        "ablation will be enabled when the antibody-hub is built.",
+        "- The antibody stage rests on an ASSUMED analyst-confirmation model (first hold_verify on "
+        "a campaign victim transfer, confirmed after a fixed delay, using simulator ground truth "
+        "as the analyst's oracle), not on measured analyst behaviour; benign holds are never "
+        "confirmed. The benchmark has one shared cache, and second-bank victims exist only in the "
+        "hero scenario, so cross-bank propagation latency and hub outages are not exercised here "
+        "(see the txn-guard acceptance test). Only the payee of a victim transfer is blocked; the "
+        "cash-out account (a different payee_hash) is not.",
         "",
     ]
     return "\n".join(L)
+
+
+def _antibody_section(result: dict[str, Any]) -> list[str]:
+    variants = result["variants"]
+    if "no_antibody" not in variants or not result.get("antibody_stage", True):
+        return []
+    L = [
+        "## Antibody stage (analyst-confirmation model)",
+        "",
+        "Model: when a campaign victim transfer is first held (`hold_verify`), an analyst "
+        f"confirms the payee after {DEFAULT_CONFIRM_DELAY_S:.0f} s (deterministic, simulator "
+        "ground truth as the oracle) and an antibody (kind `mule_account`, 14-day TTL) is applied "
+        "to every bank's cache; later transfers to that payee hit `ANTIBODY_MATCH` "
+        "(hold_verify, or step-up for an established payee). `baseline` has the stage on, "
+        "`no_antibody` is the same pipeline with it off (the pre-antibody baseline).",
+        "",
+        "| Metric | baseline (antibody on) | no_antibody |",
+        "|---|---|---|",
+    ]
+    b, n = variants["baseline"], variants["no_antibody"]
+
+    def role(v: dict[str, Any], name: str) -> str:
+        r = v["metrics"].by_role.get(name)
+        return _pct(r.recall if r else None, r.recall_ci if r else None, 1)
+
+    def share(v: dict[str, Any]) -> str:
+        fr = [
+            r.protection_hold.fraction for r in v["lead"] if r.protection_hold.fraction is not None
+        ]
+        return _pct(_mean(fr), None, 1)
+
+    def before(v: dict[str, Any]) -> str:
+        mass = [r for r in v["lead"] if r.lead_hold.reaches_mass]
+        return f"{sum(1 for r in mass if r.lead_hold.campaign_detected_before_mass)} of {len(mass)}"
+
+    def leads(v: dict[str, Any]) -> str:
+        xs = [r.lead_hold.lead for r in v["lead"] if r.lead_hold.lead is not None]
+        return _td(sum(xs, timedelta(0)) / len(xs)) if xs else "n/a"
+
+    rows = [
+        ("Victim-transfer recall (hold)", role(b, "victim_transfer"), role(n, "victim_transfer")),
+        ("Mule-forward recall (hold)", role(b, "mule_forward"), role(n, "mule_forward")),
+        ("Share of post-detection victim transfers held", share(b), share(n)),
+        ("Campaigns detected before the 10th victim", before(b), before(n)),
+        ("Mean lead time, first hold", leads(b), leads(n)),
+        ("Benign hold rate (FPR)", _pct(b["metrics"].fpr, b["metrics"].ci["fpr"], 3),
+         _pct(n["metrics"].fpr, n["metrics"].ci["fpr"], 3)),
+    ]  # fmt: skip
+    for label, x, y in rows:
+        L.append(f"| {label} | {x} | {y} |")
+    st = result["antibody_stats"].get("baseline", {})
+    L += [
+        "",
+        f"Baseline antibody stage: {st.get('published', 0)} antibodies published, "
+        f"{st.get('matches', 0)} transactions matched ({st.get('scam_matches', 0)} scam, "
+        f"{st.get('benign_matches', 0)} benign). Simulator benign payees are never mules, so the "
+        "benign match count must stay 0 (antibodies add no benign holds here); in production this "
+        "depends on analyst accuracy and the protected-merchant allowlist.",
+        "",
+    ]
+    return L
 
 
 def _rate_of(m: Metrics, rail: str, field_name: str) -> float | None:

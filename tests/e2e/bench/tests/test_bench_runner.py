@@ -5,7 +5,6 @@ import pytest
 
 from scam_bench.metrics import lead_time_detail
 from scam_bench.run_benchmark import (
-    ABLATIONS,
     BenchConfig,
     _td,
     default_report_path,
@@ -79,13 +78,30 @@ def test_determinism_same_seed(tmp_path):
     assert render_report(c, include_volatile=False) != render_report(a, include_volatile=False)
 
 
-def test_no_antibody_not_implemented(tmp_path):
-    assert "no_antibody" in ABLATIONS
-    with pytest.raises(
-        NotImplementedError, match="antibody-hub not built yet; wired in a later task"
-    ):
-        run_benchmark(7, ["no_antibody"], config=TINY, out=tmp_path / "x.md")
-    assert not (tmp_path / "x.md").exists()
+def test_no_antibody_reproduces_the_pre_antibody_baseline(tmp_path):
+    with_stage = run_benchmark(7, ["no_antibody"], config=TINY, out="")
+    pre = run_benchmark(7, [], config=TINY, out="", antibody_stage=False)  # stage globally off
+    key = lambda ds: [(d.txn_id, d.decision, d.score) for d in ds]  # noqa: E731
+    assert key(with_stage["decisions"]["no_antibody"]) == key(pre["decisions"]["baseline"])
+    assert (
+        with_stage["variants"]["no_antibody"]["metrics"] == pre["variants"]["baseline"]["metrics"]
+    )
+    assert with_stage["variants"]["no_antibody"]["lead"] == pre["variants"]["baseline"]["lead"]
+    assert with_stage["antibody_stats"].keys() == {"baseline"}  # only the baseline has the stage
+
+
+def test_antibody_run_is_deterministic_and_adds_no_benign_matches():
+    a = run_benchmark(7, ["no_antibody"], config=TINY, out="")
+    b = run_benchmark(7, ["no_antibody"], config=TINY, out="")
+    assert render_report(a, include_volatile=False) == render_report(b, include_volatile=False)
+    assert a["antibody_stats"] == b["antibody_stats"]
+    st = a["antibody_stats"]["baseline"]
+    assert st["published"] >= 1 and st["benign_matches"] == 0
+    on, off = a["variants"]["baseline"]["metrics"], a["variants"]["no_antibody"]["metrics"]
+    assert on.fpr == off.fpr and on.recall >= off.recall  # antibodies only add scam holds
+    text = render_report(a, include_volatile=False)
+    assert "## Antibody stage" in text and "ASSUMED analyst-confirmation" in text
+    assert "NotImplementedError" not in text
 
 
 def test_unknown_ablation_and_training_seed_rejected(tmp_path):
@@ -133,7 +149,7 @@ def test_default_report_omits_latency_and_is_byte_identical_via_cli(tmp_path):
 
 
 def test_cli_rejects_bad_ablations_cleanly(tmp_path, capsys):
-    for name, msg in (("bogus", "unknown ablation"), ("no_antibody", "antibody-hub not built yet")):
+    for name, msg in (("bogus", "unknown ablation"),):
         with pytest.raises(SystemExit) as e:
             main(["--ablations", name, "--out", str(tmp_path / "x.md")])
         assert e.value.code == 2
