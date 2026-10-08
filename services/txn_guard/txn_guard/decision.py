@@ -16,7 +16,7 @@ log = logging.getLogger("txn_guard")
 Decision = Literal["allow", "step_up", "hold_verify"]
 
 
-__all__ = ["HOLD_AT", "STEP_UP_AT", "decide", "make_decision"]
+__all__ = ["HOLD_AT", "STEP_UP_AT", "decide", "make_decision", "make_decisions"]
 
 
 def decide(score: float) -> Decision:
@@ -32,9 +32,27 @@ def decide(score: float) -> Decision:
 
 
 def make_decision(
-    txn_id: str, features: dict[str, float], scorer: Scorer, ts: datetime
+    txn_id: str,
+    features: dict[str, float],
+    scorer: Scorer,
+    ts: datetime,
+    with_reasons: bool = True,
 ) -> TxnDecision:
-    score, reasons, version = scorer.score_with_version(features)
+    score, reasons, version = scorer.score_with_version(features, with_reasons)
+    return _envelope(txn_id, score, reasons, version, ts)
+
+
+def make_decisions(
+    items: list[tuple[str, dict[str, float], datetime]], scorer: Scorer
+) -> list[TxnDecision]:
+    """Batch ``make_decision`` without reasons (offline evaluation); same decisions."""
+    scored = scorer.score_many([f for _, f, _ in items])
+    return [
+        _envelope(tid, s, r, v, ts) for (tid, _, ts), (s, r, v) in zip(items, scored, strict=True)
+    ]
+
+
+def _envelope(txn_id: str, score: float, reasons: list, version: str, ts: datetime) -> TxnDecision:
     decision = decide(score)
     log.info("txn_id=%s decision=%s score=%.3f", txn_id, decision, score)  # no other fields
     return TxnDecision(

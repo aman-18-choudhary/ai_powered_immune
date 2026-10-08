@@ -3,7 +3,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import T0, call_risk, campaign, decision, truth_of, txn
+from bench_helpers import T0, call_risk, campaign, decision, truth_of, txn
 
 from scam_bench.metrics import (
     Metrics,
@@ -256,3 +256,24 @@ def test_percentile():
     assert percentile(xs, 50) == pytest.approx(50.5)
     assert percentile(xs, 99) == pytest.approx(99.01)
     assert not math.isnan(percentile([3.0], 99))
+
+
+def test_prevalence_adjusted_precision():
+    from scam_bench.metrics import prevalence_adjusted_precision as ap
+
+    assert ap(0.8, 0.001, 0.5) == pytest.approx(0.8 * 0.5 / (0.8 * 0.5 + 0.001 * 0.5))
+    assert ap(0.8, 0.001, 0.0001) < 0.1  # low prevalence collapses precision
+    assert ap(None, 0.001, 0.01) is None and ap(0.8, None, 0.01) is None
+    assert ap(0.8, 0.0, 0.01) == 1.0 and ap(0.0, 0.0, 0.01) is None
+
+
+def test_victims_fully_held_per_victim():
+    camp = campaign("c1", 4)
+    truth = truth_of(camp)
+    txns = {t.txn_id: t for t in camp.txns}
+    v = [t for t in camp.txns if t.txn_id.startswith("c1-v")]
+    ds = [decision(v[0], "hold_verify"), decision(v[1], "hold_verify"), decision(v[2], "allow"),
+          decision(v[3], "hold_verify")]  # fmt: skip
+    p = campaign_protection("c1", ds, txns, truth)
+    assert (p.victims_with_post_detection_txns, p.victims_fully_held) == (3, 2)
+    assert p.victims_fully_held_fraction == pytest.approx(2 / 3)

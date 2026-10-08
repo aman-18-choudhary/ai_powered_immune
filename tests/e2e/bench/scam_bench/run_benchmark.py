@@ -39,6 +39,7 @@ from .metrics import (
     compute_metrics,
     lead_time_detail,
     percentile,
+    prevalence_adjusted_precision,
 )
 
 FeatureTransform = Callable[[dict[str, float]], dict[str, float]]
@@ -50,25 +51,41 @@ ANTIBODY_UNAVAILABLE = "antibody-hub not built yet; wired in a later task"
 # ------------------------------------------------------------------------------- ablations
 
 
-def _no_call_signal() -> FeatureTransform:
+@dataclass(frozen=True)
+class Ablation:
+    """How a variant differs from the baseline. ``call_source`` "real" feeds txn-guard the
+    call-guard alerts produced in this run; "degraded" replaces them by training-like imperfect
+    call risk (85% recall, 1.5% spurious benign risk; see ``degraded_call_risks``)."""
+
+    transform: FeatureTransform | None = None
+    call_source: str = "real"
+
+
+def _no_call_signal() -> Ablation:
     def transform(features: dict[str, float]) -> dict[str, float]:
         return {**features, "active_call_risk": 0.0}
 
-    return transform
+    return Ablation(transform)
 
 
-def _no_antibody() -> FeatureTransform:
+def _degraded_call_signal() -> Ablation:
+    return Ablation(None, "degraded")
+
+
+def _no_antibody() -> Ablation:
     raise NotImplementedError(ANTIBODY_UNAVAILABLE)
 
 
-ABLATIONS: dict[str, Callable[[], FeatureTransform]] = {
+ABLATIONS: dict[str, Callable[[], Ablation]] = {
     "no_call_signal": _no_call_signal,
+    "degraded_call_signal": _degraded_call_signal,
     "no_antibody": _no_antibody,
 }
+DEFAULT_ABLATIONS = ["no_call_signal", "degraded_call_signal"]
 
 
-def resolve_ablations(names: Sequence[str]) -> list[FeatureTransform]:
-    """Validate and build the transforms for ``names`` (raises before any work is done)."""
+def resolve_ablations(names: Sequence[str]) -> list[Ablation]:
+    """Validate and build the ablations for ``names`` (raises before any work is done)."""
     unknown = [n for n in names if n not in ABLATIONS]
     if unknown:
         raise ValueError(f"unknown ablation(s) {unknown}; known: {sorted(ABLATIONS)}")
@@ -132,7 +149,7 @@ def build_scenario(seed: int, cfg: BenchConfig) -> Scenario:
     from sim_engine.labels import GroundTruth
     from sim_engine.scam import gen_scam_campaign
     from sim_engine.world import build_world
-    from txn_guard.simdata import _mule_history
+    from txn_guard.simdata import mule_history
 
     world = build_world(seed, cfg.n_citizens)
     benign = list(gen_benign_txns(world, cfg.days, seed))
@@ -148,7 +165,7 @@ def build_scenario(seed: int, cfg: BenchConfig) -> Scenario:
         )
     truth = GroundTruth(campaigns)
     mrng = np.random.default_rng([seed, 9009])
-    history = [payload for c in campaigns for _, _, payload in _mule_history(mrng, c, world.start)]
+    history = [payload for c in campaigns for _, _, payload in mule_history(mrng, c, world.start)]
     scam_calls = [e for c in campaigns for e in c.calls]
     return Scenario(
         world=world,
@@ -163,7 +180,50 @@ def build_scenario(seed: int, cfg: BenchConfig) -> Scenario:
     )
 
 
+def degraded_call_risks(sc: Scenario, seed: int) -> list[CallRisk]:
+    """Training-like imperfect call risk (what txn-guard was trained and calibrated on), seeded.
+
+    Mirrors ``txn_guard.simdata.build_stream``: each scam victim's call is detected with
+    probability ``CALL_RECALL``, 1-3 chunks after its last chunk, then re-emitted every minute
+    for 20 minutes; ``SPURIOUS_RATE`` of benign transactions get a spurious risk 1-10 minutes
+    earlier. Sorted by time."""
+    from txn_guard import simdata as sd
+
+    rng = np.random.default_rng([seed, 6006])
+
+    def risk(token: str, call_id: str, score: float, ts: datetime) -> CallRisk:
+        return CallRisk(
+            call_id=call_id, victim_token=token, score=round(float(score), 3), reasons=[],
+            model_version=sd.RISK_MODEL, ts=ts,
+        )  # fmt: skip
+
+    out: list[CallRisk] = []
+    for t in sc.txns:
+        if not sc.truth.is_scam_txn(t.txn_id) and rng.random() < sd.SPURIOUS_RATE:
+            ts = t.ts - timedelta(minutes=float(rng.uniform(1, 10)))
+            out.append(risk(t.payer_token, f"spur-{t.txn_id}", rng.uniform(0.7, 0.95), ts))
+    for c in sc.campaigns:
+        by_victim: dict[str, list[CallEvent]] = {}
+        for e in c.calls:
+            by_victim.setdefault(e.victim_token, []).append(e)
+        for tok, evs in by_victim.items():
+            if rng.random() >= sd.CALL_RECALL:
+                continue
+            n_chunks = int(rng.integers(sd.DETECT_LAG_CHUNKS[0], sd.DETECT_LAG_CHUNKS[1] + 1))
+            lag = float(rng.uniform(*sd.CHUNK_GAP_S, n_chunks).sum())
+            first = max(e.ts for e in evs) + timedelta(seconds=lag)
+            ts = first
+            while ts <= first + sd.RISK_REEMIT_FOR:
+                out.append(risk(tok, evs[-1].call_id, rng.uniform(0.7, 1.0), ts))
+                ts += sd.RISK_REEMIT_EVERY
+    out.sort(key=lambda r: (r.ts, r.call_id))
+    return out
+
+
 # ------------------------------------------------------------------------------------ stages
+
+
+LATENCY_SAMPLE_EVERY = 10  # in fast mode, 1 in N transactions is also timed on the full path
 
 
 class Pipeline:
@@ -172,22 +232,44 @@ class Pipeline:
     def __init__(
         self,
         scorer: Any,
-        variants: dict[str, list[FeatureTransform]],
+        variants: dict[str, Ablation],
         feature_stages: Sequence[FeatureTransform] = (),
+        degraded_risks: Sequence[CallRisk] = (),
+        with_reasons: bool = False,
     ) -> None:
         from txn_guard.history import InMemoryHistoryStore
 
         self.store = InMemoryHistoryStore()
+        self.degraded_store = InMemoryHistoryStore()  # call risks only, for degraded variants
+        self._degraded = list(degraded_risks)
+        self._deg_i = 0
         self.scorer = scorer
         self.variants = variants
+        self.with_reasons = with_reasons
         self.feature_stages = list(feature_stages)  # shared by every variant (antibody goes here)
         self.latencies_ms: list[float] = []
+        self._n = 0
+        # fast mode (no reasons): features are decision-independent, so scoring is deferred and
+        # done in one batch per variant by ``flush`` (identical decisions, far fewer model calls)
+        self._pending: dict[str, list[tuple[str, dict[str, float], datetime]]] = {
+            name: [] for name in variants
+        }
+        self.decisions: dict[str, list[TxnDecision]] = {name: [] for name in variants}
 
     def on_call_risk(self, risk: CallRisk) -> None:
         self.store.record_call_risk(risk)
 
     def on_history_txn(self, txn: Transaction) -> None:
         self.store.record_txn(txn)
+
+    def _degraded_call_feature(self, txn: Transaction) -> float:
+        from txn_guard.features import extract_features
+
+        while self._deg_i < len(self._degraded) and self._degraded[self._deg_i].ts <= txn.ts:
+            self.degraded_store.record_call_risk(self._degraded[self._deg_i])
+            self._deg_i += 1
+        ctx = self.degraded_store.context_for(txn, txn.ts)
+        return extract_features(txn, ctx)["active_call_risk"]
 
     def on_txn(self, txn: Transaction) -> dict[str, TxnDecision]:
         from txn_guard.decision import make_decision
@@ -198,16 +280,41 @@ class Pipeline:
         feats = extract_features(txn, ctx)
         for stage in self.feature_stages:
             feats = stage(feats)
+        t_feat = time.perf_counter()
         out: dict[str, TxnDecision] = {}
-        for i, (name, transforms) in enumerate(self.variants.items()):
-            f = feats
-            for tf in transforms:
-                f = tf(f)
-            out[name] = make_decision(txn.txn_id, f, self.scorer, txn.ts)
+        base_feats = feats
+        for i, (name, ab) in enumerate(self.variants.items()):
+            f = base_feats
+            if ab.call_source == "degraded":
+                f = {**f, "active_call_risk": self._degraded_call_feature(txn)}
+            if ab.transform is not None:
+                f = ab.transform(f)
+            if self.with_reasons:
+                out[name] = make_decision(txn.txn_id, f, self.scorer, txn.ts)
+            else:
+                self._pending[name].append((txn.txn_id, f, txn.ts))
             if i == 0:  # baseline is first: its per-transaction latency is what we report
-                self.latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+                if self.with_reasons:
+                    self.latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+                elif self._n % LATENCY_SAMPLE_EVERY == 0:
+                    # fast mode: time the full production path (reasons on) on a 1-in-N sample
+                    t1 = time.perf_counter()
+                    make_decision(txn.txn_id, f, self.scorer, txn.ts, with_reasons=True)
+                    self.latencies_ms.append(((t_feat - t0) + (time.perf_counter() - t1)) * 1000.0)
+        self._n += 1
         self.store.record_txn(txn)
+        for name, d in out.items():
+            self.decisions[name].append(d)
         return out
+
+    def flush(self) -> dict[str, list[TxnDecision]]:
+        """Score deferred (fast-mode) transactions in batch; returns decisions per variant."""
+        from txn_guard.decision import make_decisions
+
+        for name, items in self._pending.items():
+            self.decisions[name].extend(make_decisions(items, self.scorer))
+            items.clear()
+        return self.decisions
 
 
 async def _run_stream(
@@ -228,7 +335,6 @@ async def _run_stream(
         events.append((t.ts, 1, len(sc.history_txns) + i, "txn", t))
     events.sort(key=lambda x: x[:3])
 
-    decisions: dict[str, list[TxnDecision]] = {name: [] for name in pipe.variants}
     risks: list[CallRisk] = []
     for ts, _, _, kind, payload in events:
         if kind == "call":
@@ -247,10 +353,9 @@ async def _run_stream(
             if ts < sc.warm_end:
                 pipe.on_history_txn(payload)  # warm-up: build history only
                 continue
-            for name, d in pipe.on_txn(payload).items():
-                decisions[name].append(d)
+            pipe.on_txn(payload)
     versions = {"call_guard": call_scorer.model_version, "txn_guard": pipe.scorer.model_version}
-    return decisions, risks, versions
+    return pipe.flush(), risks, versions
 
 
 # ------------------------------------------------------------------------------------ result
@@ -278,6 +383,12 @@ def git_commit() -> str:
         return "unavailable"
 
 
+def _degraded_params() -> dict[str, float]:
+    from txn_guard import simdata as sd
+
+    return {"call_recall": sd.CALL_RECALL, "spurious_rate": sd.SPURIOUS_RATE}
+
+
 def default_report_path() -> Path:
     return Path(__file__).resolve().parents[4] / "docs" / "benchmark_report.md"
 
@@ -287,26 +398,36 @@ def run_benchmark(
     ablations: list[str],
     config: BenchConfig | None = None,
     out: Path | str | None = None,
-    include_volatile: bool = True,
+    include_volatile: bool = False,
     generated_at: str | None = None,
+    with_reasons: bool = False,
 ) -> dict[str, Any]:
     """Run baseline + ``ablations`` over a fresh world; write the markdown report to ``out``
-    (default ``docs/benchmark_report.md`` at the repo root; ``out=''`` skips writing)."""
+    (default ``docs/benchmark_report.md`` at the repo root; ``out=''`` skips writing).
+
+    ``with_reasons=False`` (default) skips the occlusion-reason computation in txn-guard scoring;
+    scores and decisions are identical, only faster. The report omits machine-dependent latency
+    unless ``include_volatile`` (so a given seed gives a byte-identical report)."""
     cfg = config or BenchConfig()
-    transforms = resolve_ablations(ablations)  # NotImplementedError / ValueError before any work
+    abl = resolve_ablations(ablations)  # NotImplementedError / ValueError before any work
     check_seed(seed)
     from txn_guard.model import Scorer as TxnScorer
 
     sc = build_scenario(seed, cfg)
-    variants: dict[str, list[FeatureTransform]] = {"baseline": []}
-    variants.update({n: [t] for n, t in zip(ablations, transforms, strict=True)})
-    pipe = Pipeline(TxnScorer(None), variants)
+    variants: dict[str, Ablation] = {"baseline": Ablation()}
+    variants.update(dict(zip(ablations, abl, strict=True)))
+    degraded = (
+        degraded_call_risks(sc, seed)
+        if any(a.call_source == "degraded" for a in variants.values())
+        else []
+    )
+    pipe = Pipeline(TxnScorer(None), variants, degraded_risks=degraded, with_reasons=with_reasons)
     decisions, risks, versions = asyncio.run(_run_stream(sc, pipe))
 
     txn_by_id = {t.txn_id: t for t in sc.txns}
     res_variants: dict[str, Any] = {}
     for name, ds in decisions.items():
-        detections = [*ds, *risks]
+        detections = [*ds, *(degraded if variants[name].call_source == "degraded" else risks)]
         rows = []
         for c in sc.campaigns:
             rows.append(
@@ -345,6 +466,12 @@ def run_benchmark(
         "model_versions": versions,
         "git_commit": git_commit(),
         "forbidden_seeds": forbidden_seeds(),
+        "mule_history_share": __import__("txn_guard.simdata", fromlist=["x"]).MULE_HISTORY_SHARE,
+        "degraded_params": _degraded_params(),
+        "truth": sc.truth,
+        "txns": txn_by_id,
+        "decisions": decisions,
+        "call_risks": risks,
     }
     path = default_report_path() if out is None else (Path(out) if out != "" else None)
     if path is not None:
@@ -387,16 +514,40 @@ def _ms(x: float | None) -> str:
 
 def _headline(m: Metrics) -> list[str]:
     ci = m.ci
+    rails = [(r, x) for r, x in m.by_rail.items() if x.fpr is not None]
+    worst = max(rails, key=lambda rx: rx[1].fpr or 0.0) if rails else None
+    wrow = (
+        f"| **Worst-rail FPR** ({worst[0]}) | {_pct(worst[1].fpr, worst[1].ci['fpr'], 3)} |"
+        if worst
+        else "| **Worst-rail FPR** | n/a |"
+    )
     return [
         "| Metric | Value (95% Wilson CI) |",
         "|---|---|",
         f"| Precision | {_pct(m.precision, ci['precision'])} |",
         f"| Recall (all scam txns) | {_pct(m.recall, ci['recall'])} |",
         f"| F1 | {_pct(m.f1)} |",
-        f"| FPR (held benign / benign) | {_pct(m.fpr, ci['fpr'], 3)} |",
+        f"| FPR (held benign / benign, all rails pooled) | {_pct(m.fpr, ci['fpr'], 3)} |",
         f"| Held-benign rate | {_pct(m.held_benign_rate, ci['held_benign_rate'], 3)} |",
+        wrow,
         f"| Counts (TP / FP / FN / TN) | {m.tp} / {m.fp} / {m.fn} / {m.tn} |",
     ]
+
+
+def _rail_fpr_table(m: Metrics) -> list[str]:
+    lines = [
+        "**Per-rail false-positive rate (read this next to the pooled FPR above).** "
+        "The pooled FPR is dominated by UPI volume and hides rail-level problems.",
+        "",
+        "| Rail | Benign txns | FPR, hold (95% CI) | FPR, step-up or hold (95% CI) |",
+        "|---|---|---|---|",
+    ]
+    for rail, r in m.by_rail.items():
+        lines.append(
+            f"| {rail} | {r.n_benign} | {_pct(r.fpr, r.ci['fpr'], 3)} | "
+            f"{_pct(r.flagged_fpr, r.ci['flagged_fpr'], 3)} |"
+        )
+    return lines
 
 
 def _flagged(m: Metrics) -> list[str]:
@@ -412,6 +563,42 @@ def _flagged(m: Metrics) -> list[str]:
         f"| Counts (TP / FP / FN / TN) | {m.flagged_tp} / {m.flagged_fp} / "
         f"{m.flagged_fn} / {m.flagged_tn} |",
     ]
+
+
+def _prevalence_table(m: Metrics) -> list[str]:
+    sim_pi = m.n_scam / (m.n_scam + m.n_benign) if (m.n_scam + m.n_benign) else None
+    pis = [("simulator", sim_pi), ("0.1%", 0.001), ("0.01%", 0.0001)]
+    lines = [
+        "Precision depends on scam prevalence pi: precision = TPR*pi / (TPR*pi + FPR*(1-pi)), "
+        "with TPR and FPR taken from this run. The pooled-FPR upper bound is the upper end of "
+        "its 95% Wilson interval (a conservative reading).",
+        "",
+        "| Prevalence | pi | Precision, hold | Precision, hold (FPR upper bound) "
+        "| Precision, step-up or hold |",
+        "|---|---|---|---|---|",
+    ]
+    f_hi = m.ci["fpr"][1] if m.ci.get("fpr") else None
+    for label, pi in pis:
+        if pi is None:
+            continue
+        lines.append(
+            f"| {label} | {pi * 100:.3f}% | "
+            f"{_pct(prevalence_adjusted_precision(m.recall, m.fpr, pi), None, 2)} | "
+            f"{_pct(prevalence_adjusted_precision(m.recall, f_hi, pi), None, 2)} | "
+            f"{_pct(prevalence_adjusted_precision(m.flagged_recall, m.flagged_fpr, pi), None, 2)} |"
+        )
+    lines += [
+        "",
+        "The headline precision will NOT transfer to real traffic: at realistic prevalence the "
+        "same recall and FPR give a far lower precision.",
+    ]
+    return lines
+
+
+def _yn(lt: Any) -> str:
+    if not lt.reaches_mass:
+        return "n/a (<10 victims)"
+    return "yes" if lt.campaign_detected_before_mass else "no"
 
 
 def _protection_rows(rows: list[CampaignRow]) -> tuple[list[str], dict[str, Decimal]]:
@@ -432,9 +619,14 @@ def _protection_rows(rows: list[CampaignRow]) -> tuple[list[str], dict[str, Deci
         "(positive: detected before mass victimisation). `n/a` means the campaign never "
         "reaches 10 victims or was never detected.",
         "",
-        "| Campaign | Victim txns after first hold | Held | Victims protected (hold) "
-        "| Money prevented (hold) | Victim txns after first alert/hold | Held "
-        "| Victims protected (alert) | Money prevented (alert) |",
+        "Share of post-detection victim transfers held. This is a *transaction* fraction (a "
+        "victim makes several split transfers), counted over victim transfers strictly after the "
+        "first detection; the detecting transfer itself is excluded. The per-victim column counts "
+        "victims all of whose post-detection transfers were held.",
+        "",
+        "| Campaign | Victim txns after first hold | Held | Share held (hold) "
+        "| Victims fully held | Money prevented, upper bound (hold) "
+        "| Victim txns after first alert/hold | Held | Share held (alert) |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
@@ -444,17 +636,12 @@ def _protection_rows(rows: list[CampaignRow]) -> tuple[list[str], dict[str, Deci
         lines.append(
             f"| {r.campaign_id} | {h.victim_txns_after_detection} | "
             f"{h.victim_txns_held_after_detection} | {_pct(h.fraction, None, 1)} | "
+            f"{h.victims_fully_held} of {h.victims_with_post_detection_txns} "
+            f"({_pct(h.victims_fully_held_fraction, None, 1)}) | "
             f"{_inr(h.money_prevented_inr)} | {a.victim_txns_after_detection} | "
-            f"{a.victim_txns_held_after_detection} | {_pct(a.fraction, None, 1)} | "
-            f"{_inr(a.money_prevented_inr)} |"
+            f"{a.victim_txns_held_after_detection} | {_pct(a.fraction, None, 1)} |"
         )
     return lines, tot
-
-
-def _yn(lt: Any) -> str:
-    if not lt.reaches_mass:
-        return "n/a (<10 victims)"
-    return "yes" if lt.campaign_detected_before_mass else "no"
 
 
 def _mean(xs: list[float]) -> float | None:
@@ -462,12 +649,15 @@ def _mean(xs: list[float]) -> float | None:
 
 
 def render_report(
-    result: dict[str, Any], include_volatile: bool = True, generated_at: str | None = None
+    result: dict[str, Any], include_volatile: bool = False, generated_at: str | None = None
 ) -> str:
-    """Markdown report. ``include_volatile=False`` drops the machine-dependent timing section."""
+    """Markdown report. Machine-dependent latency is only included with ``include_volatile``;
+    without it the output is a pure function of the seed, config and code (byte-reproducible)."""
     base = result["variants"]["baseline"]
     m: Metrics = base["metrics"]
     cfg = result["config"]
+    total = m.n_benign + m.n_scam
+    sim_pi = m.n_scam / total if total else None
     L: list[str] = ["# Benchmark report", ""]
     if generated_at:
         L += [f"_Generated at {generated_at}._", ""]
@@ -479,9 +669,8 @@ def render_report(
         "",
         f"World: {cfg['n_citizens']} citizens, {cfg['days']} days ({cfg['warmup_days']} warm-up "
         f"days only build history), {cfg['n_campaigns']} scam campaigns x "
-        f"{cfg['victims_per_campaign']} victims. Scored transactions: {m.n_benign + m.n_scam} "
-        f"({m.n_benign} benign, {m.n_scam} scam; scam prevalence "
-        f"{_pct(m.n_scam / (m.n_benign + m.n_scam) if (m.n_benign + m.n_scam) else None, None, 3)}).",
+        f"{cfg['victims_per_campaign']} victims. Scored transactions: {total} "
+        f"({m.n_benign} benign, {m.n_scam} scam; scam prevalence {_pct(sim_pi, None, 3)}).",
         "",
         "## Headline metrics",
         "",
@@ -489,11 +678,17 @@ def render_report(
         "",
         *_headline(m),
         "",
+        *_rail_fpr_table(m),
+        "",
         "## Operating point: step-up or hold",
         "",
         "Second operating point: `step_up` (score >= 0.5) also counts as flagged.",
         "",
         *_flagged(m),
+        "",
+        "## Precision at realistic prevalence",
+        "",
+        *_prevalence_table(m),
         "",
         "## Per-rail breakdown",
         "",
@@ -518,10 +713,16 @@ def render_report(
             f"| {role} | {r.n} | {r.held} | {_pct(r.recall, r.recall_ci, 1)} | {r.flagged} | "
             f"{_pct(r.flagged_recall, r.flagged_recall_ci, 1)} |"
         )
+    mule = m.by_role.get("mule_forward")
+    L += [
+        "",
+        f"Mule-forward recall ({_pct(mule.recall if mule else None, None, 1)}) is the weakest "
+        "role; it is what the antibody stage (shared mule intelligence) is meant to improve.",
+    ]
     plines, tot = _protection_rows(base["lead"])
     mass = [r for r in base["lead"] if r.lead_hold.reaches_mass]
     before = sum(1 for r in mass if r.lead_hold.campaign_detected_before_mass)
-    protected = [
+    shares = [
         r.protection_hold.fraction for r in base["lead"] if r.protection_hold.fraction is not None
     ]
     L += [
@@ -531,20 +732,31 @@ def render_report(
         *plines,
         "",
         f"Campaigns reaching 10 victims: {len(mass)} of {len(base['lead'])}; detected by a hold "
-        f"before the 10th victim: {before} of {len(mass)}. Mean victims-protected fraction "
-        f"(hold-defined, over detected campaigns): {_pct(_mean(protected), None, 1)}. Money prevented "
-        f"by holds on victim transfers after first hold: {_inr(tot['prevented'])} of "
-        f"{_inr(tot['at_risk'])} at risk after first hold.",
+        f"before the 10th victim: {before} of {len(mass)}. Mean share of post-detection victim "
+        f"transfers held (over detected campaigns): {_pct(_mean(shares), None, 1)}. Money "
+        f"prevented (upper bound) on victim transfers after first hold: {_inr(tot['prevented'])} "
+        f"of {_inr(tot['at_risk'])} at risk after first hold.",
         "",
-        "Call-guard (session level): "
-        f"{result['calls']['scam_calls_alerted']} of {result['calls']['scam_calls']} scam calls and "
-        f"{result['calls']['benign_calls_alerted']} of {result['calls']['benign_calls']} benign calls "
-        f"crossed the alert threshold ({result['calls']['alerts_published']} alerts published).",
+        "Money-prevented assumption: a held transfer is treated as stopped for good. The "
+        "simulator does not model a victim retrying through another payee or channel, and "
+        "`hold_verify` is assumed to end in rejection, not release; real prevented loss is lower.",
+        "",
+        "Campaign-structure caveat: each campaign has "
+        f"{cfg['victims_per_campaign']} victims and detection happens near victim 1-3, so most "
+        "victims fall after detection; the held share is inflated relative to slower, "
+        "less concentrated real campaigns.",
+        "",
+        "Call-guard (session level, real run): "
+        f"{result['calls']['scam_calls_alerted']} of {result['calls']['scam_calls']} scam calls "
+        f"and {result['calls']['benign_calls_alerted']} of {result['calls']['benign_calls']} "
+        f"benign calls crossed the alert threshold ({result['calls']['alerts_published']} alerts "
+        "published). This is an idealised, simulator-perfect call signal; see the "
+        "`degraded_call_signal` variant below.",
         "",
         "## Ablations",
         "",
-        "| Variant | Precision | Recall (hold) | Flagged recall | FPR (hold) | Mean victims protected "
-        "| Money prevented |",
+        "| Variant | Precision | Recall (hold) | Flagged recall | FPR (hold) "
+        "| Mean share of post-detection transfers held | Money prevented (upper bound) |",
         "|---|---|---|---|---|---|---|",
     ]
     for name, v in result["variants"].items():
@@ -558,21 +770,26 @@ def render_report(
             f"{_pct(vm.recall, vm.ci['recall'], 1)} | {_pct(vm.flagged_recall, None, 1)} | "
             f"{_pct(vm.fpr, vm.ci['fpr'], 3)} | {_pct(_mean(fr), None, 1)} | {_inr(money)} |"
         )
+    dp = result["degraded_params"]
     L += [
         "",
-        "`no_call_signal`: txn-guard sees `active_call_risk = 0`. `no_antibody` is registered "
-        "but not runnable until the antibody-hub exists; requesting it raises "
-        "`NotImplementedError`.",
+        "`no_call_signal`: txn-guard sees `active_call_risk = 0`. `degraded_call_signal`: the "
+        "call-guard output is replaced by training-like imperfect call risk (seeded): each scam "
+        f"victim's call is detected with probability {dp['call_recall']:.0%}, 1-3 chunks late, "
+        f"and {dp['spurious_rate']:.1%} of benign transactions receive a spurious risk. "
+        "`no_antibody` is registered but not runnable until the antibody-hub exists; requesting "
+        "it raises `NotImplementedError`.",
         "",
     ]
     if include_volatile:
         lt = result["latency_ms"]
         L += [
-            "## Scoring latency",
+            "## Scoring latency (machine-dependent)",
             "",
-            "Per-transaction txn-guard latency (history context + features + model + reasons + "
-            "decision), baseline variant, this machine. Machine-dependent and excluded from "
-            "determinism checks.",
+            "Per-transaction txn-guard latency on the full production path (history context + "
+            "features + model + reasons + decision), baseline variant, measured on this machine "
+            f"(1 in {LATENCY_SAMPLE_EVERY} transactions when reasons are skipped for speed). "
+            "Not reproducible across machines or runs; omitted from the default report.",
             "",
             "| Statistic | Value |",
             "|---|---|",
@@ -586,16 +803,19 @@ def render_report(
         "## Reproducibility",
         "",
         f"- Benchmark seed: {result['seed']} (world, benign traffic, benign calls); campaign "
-        "placement uses substreams `[seed, 8008]` and mule history `[seed, 9009]`.",
+        "placement uses substreams `[seed, 8008]`, mule history `[seed, 9009]`, degraded call "
+        "signal `[seed, 6006]`.",
         f"- Ablations requested: {', '.join(result['ablations']) or 'none'}.",
         f"- Git commit: {result['git_commit']}.",
         f"- Models: call-guard `{result['model_versions']['call_guard']}`, txn-guard "
         f"`{result['model_versions']['txn_guard']}`.",
+        f"- As in training, {result['mule_history_share']:.0%} of mule payers received injected "
+        "prior benign UPI history (5-40 transfers) so that 'no history' is not a scam giveaway.",
         "- Seeds used to train or calibrate the models (the benchmark seed is checked to be "
         "disjoint from these):",
     ]
     for role, seeds in fb.items():
-        L.append(f"  - {role}: {', '.join(str(s) for s in seeds)}")
+        L.append(f"  - {role}: {', '.join(str(x) for x in seeds)}")
     L += [
         f"- Command: `python -m scam_bench.run_benchmark --seed {result['seed']} "
         f"--ablations {' '.join(result['ablations'])}`",
@@ -606,10 +826,21 @@ def render_report(
         "codebase that the models were trained on (disjoint seeds, shared generators). Treat the "
         "figures as a regression and ablation harness, not as real-world performance.",
         "- NEFT has no scam transactions: the simulator's scam flows use UPI and IMPS only, so "
-        "NEFT recall is undefined and only the NEFT false-positive rate is informative.",
+        "NEFT recall is undefined. The model never saw NEFT positives, and the rail-agnostic "
+        "absolute-amount floors fire on NEFT's larger typical amounts. NEFT benign transactions "
+        f"are therefore held at {_pct(_rate_of(m, 'NEFT', 'fpr'), None, 2)} (hold) and flagged at "
+        f"{_pct(_rate_of(m, 'NEFT', 'flagged_fpr'), None, 2)} (step-up or hold) in this run, "
+        "orders of magnitude above UPI. The pooled FPR hides this; see the per-rail FPR table.",
+        "- Call signal is idealised in the main run: simulator call-guard alerts every scam call "
+        "and no benign call, whereas txn-guard was trained and calibrated on 85% call recall and "
+        "1.5% spurious benign risk. The call signal matters: recall falls from "
+        f"{_pct(m.recall, None, 1)} with calls to "
+        f"{_pct(_variant_recall(result, 'no_call_signal'), None, 1)} without them. Compare with "
+        "the `degraded_call_signal` row for a training-like imperfect signal.",
         "- Calibration prevalence: the txn-guard model was calibrated at roughly 1% scam "
-        "prevalence; this run's prevalence is shown above and differs. Precision depends "
-        "directly on prevalence; recall and FPR do not.",
+        f"prevalence; this run's prevalence is {_pct(sim_pi, None, 2)} and real prevalence is far "
+        "lower. Precision depends directly on prevalence (see the prevalence table); recall and "
+        "FPR do not.",
         "- Call alerts reach txn-guard once, at the threshold crossing (as in production "
         "call-guard), and count as active for 15 minutes; long calls can outlast the window.",
         "- Held transactions are still recorded in the payer's history (the pipeline does not "
@@ -624,28 +855,68 @@ def render_report(
     return "\n".join(L)
 
 
+def _rate_of(m: Metrics, rail: str, field_name: str) -> float | None:
+    r = m.by_rail.get(rail)
+    return getattr(r, field_name) if r else None
+
+
+def _variant_recall(result: dict[str, Any], name: str) -> float | None:
+    v = result["variants"].get(name)
+    return v["metrics"].recall if v else None
+
+
 # ----------------------------------------------------------------------------------- CLI
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scam_bench.run_benchmark")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--ablations", nargs="*", default=[], help=f"any of {sorted(ABLATIONS)}")
+    ap.add_argument(
+        "--ablations",
+        nargs="*",
+        default=None,
+        help=f"any of {sorted(ABLATIONS)} (default: {' '.join(DEFAULT_ABLATIONS)}; "
+        "pass the flag with no names for baseline only)",
+    )
     ap.add_argument("--out", default=str(default_report_path()))
     ap.add_argument("--citizens", type=int, default=BenchConfig.n_citizens)
     ap.add_argument("--days", type=int, default=BenchConfig.days)
     ap.add_argument("--campaigns", type=int, default=BenchConfig.n_campaigns)
     ap.add_argument("--victims", type=int, default=BenchConfig.victims_per_campaign)
     ap.add_argument(
+        "--include-latency",
+        action="store_true",
+        help="add the machine-dependent latency block (makes the report non-reproducible)",
+    )
+    ap.add_argument(
+        "--reasons",
+        action="store_true",
+        help="compute occlusion reasons while scoring (slower; decisions are identical)",
+    )
+    ap.add_argument(
         "--stamp", action="store_true", help="add a generated-at line (non-deterministic)"
     )
     a = ap.parse_args(argv)
+    ablations = DEFAULT_ABLATIONS if a.ablations is None else a.ablations
+    try:
+        resolve_ablations(ablations)
+        check_seed(a.seed)
+    except (ValueError, NotImplementedError) as e:
+        ap.error(str(e))
     cfg = BenchConfig(
         n_citizens=a.citizens, days=a.days, n_campaigns=a.campaigns, victims_per_campaign=a.victims
     )
     stamp = datetime.now().astimezone().isoformat(timespec="seconds") if a.stamp else None
     t0 = time.perf_counter()
-    res = run_benchmark(a.seed, a.ablations, config=cfg, out=a.out, generated_at=stamp)
+    res = run_benchmark(
+        a.seed,
+        ablations,
+        config=cfg,
+        out=a.out,
+        include_volatile=a.include_latency,
+        generated_at=stamp,
+        with_reasons=a.reasons,
+    )
     m: Metrics = res["variants"]["baseline"]["metrics"]
     print(
         f"seed={a.seed} scored={m.n_benign + m.n_scam} precision={m.precision} recall={m.recall} "

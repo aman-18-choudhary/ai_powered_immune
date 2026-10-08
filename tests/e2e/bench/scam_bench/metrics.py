@@ -59,6 +59,18 @@ def _f1(p: float | None, r: float | None) -> float | None:
     return 0.0 if p + r == 0 else 2 * p * r / (p + r)
 
 
+def prevalence_adjusted_precision(
+    recall: float | None, fpr: float | None, prevalence: float
+) -> float | None:
+    """Precision at a different scam prevalence pi: TPR*pi / (TPR*pi + FPR*(1-pi)).
+    None when recall or fpr is unavailable or the denominator is zero."""
+    if recall is None or fpr is None or not 0.0 < prevalence < 1.0:
+        return None
+    num = recall * prevalence
+    den = num + fpr * (1.0 - prevalence)
+    return num / den if den > 0 else None
+
+
 def percentile(values: Sequence[float], q: float) -> float | None:
     """Linear-interpolation percentile (numpy's default); None for an empty sequence."""
     if not values:
@@ -252,9 +264,12 @@ class Protection:
     first_detection_ts: datetime | None
     victim_txns_after_detection: int
     victim_txns_held_after_detection: int
-    fraction: float | None
+    fraction: float | None  # share of post-detection victim TRANSFERS that were held
     money_at_risk_inr: Decimal  # victim transfers strictly after first detection
-    money_prevented_inr: Decimal  # ... of which were held (hold_verify)
+    money_prevented_inr: Decimal  # UPPER BOUND: held transfers assumed stopped for good
+    victims_with_post_detection_txns: int = 0
+    victims_fully_held: int = 0  # victims whose every post-detection transfer was held
+    victims_fully_held_fraction: float | None = None
 
 
 def campaign_protection(
@@ -270,6 +285,7 @@ def campaign_protection(
     first = first_detection_ts(campaign_id, detections, truth, include_calls)
     after = held = 0
     at_risk = prevented = Decimal(0)
+    per_victim: dict[str, list[bool]] = {}
     if first is not None:
         decided = {d.txn_id: d for d in detections if isinstance(d, TxnDecision)}
         for tid, t in txns.items():
@@ -280,10 +296,16 @@ def campaign_protection(
             after += 1
             at_risk += t.amount_inr
             d = decided.get(tid)
-            if d is not None and d.decision == "hold_verify":
+            was_held = d is not None and d.decision == "hold_verify"
+            per_victim.setdefault(t.payer_token, []).append(was_held)
+            if was_held:
                 held += 1
                 prevented += t.amount_inr
-    return Protection(campaign_id, first, after, held, _rate(held, after), at_risk, prevented)
+    full = sum(1 for v in per_victim.values() if all(v))
+    return Protection(
+        campaign_id, first, after, held, _rate(held, after), at_risk, prevented,
+        len(per_victim), full, _rate(full, len(per_victim)),
+    )  # fmt: skip
 
 
 def victims_protected_fraction(
@@ -293,6 +315,6 @@ def victims_protected_fraction(
     truth: GroundTruth,
     include_calls: bool = False,
 ) -> float | None:
-    """Fraction of the campaign's victim transfers after its first detection that were held.
+    """Share of the campaign's victim *transfers* after its first detection that were held.
     None when the campaign is never detected or no victim transfer follows the detection."""
     return campaign_protection(campaign_id, detections, txns, truth, include_calls).fraction

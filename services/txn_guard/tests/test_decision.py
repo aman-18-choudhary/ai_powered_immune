@@ -175,3 +175,26 @@ def test_make_decision_shape_and_logging(scorer, make_txn, warm_store, caplog):
     assert d.decision == decide(d.score)
     logged = " ".join(r.getMessage() for r in caplog.records)
     assert t.txn_id in logged and "p_secretive" not in logged and "payer_1" not in logged
+
+
+def test_reasons_off_and_batch_paths_give_identical_decisions(make_txn):
+    from txn_guard.decision import make_decisions
+    from txn_guard.history import InMemoryHistoryStore
+
+    scorer = Scorer()
+    store = InMemoryHistoryStore()
+    items = []
+    for i, (amt, age) in enumerate([("450", 900), ("95000", 3), ("30000", 900), ("1200", 5)]):
+        t = make_txn(amount=amt, age=age, payee=f"p{i}", ts=T0 + timedelta(minutes=i))
+        store.record_call_risk(
+            CallRisk(call_id="c", victim_token="payer_1", score=0.9, reasons=[],
+                     model_version="t", ts=T0 + timedelta(minutes=i))
+        )  # fmt: skip
+        f = extract_features(t, store.context_for(t, t.ts))
+        items.append((t.txn_id, f, t.ts))
+        store.record_txn(t)
+    full = [make_decision(i, f, scorer, ts) for i, f, ts in items]
+    lean = [make_decision(i, f, scorer, ts, with_reasons=False) for i, f, ts in items]
+    batch = make_decisions(items, scorer)
+    for a, b, c in zip(full, lean, batch, strict=True):
+        assert (a.decision, a.score) == (b.decision, b.score) == (c.decision, c.score)

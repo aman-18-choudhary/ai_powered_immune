@@ -61,7 +61,9 @@ def _risk(token: str, call_id: str, score: float, ts) -> CallRisk:
     )  # fmt: skip
 
 
-def _mule_history(rng: np.random.Generator, camp, world_start) -> list[tuple[object, int, object]]:
+def mule_history(rng: np.random.Generator, camp, world_start) -> list[tuple[object, int, object]]:
+    """Injected prior benign UPI history for ``MULE_HISTORY_SHARE`` (40%) of a campaign's mule
+    payers, as (ts, order, Transaction) tuples; used by training and by the benchmark."""
     out: list[tuple[object, int, object]] = []
     for tok in camp.mule_payer_tokens:
         if rng.random() >= MULE_HISTORY_SHARE:
@@ -128,7 +130,7 @@ def build_stream(
                 (ts, 0, _risk(t.payer_token, f"spur-{t.txn_id}", rng.uniform(0.7, 0.95), ts))
             )
     for c in campaigns:
-        events += _mule_history(rng, c, world.start)
+        events += mule_history(rng, c, world.start)
     for c in campaigns:
         by_victim: dict[str, list] = {}
         for e in c.calls:

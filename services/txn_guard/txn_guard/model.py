@@ -152,19 +152,44 @@ class Scorer:
         s, reasons, _ = self.score_with_version(features)
         return s, reasons
 
-    def score_with_version(self, features: dict[str, float]) -> tuple[float, list[Reason], str]:
+    def score_with_version(
+        self, features: dict[str, float], with_reasons: bool = True
+    ) -> tuple[float, list[Reason], str]:
+        """``with_reasons=False`` skips the occlusion rows (one batched predict_proba either way);
+        the score and therefore the decision are identical."""
         f = {k: _clean(features.get(k, 0.0)) for k in FEATURE_NAMES}
         out: tuple[float, list[Reason]] | None = None
         version = RULES_VERSION
         if self._model is not None:
             try:
-                out = self._model_score(f)
+                out = self._model_score(f, with_reasons)
                 version = self._model.version
             except Exception:
                 self.model_errors += 1
                 log.warning(
                     "txn model inference failed; using %s for this transaction", RULES_VERSION
                 )
+        return self._finish(f, out, version)
+
+    def score_many(self, rows: list[dict[str, float]]) -> list[tuple[float, list[Reason], str]]:
+        """Batch scoring without occlusion reasons (offline evaluation). Same scores, overlays
+        and fallbacks as ``score_with_version(..., with_reasons=False)`` per row, but one
+        model call for the whole batch."""
+        fs = [{k: _clean(r.get(k, 0.0)) for k in FEATURE_NAMES} for r in rows]
+        if self._model is not None and fs:
+            try:
+                p = self._model.proba(np.array([_vector(f) for f in fs]))
+                version = self._model.version
+                return [
+                    self._finish(f, (float(x), []), version) for f, x in zip(fs, p, strict=True)
+                ]
+            except Exception:
+                log.warning("txn batch inference failed; scoring rows individually")
+        return [self.score_with_version(r, with_reasons=False) for r in rows]
+
+    def _finish(
+        self, f: dict[str, float], out: tuple[float, list[Reason]] | None, version: str
+    ) -> tuple[float, list[Reason], str]:
         if out is None:
             out = rules_score(f)
         score, reasons = out
@@ -183,8 +208,12 @@ class Scorer:
             reasons = kept or [Reason(code=NO_RISK, weight=0.0, detail="No risk indicators fired")]
         return score, reasons, version
 
-    def _model_score(self, f: dict[str, float]) -> tuple[float, list[Reason]]:
+    def _model_score(
+        self, f: dict[str, float], with_reasons: bool = True
+    ) -> tuple[float, list[Reason]]:
         assert self._model is not None
+        if not with_reasons:
+            return float(self._model.proba(np.array([_vector(f)]))[0]), []
         trig = triggers(f)
         occl = [t for t in trig if t.code in BASELINES]
         rows = [_vector(f)] + [_vector(f | BASELINES[t.code]) for t in occl]
