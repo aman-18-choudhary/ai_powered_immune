@@ -71,7 +71,7 @@ def test_same_txn_same_decision_across_rails(scorer, store, make_txn):
 
 
 def test_young_payee_floor_has_own_reason_and_model_weights_untouched(scorer, store, make_txn):
-    t = make_txn(amount="6000", age=20, payee="p_young", rail="NEFT")  # z>=3, young, new
+    t = make_txn(amount="6000", age=20, payee="p_young")  # z>=3, young, new
     f = extract_features(t, store.context_for(t, T0))
     score, reasons = scorer.score(f)
     assert score >= 0.5
@@ -244,3 +244,65 @@ def test_salary_and_business_payments_still_allowed(scorer, make_txn):
     d, _, _ = _decide(scorer, _typical_store(make_txn, "50000"),
                       make_txn(amount="90000", age=900, payee="p_vendor", rail="NEFT"))  # fmt: skip
     assert d == "allow"
+
+
+# ---- 7b: rail-scaled absolute thresholds (NEFT benign false holds) ----
+def _neft_store(make_txn, typical="25000"):
+    st = InMemoryHistoryStore()
+    for i in range(60):
+        st.record_txn(
+            make_txn(
+                amount=typical, rail="NEFT", ts=T0 - timedelta(days=20) + timedelta(hours=i * 7)
+            )
+        )
+    return st
+
+
+@pytest.mark.parametrize(
+    ("label", "amount", "age", "payee"),
+    [
+        ("EMI to new loan account", "18000", 20, "p_emi"),
+        ("rent to new landlord", "25000", 12, "p_rent"),
+        ("salary-sized to young account", "150000", 15, "p_salary"),
+        ("business payment to young vendor", "90000", 25, "p_vendor"),
+        ("supplier payment, 40-day payee", "120000", 40, "p_supplier"),
+    ],
+)
+def test_benign_neft_to_young_or_new_payees_not_held(label, amount, age, payee, scorer, make_txn):
+    d, score, _ = _decide(
+        scorer, _neft_store(make_txn), make_txn(amount=amount, age=age, payee=payee, rail="NEFT")
+    )
+    assert d in ("allow", "step_up"), (label, score)
+
+
+@pytest.mark.parametrize(("amount", "age"), [("200000", 2), ("300000", 5), ("500000", 3)])
+def test_anomalous_neft_young_payee_still_held(amount, age, scorer, store, make_txn):
+    t = make_txn(amount=amount, age=age, payee="p_mule", rail="NEFT")  # typical Rs 500 payer
+    d, score, _ = _decide(scorer, store, t)
+    assert d == "hold_verify", (amount, age, score)
+
+
+def test_neft_3L_to_40_day_payee_extreme_still_step_up(scorer, store, make_txn):
+    d, _, reasons = _decide(
+        scorer, store, make_txn(amount="300000", age=40, payee="p_n", rail="NEFT")
+    )
+    assert d in ("step_up", "hold_verify")
+    assert "NEW_PAYEE_EXTREME_AMOUNT" in {r.code for r in reasons}
+
+
+def test_policy_thresholds_are_rail_scaled_but_booster_is_rail_invariant(scorer):
+    import numpy as np
+
+    from txn_guard.policy import RAIL_AMOUNT_SCALE, rail_scale
+
+    assert RAIL_AMOUNT_SCALE["UPI"] == RAIL_AMOUNT_SCALE["IMPS"] == 1.0
+    assert RAIL_AMOUNT_SCALE["NEFT"] > 1.0
+    assert (rail_scale(0.0), rail_scale(1.0), rail_scale(2.0)) == (
+        1.0, 1.0, RAIL_AMOUNT_SCALE["NEFT"],
+    )  # fmt: skip
+    scam = model_mod.SMOKE_SCAM
+    rows = np.array(
+        [[(scam | {"rail": r})[k] for k in model_mod.MODEL_FEATURES] for r in (0.0, 1.0, 2.0)]
+    )
+    p = scorer._model.proba(rows)
+    assert p.max() - p.min() == 0.0 and p.min() >= 0.5

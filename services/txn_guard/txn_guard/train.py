@@ -25,7 +25,7 @@ from sklearn.metrics import average_precision_score
 from .decision import HOLD_AT, STEP_UP_AT
 from .features import MODEL_FEATURES
 from .model import ARTIFACT_PATH, CALIBRATED_PREVALENCE, MODEL_VERSION, GbmModel
-from .policy import overlays
+from .policy import damp_model_score, overlays
 from .simdata import LabelledTxn, build_stream, to_matrix
 
 TRAIN_SEEDS = (101, 102, 103, 104, 105, 106)
@@ -86,7 +86,11 @@ def policy_scores(model: GbmModel, rows: list[LabelledTxn]) -> np.ndarray:
     when it runs the model path; asserted equal to it on a subset in tests)."""
     x, _ = to_matrix(rows, MODEL_FEATURES)
     floors = np.array([max([o.floor for o in overlays(r.features)], default=0.0) for r in rows])
-    return np.maximum(model.proba(x), floors)
+    f_model = model.proba(x)
+    damped = np.array(
+        [damp_model_score(r.features, float(s)) for r, s in zip(rows, f_model, strict=True)]
+    )
+    return np.maximum(damped, floors)
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:

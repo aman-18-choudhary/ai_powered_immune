@@ -52,6 +52,27 @@ and the model-derived reason weights are untouched (overlay weight = lift over t
   step_up only.
 * timestamp > 5 min in the future: at least step_up.
 
+### Per-rail scales (task 7b)
+
+Absolute-rupee thresholds above (Rs 5k / 10k / 25k / 50k) are multiplied by a per-rail scale
+(`policy.RAIL_AMOUNT_SCALE`). Derivation: benign median amount on the 4 held-out simulator seeds is
+UPI Rs 452, IMPS Rs 4,288, NEFT Rs 24,157 (p90 2.7k / 19.5k / 135k); NEFT / IMPS = 5.6x, rounded
+down to 5 so Rs 3L NEFT with z >= 10 is still caught (3L >= 50k x 5).
+
+| rail | scale | thresholds (young-payee abs / call-guard abs / short-history / hold / extreme) | z threshold for overlays |
+|---|---|---|---|
+| UPI | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) |
+| IMPS | 1 | 5k / 10k / 25k / 50k / 50k | 3 (extreme 10) |
+| NEFT | 5 | 25k / 50k / 125k / 250k / 250k | 6 (extreme 10) |
+
+On NEFT the booster's score is also capped just below step-up (`RAIL_TYPICAL_AMOUNT_DAMPER`, own
+reason code) unless z >= 6: the booster is rail-blind and measures amounts against the payer's
+UPI-dominated history, so ordinary large NEFT payments look anomalous to it. The booster itself
+stays rail-invariant (smoke test and `test_policy_thresholds_are_rail_scaled_...`); only the policy
+layer knows the rail. Anomalous transfers still hold on NEFT (Rs 2L to a 2-day payee from a
+Rs 500-typical payer: hold_verify; Rs 3L to a 40-day payee at z >= 10: step_up). NEFT detection is
+tested by scenarios only; the simulator has no NEFT scams.
+
 ### Reliability (raw model, 4 held-out eval seeds, 144,993 benign + 1,032 scam txns)
 
 | predicted bin | n | mean predicted | observed |

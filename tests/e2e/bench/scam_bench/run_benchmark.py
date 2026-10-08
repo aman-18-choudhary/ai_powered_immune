@@ -826,11 +826,13 @@ def render_report(
         "codebase that the models were trained on (disjoint seeds, shared generators). Treat the "
         "figures as a regression and ablation harness, not as real-world performance.",
         "- NEFT has no scam transactions: the simulator's scam flows use UPI and IMPS only, so "
-        "NEFT recall is undefined. The model never saw NEFT positives, and the rail-agnostic "
-        "absolute-amount floors fire on NEFT's larger typical amounts. NEFT benign transactions "
-        f"are therefore held at {_pct(_rate_of(m, 'NEFT', 'fpr'), None, 2)} (hold) and flagged at "
-        f"{_pct(_rate_of(m, 'NEFT', 'flagged_fpr'), None, 2)} (step-up or hold) in this run, "
-        "orders of magnitude above UPI. The pooled FPR hides this; see the per-rail FPR table.",
+        "NEFT recall is undefined and the model never saw NEFT positives. NEFT amounts are "
+        "naturally ~5x larger, so txn-guard scales its absolute-amount policy thresholds per rail "
+        "(NEFT x5) and requires z >= 6 on NEFT before the model or overlays escalate. NEFT benign "
+        f"transactions are held at {_pct(_rate_of(m, 'NEFT', 'fpr'), None, 2)} (hold) and flagged "
+        f"at {_pct(_rate_of(m, 'NEFT', 'flagged_fpr'), None, 2)} (step-up or hold) in this run. "
+        "NEFT detection is untested on data (no NEFT scams), only by hand-written scenarios; "
+        "the per-rail FPR table shows the rails side by side because the pooled FPR hides them.",
         "- Call signal is idealised in the main run: simulator call-guard alerts every scam call "
         "and no benign call, whereas txn-guard was trained and calibrated on 85% call recall and "
         "1.5% spurious benign risk. The call signal matters: recall falls from "

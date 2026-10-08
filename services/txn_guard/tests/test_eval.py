@@ -53,13 +53,9 @@ def test_call_risk_is_imperfect_in_data(stream):
 def test_heldout_metrics_at_hold_threshold(stream, scores):
     m = metrics_at(scores, stream, HOLD_AT)
     assert m["recall_victim_transfers"] >= 0.80
-    # Plan target is < 0.1%. After the fix-round-2 "not established payee" floors the measured rate
-    # is ~0.103% (Wilson 95% upper ~0.12%): a known, documented breach (simulator payments to a
-    # given payee are iid heavy-tailed, so benign repeats look like test-then-escalate). The gate
-    # below is a regression ceiling, not the plan target.
-    assert m["held_benign_rate"] < 0.0012
+    assert m["held_benign_rate"] < 0.001  # plan target
     n_benign = sum(r.label == 0 for r in stream)
-    assert wilson(m["benign_held"], n_benign)[1] < 0.0014
+    assert wilson(m["benign_held"], n_benign)[1] < 0.001  # upper 95% bound also under 0.1%
     benign = np.array([r.label == 0 for r in stream])
     assert ((scores >= STEP_UP_AT) & (scores < HOLD_AT) & benign).sum() / benign.sum() < 0.02
 
@@ -88,3 +84,16 @@ def test_payee_age_is_not_the_only_separator():
     ab = blob["ablation"]["no_payee_age"]["hold"]
     assert ab["recall_victim_transfers"] >= 0.6  # still catches most victims without payee age
     assert blob["calibrated_prevalence"] == 0.01
+
+
+def test_per_rail_benign_rates(stream, scores):
+    """Benign NEFT must not be penalised for its naturally larger amounts (task 7b)."""
+    for rail, max_hold, max_flag in (
+        ("UPI", 0.0005, 0.002),
+        ("IMPS", 0.002, 0.012),
+        ("NEFT", 0.002, 0.010),
+    ):
+        idx = [i for i, r in enumerate(stream) if r.label == 0 and r.txn.rail == rail]
+        hold = np.mean([scores[i] >= HOLD_AT for i in idx])
+        flag = np.mean([scores[i] >= STEP_UP_AT for i in idx])
+        assert hold <= max_hold and flag <= max_flag, (rail, hold, flag)
