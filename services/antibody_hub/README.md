@@ -65,7 +65,11 @@ revoked, revoked.cross_bank, corroborated`; `protected.added` / `protected.remov
 key_hash_prefix, actor_role, at` (microsecond UTC). Case refs: `[antibody_id, payee_ref:<16 hex of
 key_hash>]` (`device_ref:` / `script_ref:` for those kinds; `payee_ref:` only for protected
 hashes), so an antibody's whole lifecycle joins the txn-guard holds on the same payee in one case.
-Not in the ledger: the full `key_hash`, `evidence_ref`, revoke reason, protected-hash note, any
+An audit problem never fails an analyst action: the actor, `actor_role` and `actor_bank` are
+replaced by `redacted_<16 hex>` if the PII guard refuses them, and a payload that is still
+refused becomes `{antibody_id, event, generation, kind, audit: payload_refused}`, written in the
+same transaction. `source_bank` / `HUB_BANKS` entries must match `^[a-z][a-z0-9_-]{1,31}$` and
+pass the identifier guard (422 / startup error otherwise). Not in the ledger: the full `key_hash`, `evidence_ref`, revoke reason, protected-hash note, any
 raw identifier. The outbox dedupe key is `sha256(actor | payload_hash)`, so two analysts
 corroborating the same antibody remain two entries.
 

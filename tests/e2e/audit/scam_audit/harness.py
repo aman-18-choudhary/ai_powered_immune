@@ -43,7 +43,7 @@ from sim_engine.replay import build_hero_scenario
 from sim_engine.world import World, build_world
 from svckit.bus import InMemoryBus
 from svckit.idempotency import InMemoryIdempotencyStore
-from svckit.ledger import call_ref, emit_ledger, payee_ref
+from svckit.ledger import call_ref, emit_ledger, payee_ref, txn_ref
 from txn_guard.antibody_cache import AntibodyLookup, InMemoryAntibodyCache
 from txn_guard.consumer import run_antibody_consumer
 from txn_guard.history import InMemoryHistoryStore
@@ -159,7 +159,10 @@ async def run_hero_audit(
         clock=LedgerClock(datetime(2026, 1, 1, tzinfo=UTC)), keyring=keyring,
         checkpoint_every=50, maintenance_interval_s=0, consume=True,
     )  # fmt: skip
-    hub_store = AntibodyStore(f"sqlite:///{workdir / 'hub.db'}", clock=clock)
+    # SQLite drops tzinfo: give the hub a UTC clock (the simulator's timestamps are IST)
+    hub_store = AntibodyStore(
+        f"sqlite:///{workdir / 'hub.db'}", clock=lambda: clock.t.astimezone(UTC)
+    )
     hub = Hub(hub_store, bus)
     ab_task = None
     try:
@@ -225,6 +228,34 @@ async def run_hero_audit(
             d_b = await bank_b.handle_txn(b_first)
             await bank_b.holds.drain_audit(b_first.txn_id)
 
+            # --- later state changes: a hold upgrade on an unrelated payer (step_up -> hold_verify)
+            # then the antibody is extended and finally revoked by the hub ----------------------
+            extra_payer, extra_dev = "payer_extra_upgrade", "dev_extra"
+            _warm(bank_a.history, extra_payer, extra_dev, b_first.ts)
+            clock.t = b_first.ts + timedelta(minutes=5)
+            x = Transaction(
+                txn_id="txn_" + hashlib.sha256(b"extra").hexdigest()[:16], idempotency_key="x1",
+                bank_id="bank_x", payer_token=extra_payer,
+                payee_hash=hashlib.sha256(b"extra-payee").hexdigest(), rail="UPI",
+                amount_inr=Decimal("6000"), ts=clock.t, payee_account_age_days=20,
+                device_id_token=extra_dev,
+            )  # fmt: skip
+            dx = await bank_a.handle_txn(x)
+            assert dx.decision == "step_up", dx.decision
+            ups = await bank_a.handle_call_risk(
+                CallRisk(call_id="extra-call", victim_token=extra_payer, score=0.95, reasons=[],
+                         model_version="x", ts=clock.t + timedelta(minutes=1))
+            )  # fmt: skip
+            assert ups and ups[0].decision == "hold_verify"
+            clock.t = clock.t + timedelta(hours=1)
+            ext = await hub.submit(
+                "mule_account", meta.shared_mule_payee_hash, "bank_a", "analyst-1", None, True,
+                role="analyst",
+            )  # fmt: skip
+            assert ext.extended, (ext, clock.t)
+            await hub.revoke(res.record["antibody_id"], "analyst-2", "confirmed false positive",
+                             "bank_a", "analyst")  # fmt: skip
+
             # --- ledger catches up ---------------------------------------------------------------
             raws = [r for _, r in bus.messages(Topics.LEDGER)]
             want = len(set(raws))
@@ -236,9 +267,13 @@ async def run_hero_audit(
             quarantined = sum(v for k, v in counts.items() if k.startswith("ledger.entry_quar"))
             chain_ok = verify_chain(store.page(1, head + 1)).ok
 
+            decisions = [
+                TxnDecision.model_validate_json(r) for _, r in bus.messages(Topics.TXN_DECISIONS)
+            ]
+
             # --- case + package over the real HTTP API -------------------------------------------
             a_call_id = a_risks[0].call_id
-            case_refs = [a_txns[0].txn_id, payee_ref(meta.shared_mule_payee_hash),
+            case_refs = [txn_ref(a_txns[0].txn_id), payee_ref(meta.shared_mule_payee_hash),
                          call_ref(a_call_id)]  # fmt: skip
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://t"
@@ -295,7 +330,12 @@ async def run_hero_audit(
         public_key_hex=signer.public_raw.hex(),
         bus_ledger_messages=len(raws),
         bus_ledger_distinct=want,
-        extras={"b_alerts": len(b_risks), "a_alerts": len(a_risks)},
+        extras={
+            "b_alerts": len(b_risks),
+            "a_alerts": len(a_risks),
+            "decisions": decisions,
+            "call_risks": len(risks),
+        },
     )
 
 

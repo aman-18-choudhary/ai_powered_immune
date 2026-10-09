@@ -63,8 +63,34 @@ def test_chain_intact_nothing_quarantined_nothing_lost(run):
     assert run.chain_ok and run.quarantined == 0
     assert run.bus_ledger_distinct == sum(run.counts.values())  # every distinct message stored
     assert run.counts["antibody.created"] == 1 and run.counts["hold.resolved"] == 1
-    assert run.counts["callrisk.alert"] >= 1 and run.counts["hold.created"] >= 3
+    assert run.counts["antibody.extended"] == 1 and run.counts["antibody.revoked"] == 1
+    assert run.counts["hold.upgraded"] >= 1 and run.counts["callrisk.alert"] >= 1
+    assert run.counts["hold.created"] >= 3
     assert not any(k.startswith("ledger.") for k in run.counts)
+
+
+def test_exactly_one_ledger_entry_per_state_change(run):
+    """Count the state changes from the services' own outputs and compare with the chain."""
+    held: set[str] = set()  # txns that have an open hold
+    seen: set[str] = set()
+    created = upgraded = 0
+    for d in run.extras["decisions"]:  # TxnDecisions in publish order
+        if d.decision != "allow" and d.txn_id not in held:
+            held.add(d.txn_id)  # first non-allow verdict opens the hold (also a late upgrade)
+            created += 1
+        elif d.txn_id in seen and d.txn_id in held:
+            upgraded += 1  # a stronger verdict on an existing hold
+        seen.add(d.txn_id)
+    expected = {
+        "callrisk.alert": run.extras["call_risks"],
+        "hold.created": created + 1,  # + the unrelated "case-other" sentinel entry
+        "hold.upgraded": upgraded,
+        "hold.resolved": 1,
+        "antibody.created": 1,
+        "antibody.extended": 1,
+        "antibody.revoked": 1,
+    }
+    assert dict(run.counts) == {k: v for k, v in expected.items() if v}, (run.counts, expected)
 
 
 def test_timeline_order_alert_hold_antibody_resolve_then_b_hold(run):

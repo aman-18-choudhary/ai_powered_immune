@@ -12,13 +12,19 @@ and `call_guard/rules.py` docstrings for exactly how it is produced.
 
 ## Ledger entry per alert (Task 13)
 
-Each threshold crossing publishes one `callrisk.alert` ledger entry (service `call-guard`, actor
-`system:call-guard`) together with the CallRisk, in the same idempotent step of the consumer: the
-ledger entry first, then `call.risk`, then the `published` marker. If either publish fails the
-claim is released and the whole step is retried; the retry re-sends byte-identical messages (the
-ledger absorbs the duplicate entry, CallRisk consumers dedupe on payload hash), so an alert's audit
-entry is neither lost nor counted twice. A ledger payload the PII guard refuses is logged and
-skipped: an audit-format bug never suppresses the alert.
+**Exact guarantee.** The CallRisk alert is published first and nothing about the ledger can
+delay, fail, DLQ or repeat it. The `callrisk.alert` audit entry is built before the publish and
+stored in the session store in the *same atomic update* that advances the crossing marker (Redis
+MULTI, 35-day TTL; in-memory: one step), then delivered best-effort: a bounded wait
+(`LEDGER_EMIT_TIMEOUT_S`, default 0.5 s; slow deliveries continue in the background) and a
+periodic sweeper in the service lifespan (`LEDGER_DRAIN_INTERVAL_S`, default 5 s, batches of 50).
+Delivery is at-least-once; the ledger's full-entry idempotency absorbs repeats. An audit entry
+the PII guard refuses becomes a fixed-shape placeholder (`call_ref`, `crossing`, `audit:
+payload_refused`). Honest limit: if the process dies after the alert is published but before the
+marker/pending update, the retry re-publishes the alert (consumers dedupe on payload hash) and
+rebuilds the entry, so neither is lost; if the session store itself is down the step is retried
+like any publish. An entry can still be delayed arbitrarily while the ledger is down, and lost
+only if the store loses it (Redis data loss, or 35 days pass).
 
 Payload: `call_ref` (first 16 hex of `sha256(call_id)`; the call id is never emitted), `crossing`,
 `score` (4 dp, the peak at the crossing), `reason_codes` (sorted codes, no free text),

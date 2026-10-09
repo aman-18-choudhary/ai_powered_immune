@@ -223,7 +223,14 @@ phones, reason text, device ids. `payee_ref` is the first 16 hex of the keyed pa
 16-hex block if the first is all digits); `call_ref` is the first 16 hex of `sha256(call_id)` of
 the highest-scoring call risk inside the 15-minute window that influenced the decision (audit
 linking only: it never changes a decision). Case refs per entry: `[txn_id, payee_ref:<16 hex>,
-call_ref:<16 hex>]` (the last two when known). Holds created before this version keep sending
+call_ref:<16 hex>]` (the last two when known). The transaction id in payloads and refs is `svckit.ledger.txn_ref(txn_id)`: the id itself when
+the PII guard accepts it (`txn_<16 hex>`), otherwise `txn_` + 16 hex of its sha256 (real rails use
+numeric ids such as 12-digit UPI RRNs, which the guard must refuse); **create ledger cases with
+the same `txn_ref`**. A payload the guard still refuses is replaced by a placeholder
+`{txn_id, event, decision_seq, audit: payload_refused}` (redacted actor if needed) so the outbox
+always drains and the chain records that a hold change happened. Audit never delays a decision:
+the drain runs in a background task and a state change waits at most `LEDGER_EMIT_WAIT_S`
+(default 0.05 s) for it; the periodic sweep retries. Holds created before this version keep sending
 hash-only entries from their old outbox.
 
 ## Cross-bank antibodies (Task 11)

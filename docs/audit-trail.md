@@ -22,8 +22,9 @@ seconds later pays the same, seasoned mule. The ledger records, in receipt order
 
 `tests/e2e/audit` runs exactly this on simulated data (seeds 1 to 3) through the real services
 and the real ledger, exports the case, and checks that B's blocked transfer can be reconstructed
-from the exported package alone. Per run: 7 to 8 ledger entries (call alert 1-2, holds 4-5,
-antibody 1, resolution 1), no entry quarantined, package about 45 KB.
+from the exported package alone. Per run: 11 to 12 ledger entries (call alert 1-2, holds created
+5-6, one hold upgrade, antibody created / extended / revoked, one resolution), exactly one entry
+per state change, none quarantined, package about 50 KB.
 
 ## What is recorded, what is only hashed, what is never recorded
 
@@ -42,6 +43,23 @@ antibody 1, resolution 1), no entry quarantined, package about 45 KB.
   payee account: the same mule account across banks), `call_ref:<16 hex>` (truncated hash of the
   call id), the antibody id. These are what link A's call, A's hold, the antibody and B's hold into
   one case without naming anyone.
+
+## Audit never gets in the way of a fraud action
+
+* **call-guard:** the alert is published first; the audit entry is stored atomically with the
+  crossing marker and delivered best-effort from an outbox (bounded wait, background sweep). A
+  ledger outage delays or defers the audit entry, never the alert. Honest limit: an audit entry
+  can be lost only if the session store loses it.
+* **txn-guard:** a hold change waits at most 50 ms for its audit drain; the decision is published
+  regardless and the outbox retries.
+* **antibody-hub:** the audit entry is written in the same transaction as the change, built so
+  that it cannot fail the action.
+* **Refusals:** when the PII guard refuses a payload (for example a numeric transaction id or a
+  digits-only principal subject) the emitter substitutes opaque references (`txn_ref`: the id or
+  `txn_` + sha256 prefix; `redacted_<hash>` for actors and bank slugs) and, if the payload is still
+  refused, a fixed-shape placeholder entry (`audit: payload_refused`). The chain therefore always
+  records that the change happened, without the content. Cases are created with the same
+  `txn_ref` values.
 
 ## Where each piece comes from
 
@@ -81,6 +99,8 @@ antibody 1, resolution 1), no entry quarantined, package about 45 KB.
   the same account. Anyone with the federation key can test a guessed account against it.
 * **The PII guard is a safety net**, with documented false-reject (about 0.05% for 16-hex ids) and
   residual risks; amounts of nine or more digits cannot be sent at all.
+* `payee_ref` and the antibody's `key_hash_prefix` overlap on purpose: the ref joins cases, the
+  prefix lets a reader match an antibody to a payee hash they hold.
 * **Decisions are model output.** Scores are risk scores calibrated on simulated and authored
   data, not real-world probabilities; the record shows what the system decided and why (reason
   codes), not that the decision was right.

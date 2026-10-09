@@ -209,14 +209,18 @@ everything (a refused entry is quarantined). Conventions:
 
 | ref | definition | joins |
 |---|---|---|
-| `<txn_id>` (`txn_<16 hex>`) | the transaction id | txn-guard holds of one transfer |
+| `txn_ref(txn_id)` | the transaction id if guard-safe (`txn_<16 hex>`), else `txn_` + 16 hex of its sha256 (`svckit.ledger.txn_ref`); create cases with this value | txn-guard holds of one transfer |
 | `payee_ref:<16 hex>` | first 16 hex of the keyed payee hash (`key_hash` in the hub); the next 16-hex block if that one is all digits | the same (mule) account across banks: A's and B's holds and the antibody lifecycle |
 | `call_ref:<16 hex>` | first 16 hex of `sha256(call_id)` (same all-digit fallback) | call-guard's `callrisk.alert` and the holds that call influenced |
 | `<antibody_id>` | sha256 hex | antibody lifecycle |
 
 `payee_ref` identifies a mule account across banks (that is its purpose); it is a truncated keyed
 hash, so it reveals nothing about the account number, but anyone holding the federation key can
-test a guessed account against it. Payload timestamps are `YYYY-MM-DDTHH:MM:SSZ` strings (the PII
+test a guessed account against it. When the guard refuses an emitter's payload the emitter sends a fixed-shape placeholder (`audit:
+payload_refused`, a `redacted_<16 hex>` actor) instead of failing its business action; the redundant
+`payee_ref` + `key_hash_prefix` pair in antibody payloads is intentional (the ref joins cases, the
+prefix lets a reader match the antibody to a payee hash they already hold).
+Payload timestamps are `YYYY-MM-DDTHH:MM:SSZ` strings (the PII
 guard exempts that exact whole-string shape and `prefix_ref:`-namespaced 16-hex ids; nothing
 else with 9+ digits passes). Payloads must be deterministic (no wall clock read at send time):
 the ledger's idempotency key makes an exact repeat a no-op, anything that varies between retries
