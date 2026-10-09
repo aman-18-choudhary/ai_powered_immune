@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -30,7 +31,12 @@ def make_signer(seed: bytes = b"\x07" * 32) -> Signer:
 
 
 def tid(n: int) -> str:
-    return "txn_" + hashlib.sha256(str(n).encode()).hexdigest()[:16]
+    """A txn-id-shaped ref; salted until it has no 9+ digit run (the PII guard rejects those)."""
+    for salt in range(100):
+        h = hashlib.sha256(f"{n}:{salt}".encode()).hexdigest()[:16]
+        if not re.search(r"\d{9,}", h):
+            return "txn_" + h
+    raise AssertionError
 
 
 def entry_in(

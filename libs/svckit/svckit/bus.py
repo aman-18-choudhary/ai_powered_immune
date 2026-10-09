@@ -148,7 +148,10 @@ async def consume(
                     await handler(msg)
                 except Exception:
                     log.warning(
-                        "handler failed on %s (attempt %d/%d)", topic, attempt, max_retries,
+                        "handler failed on %s (attempt %d/%d)",
+                        topic,
+                        attempt,
+                        max_retries,
                         exc_info=True,
                     )
                     if attempt < max_retries and backoff_s > 0:

@@ -59,15 +59,66 @@ def test_hex_ids_are_exempt_but_digit_runs_are_not():
     assert contains_identifier(digest)  # the raw guard trips on digests...
     assert not string_has_identifier(digest)  # ...the id-aware guard exempts them
     assert not string_has_identifier("txn_3a9f0c12d45b7e68")
-    assert not string_has_identifier("antibody 0123456789abcdef0 confirmed")
+    assert not string_has_identifier("antibody 3a9f0c12d45b7e680 confirmed")
     assert string_has_identifier("1" * 64)  # all-digit string is never an id
     assert string_has_identifier("acct 123456789012")
     assert string_has_identifier(digest.upper())
-    assert string_has_identifier("0123456789abcdef 9876543210")  # id next to a phone number
+    assert string_has_identifier("3a9f0c12d45b7e68 9876543210")  # id next to a phone number
 
 
 def test_json_walk_checks_keys_and_nested_values_and_ignores_numbers():
     assert json_has_identifier({"a": [{"b": "call 9876543210"}]})
     assert json_has_identifier({"9876543210": "x"})
     assert not json_has_identifier({"a": [1, 2.5, None, True, "case-77", "ab" * 32]})
-    assert not json_has_identifier({"amount": 123456789012})
+    assert json_has_identifier({"amount": 123456789012})  # 9+ digit numbers are rejected by design
+
+
+# ---------------------------------------------------------------- fix round 1 (review item 3)
+HEX_BYPASS = [
+    "a1234567890123456",
+    "1234567890123456a",
+    "acct_123456789012345a",
+    "txn_1234567890123456a",
+    "x" + "1" * 12 + "a" * 3 + "1" * 4,
+    "f" + "0123456789" + "abcdef",
+    "ab" * 8 + "123456789012",  # 64-hex digest-length token with a 12-digit run
+]
+LEGIT_IDS = [
+    "txn_3a9f0c12d45b7e68",
+    "ab" * 32,
+    "0123456789abcdef" * 4,  # 64-hex digest: a run of 10 digits is fine (<12)
+    "key_3a9f0c12",
+    "3a9f0c12d45b7e68",
+    "kh_ab12cd34",
+    "antibody 3a9f0c12d45b7e6801ab34cd56ef7812 confirmed",
+]
+
+
+@pytest.mark.parametrize("text", HEX_BYPASS)
+def test_hex_exemption_cannot_hide_long_digit_runs(text):
+    assert string_has_identifier(text), text
+
+
+@pytest.mark.parametrize("text", LEGIT_IDS)
+def test_legit_ids_still_accepted(text):
+    assert not string_has_identifier(text), text
+
+
+@pytest.mark.parametrize("text", BAD)
+def test_hub_table_rejected_by_id_aware_guard_too(text):
+    assert string_has_identifier(text), repr(text)
+
+
+@pytest.mark.parametrize(
+    "obj",
+    [{"acct": 123456789012}, {"a": [1, {"b": 9876543210}]}, {"x": 1234567890.5},
+     {"123456789012": 1}, {"n": -987654321}],
+)  # fmt: skip
+def test_numbers_and_numeric_keys_are_inspected(obj):
+    assert json_has_identifier(obj), obj
+
+
+def test_legit_numbers_accepted():
+    ok = {"decision_seq": 2, "score": 0.91, "amount_inr": 49999, "amount_paise": 99999999,
+          "flag": True, "none": None, "k": "ab12cd34", "txn": "txn_3a9f0c12d45b7e68"}  # fmt: skip
+    assert not json_has_identifier(ok)
