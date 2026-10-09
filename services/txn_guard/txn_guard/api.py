@@ -148,6 +148,8 @@ def create_app(
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if hasattr(holds, "aclose"):
+                await holds.aclose()
             for close in closers or []:
                 try:
                     await close()

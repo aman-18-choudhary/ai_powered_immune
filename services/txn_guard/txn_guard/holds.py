@@ -34,6 +34,7 @@ from scam_contracts.canonical import payload_hash as canonical_payload_hash
 from scam_contracts.models import LedgerEntryIn, Reason
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
+from svckit.drain import Drainer
 from svckit.ledger import build_or_placeholder, txn_ref, utc_ts
 
 log = logging.getLogger("txn_guard")
@@ -245,17 +246,17 @@ class _BaseHoldStore:
         self,
         audit: AuditSink | None = None,
         clock: Callable[[], datetime] = _utcnow,
-        emit_wait_s: float | None = None,
+        drainer: Drainer | None = None,
     ):
         self._audit: AuditSink = audit if audit is not None else InMemoryAuditSink()
         self._clock = clock
-        # how long a state change waits for its audit drain before moving on (the drain keeps
-        # running in the background; the periodic sweep retries): audit never delays a decision
-        self._emit_wait = (
-            emit_wait_s if emit_wait_s is not None
-            else float(os.getenv("LEDGER_EMIT_WAIT_S", "0.05"))
-        )  # fmt: skip
-        self._bg: set[asyncio.Task[None]] = set()
+        # audit delivery is fire-and-forget (cap, in-flight guard, timeout, breaker): the hot path
+        # never awaits the ledger; the periodic ``sweep`` retries what is left
+        self.drainer = drainer or Drainer()
+        self.sweep_batch = int(os.getenv("LEDGER_SWEEP_BATCH", "200"))
+
+    async def aclose(self) -> None:
+        await self.drainer.aclose()  # pending audit entries stay in the hold records
 
     # primitives -------------------------------------------------------------------------
     async def _get(self, txn_id: str) -> Hold | None:
@@ -307,22 +308,17 @@ class _BaseHoldStore:
                 return
 
     async def _drain_quietly(self, txn_id: str) -> None:
-        """Drain in a task and wait at most ``emit_wait_s`` for it. A slow or failing ledger never
-        delays or fails the caller: the task finishes in the background, an unfinished or failed
-        drain leaves the entry in the outbox for the next change or ``sweep``."""
-        task = asyncio.ensure_future(self._drain_logged(txn_id))
-        self._bg.add(task)
-        task.add_done_callback(self._bg.discard)
-        await asyncio.wait({task}, timeout=self._emit_wait)
+        """Schedule a background drain of the hold's audit outbox; never awaits the ledger. The
+        caller only yields a few loop turns (not time) so a fast sink has normally finished."""
+        task = self.drainer.schedule(txn_id, lambda: self._drain_ok(txn_id))
+        for _ in range(8):
+            if task is None or task.done():
+                break
+            await asyncio.sleep(0)
 
-    async def _drain_logged(self, txn_id: str) -> None:
-        try:
-            await self.drain_audit(txn_id)
-        except Exception as e:
-            log.warning(
-                "audit drain failed hold=%s error=%s (kept in outbox)",
-                hashlib.sha256(txn_id.encode()).hexdigest()[:12], type(e).__name__,
-            )  # fmt: skip
+    async def _drain_ok(self, txn_id: str) -> bool:
+        await self.drain_audit(txn_id)  # errors/timeouts are counted and logged by the drainer
+        return True
 
     async def create(
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
@@ -438,8 +434,8 @@ class _BaseHoldStore:
             )
             if await self._cas(h.txn_id, h, new, count_overdue=True):
                 flagged += 1
-        for tid in await self._pending_ids():
-            await self._drain_quietly(tid)
+        ids = sorted(await self._pending_ids())[: self.sweep_batch]
+        await self.drainer.sweep(ids, self._drain_ok)
         return flagged
 
 

@@ -119,3 +119,79 @@ async def test_case_selection_by_txn_ref_matches_the_entries():
     (e,) = entries(bus)
     assert txn_ref(RRN) in e.case_refs and RRN not in e.case_refs
     assert isinstance(e, LedgerEntryIn)
+
+
+# ---------------------------------------------------------------- fix round 2
+from svckit.drain import Drainer  # noqa: E402
+
+from txn_guard.holds import InMemoryAuditSink  # noqa: E402
+
+
+def fast_drainer(**kw):
+    return Drainer(cap=8, timeout_s=kw.pop("timeout_s", 0.05), cooldown_s=60, **kw)
+
+
+async def make_holds(n, store):
+    lat = []
+    for i in range(n):
+        t0 = time.perf_counter()
+        await store.create(f"h{i}", "hold_verify", R, Clock()() + timedelta(seconds=60),
+                           payer_token="p", score=0.8, model_version="gbm-v1")  # fmt: skip
+        lat.append(time.perf_counter() - t0)
+    return lat
+
+
+async def test_200_holds_with_a_hung_ledger_are_not_throttled():
+    base = InMemoryHoldStore(audit=InMemoryAuditSink(), clock=Clock())
+    t0 = time.perf_counter()
+    await make_holds(200, base)
+    base_s = time.perf_counter() - t0
+    bus = GateBus()
+    bus.gate.clear()
+    store = InMemoryHoldStore(audit=BusAuditSink(bus), clock=Clock())
+    store.drainer = fast_drainer(timeout_s=5)
+    t0 = time.perf_counter()
+    lat = await make_holds(200, store)
+    total = time.perf_counter() - t0
+    assert total < base_s + 0.2 and max(lat) < 0.1, (total, base_s, max(lat))
+    assert store.drainer.live_tasks <= 8
+    await store.drainer.aclose()
+
+
+async def test_sweeps_with_a_hung_ledger_keep_tasks_and_publishes_bounded():
+    bus = GateBus()
+    bus.gate.clear()
+    store = InMemoryHoldStore(audit=BusAuditSink(bus), clock=Clock())
+    store.drainer = fast_drainer(breaker_threshold=5)
+    await make_holds(40, store)
+    peak = 0
+    for _ in range(5):
+        await store.sweep()
+        peak = max(peak, store.drainer.live_tasks)
+    assert peak <= 8 and store.drainer.live_tasks <= 8
+    assert bus.ledger_calls <= 40 + 5  # one try per hold at most, plus one probe per sweep
+    bus.gate.set()
+    await store.drainer.settle()
+    for _ in range(3):
+        await store.sweep()
+    es = entries(bus)
+    assert len(es) == 40 and len({e.case_refs[0] for e in es}) == 40
+    assert len(bus.messages(Topics.LEDGER)) <= 40 + 8  # in-flight guard: no per-sweep respawn
+    assert await store.count_open() == 40 and not [
+        h for h in [await store.get("h0")] if h.audit_pending
+    ]
+
+
+async def test_second_drain_of_the_same_hold_is_a_noop_while_one_is_in_flight():
+    bus = GateBus()
+    bus.gate.clear()
+    store = InMemoryHoldStore(audit=BusAuditSink(bus), clock=Clock())
+    store.drainer = fast_drainer(timeout_s=5)
+    await make_holds(1, store)
+    for _ in range(5):
+        await store._drain_quietly("h0")
+    await asyncio.sleep(0.02)
+    assert bus.ledger_calls == 1 and store.drainer.live_tasks == 1
+    bus.gate.set()
+    await store.drainer.settle()
+    assert len(entries(bus)) == 1
