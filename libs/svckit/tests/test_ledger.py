@@ -153,6 +153,13 @@ def test_ref_helpers_are_opaque_and_stable():
 
 def test_utc_ts_format():
     assert utc_ts(datetime(2026, 10, 9, 12, 0, 0, 999, tzinfo=UTC)) == "2026-10-09T12:00:00Z"
+    assert (
+        utc_ts(datetime(2026, 10, 9, 12, 0, 0, 999, tzinfo=UTC), micros=True)
+        == "2026-10-09T12:00:00.000999Z"
+    )
+    build_ledger_entry(
+        "s", "a", "e", {"at": utc_ts(datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=UTC), micros=True)}
+    )
     with pytest.raises(ValueError):
         utc_ts(datetime(2026, 10, 9, 12, 0, 0))
 

@@ -34,19 +34,22 @@ class Hub:
         return res
 
     async def revoke(
-        self, ab_id: str, actor: str, reason: str, bank: str | None = None
-    ) -> dict[str, Any]:
-        rec = await self._run(self.store.revoke, ab_id, actor, reason, bank)
+        self, ab_id: str, actor: str, reason: str, bank: str | None = None,
+        role: str | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        rec = await self._run(self.store.revoke, ab_id, actor, reason, bank, role)
         await self.drain()
         return rec
 
-    async def add_protected(self, key_hash: str, actor: str, note: str | None) -> Any:
-        res = await self._run(self.store.add_protected, key_hash, actor, note)
+    async def add_protected(
+        self, key_hash: str, actor: str, note: str | None, role: str | None = None
+    ) -> Any:
+        res = await self._run(self.store.add_protected, key_hash, actor, note, role)
         await self.drain()
         return res
 
-    async def remove_protected(self, key_hash: str, actor: str) -> bool:
-        res = await self._run(self.store.remove_protected, key_hash, actor)
+    async def remove_protected(self, key_hash: str, actor: str, role: str | None = None) -> bool:
+        res = await self._run(self.store.remove_protected, key_hash, actor, role)
         await self.drain()
         return res
 

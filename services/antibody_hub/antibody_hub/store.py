@@ -13,12 +13,17 @@ Invariants
 * Revoke and expiry are compare-and-set on ``revoked = false`` so each antibody gets exactly one
   tombstone, whoever gets there first.
 * Outbox rows carry a unique ``dedupe`` key, so replaying a change cannot enqueue it twice.
+* Ledger entries carry a structured, PII-free payload (``antibody_id, event, generation, kind,
+  key_hash_prefix (8 hex), expires_at, actor_role, actor_bank?``) built from the record only (no
+  wall clock), ``payload_hash = sha256(canonical_json(payload))`` and ``case_refs =
+  [antibody_id, <kind>_ref:<16 hex of key_hash>]`` (``payee_ref:`` for mule accounts, which is the
+  same ref txn-guard puts on its holds for that payee). The outbox dedupe key binds the hash AND
+  the actor, so two actors' corroborations stay distinct entries.
 * SQLite is serialised with a process lock (its writer lock would otherwise surface as "database
   is locked" under concurrent writers); Postgres relies on the constraints.
 """
 
 import hashlib
-import json
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -51,6 +56,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool, StaticPool
+from svckit.ledger import build_ledger_entry, hash_ref, utc_ts
 
 ANTIBODY_TTL_DAYS = 14
 SERVICE = "antibody-hub"
@@ -164,13 +170,28 @@ def antibody_model(rec: dict[str, Any], *, revoked: bool | None = None) -> Antib
     )  # fmt: skip
 
 
-def payload_hash(rec: dict[str, Any], event: str, actor: str) -> str:
-    """Ledger dedupe key binding (antibody_id, event, generation, actor, expires_at)."""
-    raw = json.dumps(
-        [rec["antibody_id"], event, rec["generation"], actor, rec["expires_at"].isoformat()],
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(raw.encode()).hexdigest()
+def _kind_ref(kind: str) -> str:
+    return "payee_ref" if kind == "mule_account" else f"{kind}_ref"
+
+
+def ledger_entry(
+    rec: dict[str, Any], event: str, actor: str, role: str | None, bank: str | None
+) -> LedgerEntryIn:
+    """The structured ledger entry for one antibody lifecycle event. Deterministic in (rec, event,
+    actor, role, bank): replays produce byte-identical entries."""
+    payload: dict[str, Any] = {
+        "antibody_id": rec["antibody_id"], "event": event, "generation": rec["generation"],
+        "kind": rec["kind"], "key_hash_prefix": rec["key_hash"][:8],
+        "expires_at": utc_ts(rec["expires_at"]), "actor_role": role or "unspecified",
+    }  # fmt: skip
+    if bank:
+        payload["actor_bank"] = bank
+    refs = [rec["antibody_id"], hash_ref(_kind_ref(rec["kind"]), rec["key_hash"])]
+    return build_ledger_entry(SERVICE, actor, f"antibody.{event}", payload, case_refs=refs)
+
+
+def _role_of(actor: str, role: str | None) -> str:
+    return "system" if actor == EXPIRY_ACTOR else (role or "unspecified")
 
 
 def encode_cursor(created_at: datetime, ab_id: str) -> str:
@@ -267,7 +288,8 @@ class AntibodyStore:
 
     def _emit(
         self, conn: Connection, rec: dict[str, Any], event: str, actor: str, now: datetime,
-        *, revoked: bool, ledger_event: str | None = None,
+        *, revoked: bool, ledger_event: str | None = None, role: str | None = None,
+        bank: str | None = None,
     ) -> None:  # fmt: skip
         ab = antibody_model(rec, revoked=revoked)
         exp = rec["expires_at"].isoformat()
@@ -275,18 +297,19 @@ class AntibodyStore:
             conn, Topics.ANTIBODIES, rec["key_hash"], ab.model_dump_json(),
             f"ab:{rec['antibody_id']}:{event}:{exp}", now,
         )  # fmt: skip
-        entry = LedgerEntryIn(
-            service=SERVICE, actor=actor, event_type=f"antibody.{ledger_event or event}",
-            payload_hash=payload_hash(rec, ledger_event or event, actor),
+        self._enqueue_ledger(
+            conn, ledger_entry(rec, ledger_event or event, actor, _role_of(actor, role), bank),
+            now,
         )  # fmt: skip
-        self._enqueue(
-            conn, Topics.LEDGER, rec["antibody_id"], entry.model_dump_json(),
-            f"led:{entry.payload_hash}", now,
-        )  # fmt: skip
+
+    def _enqueue_ledger(self, conn: Connection, entry: LedgerEntryIn, now: datetime) -> None:
+        key = entry.case_refs[0] if entry.case_refs else SERVICE
+        dedupe = hashlib.sha256(f"{entry.actor}|{entry.payload_hash}".encode()).hexdigest()
+        self._enqueue(conn, Topics.LEDGER, key, entry.model_dump_json(), f"led:{dedupe}", now)
 
     def _revoke_row(
         self, conn: Connection, rec: dict[str, Any], actor: str, reason: str, event: str,
-        now: datetime, bank: str | None = None,
+        now: datetime, bank: str | None = None, role: str | None = None,
     ) -> bool:  # fmt: skip
         res = conn.execute(
             update(antibodies)
@@ -306,19 +329,19 @@ class AntibodyStore:
         cross = event == "revoked" and bank is not None and bank != rec["source_bank"]
         self._emit(
             conn, rec, event, actor, now, revoked=True,
-            ledger_event="revoked.cross_bank" if cross else None,
+            ledger_event="revoked.cross_bank" if cross else None, role=role, bank=bank,
         )  # fmt: skip
         return True
 
     # ------------------------------------------------------------------ commands
     def submit(
         self, kind: str, key_hash: str, source_bank: str, confirmed_by: str,
-        evidence_ref: str | None = None, extend: bool = False,
+        evidence_ref: str | None = None, extend: bool = False, role: str | None = None,
     ) -> SubmitResult:  # fmt: skip
         for attempt in range(3):
             try:
                 return self._submit_once(
-                    kind, key_hash, source_bank, confirmed_by, evidence_ref, extend
+                    kind, key_hash, source_bank, confirmed_by, evidence_ref, extend, role
                 )
             except IntegrityError:
                 if attempt == 2:
@@ -327,7 +350,7 @@ class AntibodyStore:
 
     def _submit_once(
         self, kind: str, key_hash: str, source_bank: str, confirmed_by: str,
-        evidence_ref: str | None, extend: bool,
+        evidence_ref: str | None, extend: bool, role: str | None = None,
     ) -> SubmitResult:  # fmt: skip
         now = self._clock()
         with self._tx() as conn:
@@ -346,7 +369,7 @@ class AntibodyStore:
                 if rec["expires_at"] <= now:  # lapsed but not yet swept: expire, then re-create
                     self._revoke_row(conn, rec, EXPIRY_ACTOR, "expired", "expired", now)
                 else:
-                    return self._reenter(conn, rec, extend, confirmed_by, source_bank, now)
+                    return self._reenter(conn, rec, extend, confirmed_by, source_bank, now, role)
             gen = (
                 conn.execute(
                     select(func.max(antibodies.c.generation)).where(
@@ -364,12 +387,14 @@ class AntibodyStore:
                 "revoked_by_bank": None, "updated_at": now,
             }  # fmt: skip
             conn.execute(insert(antibodies).values(**rec))
-            self._emit(conn, rec, "created", confirmed_by, now, revoked=False)
+            self._emit(
+                conn, rec, "created", confirmed_by, now, revoked=False, role=role, bank=source_bank
+            )
             return SubmitResult(rec, created=True)
 
     def _reenter(
         self, conn: Connection, rec: dict[str, Any], extend: bool, actor: str, bank: str,
-        now: datetime,
+        now: datetime, role: str | None = None,
     ) -> SubmitResult:  # fmt: skip
         corroborated = False
         if bank != rec["source_bank"]:
@@ -379,7 +404,7 @@ class AntibodyStore:
                 created_at=now,
             )  # fmt: skip
             if corroborated:
-                self._ledger_only(conn, rec, "corroborated", f"{actor}@{bank}", now)
+                self._ledger_only(conn, rec, "corroborated", f"{actor}@{bank}", now, role, bank)
         if not extend:
             return SubmitResult(rec, created=False, corroborated=corroborated)
         new_exp = now + self.ttl
@@ -396,25 +421,22 @@ class AntibodyStore:
         )
         rec = rec | {"expires_at": new_exp}
         if res.rowcount == 1:
-            self._emit(conn, rec, "extended", actor, now, revoked=False)
+            self._emit(conn, rec, "extended", actor, now, revoked=False, role=role, bank=bank)
         return SubmitResult(
             rec, created=False, extended=res.rowcount == 1, corroborated=corroborated
         )
 
     def _ledger_only(
-        self, conn: Connection, rec: dict[str, Any], event: str, actor: str, now: datetime
+        self, conn: Connection, rec: dict[str, Any], event: str, actor: str, now: datetime,
+        role: str | None = None, bank: str | None = None,
     ) -> None:  # fmt: skip
-        entry = LedgerEntryIn(
-            service=SERVICE, actor=actor, event_type=f"antibody.{event}",
-            payload_hash=payload_hash(rec, event, actor),
-        )  # fmt: skip
-        self._enqueue(
-            conn, Topics.LEDGER, rec["antibody_id"], entry.model_dump_json(),
-            f"led:{entry.payload_hash}", now,
-        )  # fmt: skip
+        self._enqueue_ledger(
+            conn, ledger_entry(rec, event, actor, _role_of(actor, role), bank), now
+        )
 
     def revoke(
-        self, ab_id: str, actor: str, reason: str, bank: str | None = None
+        self, ab_id: str, actor: str, reason: str, bank: str | None = None,
+        role: str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
         now = self._clock()
         with self._tx() as conn:
@@ -423,12 +445,14 @@ class AntibodyStore:
                 raise NotFound(ab_id)
             rec = _row(row)
             if not rec["revoked"]:
-                self._revoke_row(conn, rec, actor, reason, "revoked", now, bank)
+                self._revoke_row(conn, rec, actor, reason, "revoked", now, bank, role)
             return _row(
                 conn.execute(select(antibodies).where(antibodies.c.antibody_id == ab_id)).first()
             )
 
-    def add_protected(self, key_hash: str, actor: str, note: str | None) -> tuple[bool, list[str]]:
+    def add_protected(
+        self, key_hash: str, actor: str, note: str | None, role: str | None = None
+    ) -> tuple[bool, list[str]]:
         now = self._clock()
         with self._tx() as conn:
             self._lock_hash(conn, key_hash)
@@ -436,7 +460,7 @@ class AntibodyStore:
                 conn, protected_hashes, key_hash=key_hash, added_by=actor, added_at=now, note=note
             )
             if created:
-                self._protected_audit(conn, "protected.added", key_hash, actor, now)
+                self._protected_audit(conn, "protected.added", key_hash, actor, now, role)
             revoked_ids = []
             rows = conn.execute(
                 select(antibodies).where(
@@ -445,11 +469,11 @@ class AntibodyStore:
             ).all()
             for row in rows:
                 rec = _row(row)
-                if self._revoke_row(conn, rec, actor, "protected hash", "revoked", now):
+                if self._revoke_row(conn, rec, actor, "protected hash", "revoked", now, role=role):
                     revoked_ids.append(rec["antibody_id"])
             return (created, revoked_ids)
 
-    def remove_protected(self, key_hash: str, actor: str) -> bool:
+    def remove_protected(self, key_hash: str, actor: str, role: str | None = None) -> bool:
         now = self._clock()
         with self._tx() as conn:
             self._lock_hash(conn, key_hash)
@@ -457,21 +481,23 @@ class AntibodyStore:
                 delete(protected_hashes).where(protected_hashes.c.key_hash == key_hash)
             )
             if res.rowcount == 1:
-                self._protected_audit(conn, "protected.removed", key_hash, actor, now)
+                self._protected_audit(conn, "protected.removed", key_hash, actor, now, role)
             return res.rowcount == 1
 
     def _protected_audit(
-        self, conn: Connection, event: str, key_hash: str, actor: str, now: datetime
+        self, conn: Connection, event: str, key_hash: str, actor: str, now: datetime,
+        role: str | None = None,
     ) -> None:  # fmt: skip
-        raw = json.dumps([event, key_hash[:8], actor, now.isoformat()], separators=(",", ":"))
-        entry = LedgerEntryIn(
-            service=SERVICE, actor=actor, event_type=event,
-            payload_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        """Payload: event, key_hash_prefix, actor_role and the change time (microseconds, so an
+        add / remove / add sequence stays three distinct entries)."""
+        payload = {
+            "event": event, "key_hash_prefix": key_hash[:8], "actor_role": role or "unspecified",
+            "at": utc_ts(now, micros=True),
+        }  # fmt: skip
+        entry = build_ledger_entry(
+            SERVICE, actor, event, payload, case_refs=[hash_ref("payee_ref", key_hash)]
         )  # fmt: skip
-        self._enqueue(
-            conn, Topics.LEDGER, f"protected:{key_hash[:8]}", entry.model_dump_json(),
-            f"led:{entry.payload_hash}", now,
-        )  # fmt: skip
+        self._enqueue_ledger(conn, entry, now)
 
     def expire_due(self) -> int:
         """Mark lapsed antibodies revoked-by-expiry; one tombstone each (CAS on revoked)."""

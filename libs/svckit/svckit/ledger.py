@@ -149,10 +149,15 @@ def opaque_hex16(hex_hash: str) -> str:
     raise LedgerPayloadError("no usable 16-hex block in hash")  # probability ~ 1e-13
 
 
+def hash_ref(namespace: str, hex_hash: str) -> str:
+    """``<namespace>:<16 hex>`` (namespace like ``payee_ref``) from a 64-hex hash."""
+    return f"{namespace}:{opaque_hex16(hex_hash)}"
+
+
 def payee_ref(payee_hash: str) -> str:
     """``payee_ref:<16 hex>`` from the keyed payee hash: identifies one (mule) account across
     banks and services without revealing it."""
-    return "payee_ref:" + opaque_hex16(payee_hash)
+    return hash_ref("payee_ref", payee_hash)
 
 
 def call_ref(call_id: str) -> str:
@@ -160,8 +165,9 @@ def call_ref(call_id: str) -> str:
     return "call_ref:" + opaque_hex16(hashlib.sha256(call_id.encode()).hexdigest())
 
 
-def utc_ts(ts: datetime) -> str:
-    """Whole-second UTC ``YYYY-MM-DDTHH:MM:SSZ``: the one timestamp shape the PII guard accepts."""
+def utc_ts(ts: datetime, *, micros: bool = False) -> str:
+    """UTC ``YYYY-MM-DDTHH:MM:SSZ`` (``.ffffffZ`` with ``micros``): the timestamp shape the PII
+    guard accepts as a whole string."""
     if ts.tzinfo is None:
         raise ValueError("timestamp must be timezone-aware")
-    return ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ" if micros else "%Y-%m-%dT%H:%M:%SZ")

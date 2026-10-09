@@ -298,7 +298,13 @@ def create_app(
             raise HTTPException(403, "source_bank must equal the principal's bank")
         try:
             res = await hub.submit(
-                body.kind, body.key_hash, body.source_bank, p.sub, body.evidence_ref, body.extend
+                body.kind,
+                body.key_hash,
+                body.source_bank,
+                p.sub,
+                body.evidence_ref,
+                body.extend,
+                role=p.role,
             )
         except Protected as e:
             raise HTTPException(409, "PROTECTED") from e
@@ -372,7 +378,9 @@ def create_app(
     ) -> dict[str, Any]:
         need(p, ANALYSTS)
         try:
-            return scoped_view(await hub.revoke(ab_id, p.sub, body.reason, p.bank), p, clock())
+            return scoped_view(
+                await hub.revoke(ab_id, p.sub, body.reason, p.bank, p.role), p, clock()
+            )
         except NotFound as e:
             raise HTTPException(404, "antibody not found") from e
 
@@ -395,7 +403,7 @@ def create_app(
         body: ProtectedBody, response: Response, p: Annotated[Principal, Depends(principal)]
     ) -> dict[str, Any]:
         need(p, {"admin"})
-        created, revoked = await hub.add_protected(body.key_hash, p.sub, body.note)
+        created, revoked = await hub.add_protected(body.key_hash, p.sub, body.note, p.role)
         if not created:
             response.status_code = 200
         return {"key_hash": body.key_hash, "revoked_antibodies": revoked}
@@ -406,7 +414,10 @@ def create_app(
         p: Annotated[Principal, Depends(principal)],
     ) -> dict[str, Any]:
         need(p, {"admin"})
-        return {"key_hash": key_hash, "removed": await hub.remove_protected(key_hash, p.sub)}
+        return {
+            "key_hash": key_hash,
+            "removed": await hub.remove_protected(key_hash, p.sub, p.role),
+        }
 
     return app
 
