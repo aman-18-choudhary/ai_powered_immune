@@ -1182,6 +1182,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="skip the antibody confirmation-delay / hold-gate sensitivity runs (faster)",
     )
+    ap.add_argument(
+        "--json-out",
+        default=None,
+        metavar="PATH",
+        help="also write the structured JSON summary (deterministic; see README for the schema)",
+    )
     a = ap.parse_args(argv)
     ablations = DEFAULT_ABLATIONS if a.ablations is None else a.ablations
     try:
@@ -1205,6 +1211,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         sensitivity=not a.no_sensitivity,
         hero_seeds=a.hero_seeds,
     )
+    runtime = time.perf_counter() - t0
+    if a.json_out:
+        from .summary import build_summary, write_summary
+
+        md = render_report(res, include_volatile=a.include_latency)
+        write_summary(
+            a.json_out,
+            build_summary(res, md, runtime_s=runtime, include_latency=a.include_latency),
+        )
     m: Metrics = res["variants"]["baseline"]["metrics"]
     print(
         f"seed={a.seed} scored={m.n_benign + m.n_scam} precision={m.precision} recall={m.recall} "
