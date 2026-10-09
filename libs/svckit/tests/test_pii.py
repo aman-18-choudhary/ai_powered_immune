@@ -54,19 +54,20 @@ def test_guard_accepts(text):
     assert not contains_identifier(text), text
 
 
-def test_hex_ids_are_exempt_but_digit_runs_are_not():
+def test_opaque_ids_are_exempt_only_as_whole_strings():
     digest = "0123456789abcdef" * 4
     assert contains_identifier(digest)  # the raw guard trips on digests...
-    assert not string_has_identifier(digest)  # ...the id-aware guard exempts them
+    assert not string_has_identifier(digest)  # ...the shape-aware guard accepts them whole
     assert not string_has_identifier("txn_3a9f0c12d45b7e68")
-    assert not string_has_identifier("antibody 3a9f0c12d45b7e680 confirmed")
     assert string_has_identifier("1" * 64)  # all-digit string is never an id
     assert string_has_identifier("acct 123456789012")
     assert string_has_identifier(digest.upper())
-    assert string_has_identifier("3a9f0c12d45b7e68 9876543210")  # id next to a phone number
+    # embedded in other text the strict rule applies (documented)
+    assert string_has_identifier("3a9f0c12d45b7e68 9876543210")
+    assert string_has_identifier("antibody 3a9f0c12d45b7e6801ab34cd56ef7812 confirmed")
 
 
-def test_json_walk_checks_keys_and_nested_values_and_ignores_numbers():
+def test_json_walk_checks_keys_and_nested_values():
     assert json_has_identifier({"a": [{"b": "call 9876543210"}]})
     assert json_has_identifier({"9876543210": "x"})
     assert not json_has_identifier({"a": [1, 2.5, None, True, "case-77", "ab" * 32]})
@@ -75,33 +76,72 @@ def test_json_walk_checks_keys_and_nested_values_and_ignores_numbers():
 
 # ---------------------------------------------------------------- fix round 1 (review item 3)
 HEX_BYPASS = [
-    "a1234567890123456",
+    "a1234567890123456",  # 17 chars: not an id shape
     "1234567890123456a",
-    "acct_123456789012345a",
+    "12345678a12345678a",  # 18 chars
+    "acct_1234567890123456a",
     "txn_1234567890123456a",
-    "x" + "1" * 12 + "a" * 3 + "1" * 4,
     "f" + "0123456789" + "abcdef",
-    "ab" * 8 + "123456789012",  # 64-hex digest-length token with a 12-digit run
+    "ab" * 8 + "123456789012",
+    "1" * 16 + "a" * 8 + "1" * 3,  # not a whole-string id shape
+    "9" * 24,  # all digits
+    "a" + "9" * 22 + "b",  # 24 chars, run 22 > cap
 ]
 LEGIT_IDS = [
     "txn_3a9f0c12d45b7e68",
     "ab" * 32,
-    "0123456789abcdef" * 4,  # 64-hex digest: a run of 10 digits is fine (<12)
-    "key_3a9f0c12",
+    "0123456789abcdef" * 4,
     "3a9f0c12d45b7e68",
+    "cmp_3a9f0c12d45b7e6801ab34cd",
+    "3a9f0c12d45b7e6801ab34cd56ef7812",
+    "ab12cd34",  # short hex: not an id shape, but the strict rule has nothing to object to
     "kh_ab12cd34",
-    "antibody 3a9f0c12d45b7e6801ab34cd56ef7812 confirmed",
+]
+# digits-heavy but real-looking random ids that the OLD 9-digit rule falsely rejected (5-14%)
+DIGIT_HEAVY_IDS = [
+    "txn_1234567890abcdef",  # run of 10
+    "txn_123456789012345a",  # run 15 at the cap for 16-hex
+    "0" * 20 + "abcd",  # run 20 in a 24-hex id
+    "f" + "1" * 22 + "2",  # 24-hex, run 22 > cap 21 -> must be rejected below
 ]
 
 
 @pytest.mark.parametrize("text", HEX_BYPASS)
-def test_hex_exemption_cannot_hide_long_digit_runs(text):
+def test_id_shape_cannot_hide_long_digit_runs(text):
     assert string_has_identifier(text), text
 
 
 @pytest.mark.parametrize("text", LEGIT_IDS)
 def test_legit_ids_still_accepted(text):
     assert not string_has_identifier(text), text
+
+
+def test_digit_heavy_ids_within_the_caps_are_accepted():
+    assert not string_has_identifier(DIGIT_HEAVY_IDS[0])
+    assert not string_has_identifier(DIGIT_HEAVY_IDS[1])
+    assert not string_has_identifier(DIGIT_HEAVY_IDS[2])
+    assert string_has_identifier(DIGIT_HEAVY_IDS[3])
+
+
+def test_documented_residual_risk_of_the_shape_rule():
+    """A 15-digit number plus ONE hex letter in a 16-char string is indistinguishable from the
+    0.5% of random 16-hex ids with a 15-digit run, so it is accepted by design (see README)."""
+    assert not string_has_identifier("123456789012345a")
+
+
+def test_false_reject_rate_on_random_ids_is_negligible():
+    import random
+
+    rnd = random.Random(20261009)
+    n = 200_000
+    for length in (16, 24, 32, 64):
+        bad = 0
+        for _ in range(n):
+            body = format(rnd.getrandbits(4 * length), f"0{length}x")
+            bad += string_has_identifier(body) or string_has_identifier("txn_" + body)
+        # 16-hex ids: 0.054% are all digits ((10/16)^16), indistinguishable from a card number
+        floor = 6e-4 if length == 16 else 1e-4
+        assert bad / n < floor, (length, bad / n)
 
 
 @pytest.mark.parametrize("text", BAD)

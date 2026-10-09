@@ -17,14 +17,17 @@ _RULES = [
     re.compile(r"\b[a-z]{5}\d{4}[a-z]\b"),  # PAN
     re.compile(r"\b[a-z]{4}0[a-z0-9]{6}\b"),  # IFSC
 ]
-# Opaque identifiers minted by the platform: sha256 digests, "txn_<hex>" ids, key-hash prefixes.
-# A lowercase hex token of 16..64 chars, or 8..64 after a short "prefix_", containing a letter,
-# is exempt ONLY if it has no long run of digits (9+; 12+ for a 64-char digest, where a run of
-# 9-11 digits occurs by chance in about 1% of genuine sha256 values). All-digit tokens are never
-# exempt, so "a1234567890123456" or "acct_123456789012" are still caught.
-_HEX_ID = re.compile(
-    r"(?<![0-9A-Za-z])(?:[a-z][a-z0-9]{0,15}[_:-]([0-9a-f]{8,64})|([0-9a-f]{16,64}))(?![0-9A-Za-z])"
-)
+# Opaque identifiers minted by the platform (sha256 digests, "txn_<hex>" ids). They are exempt only
+# as WHOLE strings of an exact shape: an optional lowercase "prefix_" of 2-8 letters, then exactly
+# 16, 24, 32 or 64 lowercase hex chars containing at least one letter a-f, whose longest run of
+# digits is at most a per-length cap. The caps are the smallest values for which the false-reject
+# rate on uniformly random ids is below 0.01% (measured on 1,000,000 ids per length: README):
+# 16 -> 15, 24 -> 21, 32 -> 22, 64 -> 25. Anything embedded in longer text gets the strict rule.
+# Residual risk (unavoidable for a shape rule at this false-reject rate): a 15-digit number plus
+# one hex letter in a 16-char string is accepted, as are phone-sized digit runs padded with hex
+# letters to an id length.
+_ID_RE = re.compile(r"(?:[a-z]{2,8}_)?([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})")
+_ID_RUN_CAP = {16: 15, 24: 21, 32: 22, 64: 25}
 _DIGITS = re.compile(r"\d+")
 
 
@@ -32,12 +35,12 @@ def _max_digit_run(s: str) -> int:
     return max((len(m) for m in _DIGITS.findall(s)), default=0)
 
 
-def _blank_id(m: re.Match[str]) -> str:
-    body = m.group(1) or m.group(2)
-    if not any(c in body for c in "abcdef"):
-        return m.group(0)
-    limit = 12 if len(body) == 64 else 9
-    return m.group(0) if _max_digit_run(body) >= limit else " "
+def is_opaque_id(text: str) -> bool:
+    m = _ID_RE.fullmatch(text)
+    if m is None:
+        return False
+    body = m.group(1)
+    return any(c in "abcdef" for c in body) and _max_digit_run(body) <= _ID_RUN_CAP[len(body)]
 
 
 def _flatten(s: str) -> str:
@@ -64,9 +67,9 @@ def contains_identifier(text: str) -> bool:
 
 
 def string_has_identifier(text: str) -> bool:
-    """``contains_identifier`` after blanking platform-minted hex ids (digests, txn ids), which
-    would otherwise trip the digit rules. Use this for ids and payload values."""
-    return contains_identifier(_HEX_ID.sub(_blank_id, text))
+    """For STRUCTURED fields (case refs, payload keys and values): a whole-string opaque id is
+    accepted, anything else gets ``contains_identifier``."""
+    return False if is_opaque_id(text) else contains_identifier(text)
 
 
 def json_has_identifier(obj: Any) -> bool:
