@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import json
 import re
+import stat
 import sys
 import zipfile
 from collections.abc import Mapping, Sequence
@@ -328,24 +329,104 @@ def _sha(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+MAX_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_RATIO = 100
+MAX_JSON_DEPTH = 64
+_ALLOWED = frozenset((*PACKAGE_MEMBERS, MANIFEST))
+
+
+class PackageError(ValueError):
+    """Structural problem with the package container (message is safe to print)."""
+
+
+def load_json(raw: bytes) -> Any:
+    """json.loads with a nesting cap (checked iteratively, so hostile input cannot trigger
+    RecursionError) and strict UTF-8."""
+    depth = 0
+    in_str = esc = False
+    for b in raw:
+        if in_str:
+            if esc:
+                esc = False
+            elif b == 0x5C:
+                esc = True
+            elif b == 0x22:
+                in_str = False
+        elif b == 0x22:
+            in_str = True
+        elif b in (0x5B, 0x7B):
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise PackageError(f"JSON nested deeper than {MAX_JSON_DEPTH} levels")
+        elif b in (0x5D, 0x7D):
+            depth -= 1
+    return json.loads(raw.decode("utf-8"))
+
+
 class _Source:
-    """Read-only view of an extracted directory or a zip file."""
+    """Read-only, validated view of an extracted directory or a zip file. Construction fails
+    (PackageError) on duplicate names, nested/odd names, non-regular files, oversized members and
+    compression bombs; only the expected flat set of member names is accepted."""
 
     def __init__(self, path: Path) -> None:
-        self.zip = zipfile.ZipFile(path) if path.is_file() else None
-        self.dir = None if self.zip else path
+        self.zip: zipfile.ZipFile | None = None
+        self.dir: Path | None = None
+        sizes: dict[str, int] = {}
+        if path.is_file():
+            self.zip = zipfile.ZipFile(path)
+            seen: set[str] = set()
+            for info in self.zip.infolist():
+                name = info.filename
+                if name in seen:
+                    raise PackageError(f"duplicate member name {name!r} in zip")
+                seen.add(name)
+                if name not in _ALLOWED:
+                    raise PackageError(f"unexpected member {name!r} in package")
+                mode = (info.external_attr >> 16) & 0o170000
+                if info.is_dir() or mode not in (0, 0o100000):
+                    raise PackageError(f"member {name} is not a regular file")
+                if info.file_size > MAX_MEMBER_BYTES:
+                    raise PackageError(f"member {name} too large")
+                if info.file_size > 1024 and info.file_size > MAX_RATIO * max(
+                    info.compress_size, 1
+                ):
+                    raise PackageError(f"member {name} exceeds the allowed compression ratio")
+                sizes[name] = info.file_size
+        elif path.is_dir():
+            self.dir = path
+            for entry in sorted(path.iterdir()):
+                name = entry.name
+                if name == "__pycache__" and entry.is_dir() and not entry.is_symlink():
+                    continue
+                if name not in _ALLOWED:
+                    raise PackageError(f"unexpected file {name!r} in package")
+                st = entry.lstat()
+                if not stat.S_ISREG(st.st_mode):
+                    raise PackageError(f"member {name} is not a regular file")
+                if st.st_size > MAX_MEMBER_BYTES:
+                    raise PackageError(f"member {name} too large")
+                sizes[name] = st.st_size
+        else:
+            raise PackageError("package path is neither a directory nor a zip file")
+        if sum(sizes.values()) > MAX_TOTAL_BYTES:
+            raise PackageError("package too large")
+        self.sizes = sizes
 
     def names(self) -> list[str]:
-        if self.zip:
-            return [n for n in self.zip.namelist() if not n.endswith("/")]
-        assert self.dir is not None
-        return [p.name for p in self.dir.iterdir() if p.is_file()]
+        return list(self.sizes)
 
     def read(self, name: str) -> bytes:
         if self.zip:
-            return self.zip.read(name)
-        assert self.dir is not None
-        return (self.dir / name).read_bytes()
+            with self.zip.open(name) as f:
+                data = f.read(MAX_MEMBER_BYTES + 1)
+        else:
+            assert self.dir is not None
+            with open(self.dir / name, "rb") as f:
+                data = f.read(MAX_MEMBER_BYTES + 1)
+        if len(data) > MAX_MEMBER_BYTES:
+            raise PackageError(f"member {name} too large")
+        return data
 
 
 _SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
@@ -397,7 +478,7 @@ def verify_package(
         names = set(src.names())
         if MANIFEST not in names:
             return _bad(None, "manifest.json missing"), notes
-        manifest = json.loads(src.read(MANIFEST))
+        manifest = load_json(src.read(MANIFEST))
         if manifest.get("package_format_version") != PACKAGE_FORMAT_VERSION:
             return _bad(None, "unsupported package_format_version"), notes
         if manifest.get("chain_format_version") != CHAIN_FORMAT_VERSION:
@@ -405,10 +486,6 @@ def verify_package(
         members = manifest["members"]
         if set(members) != set(PACKAGE_MEMBERS):
             return _bad(None, "manifest member list is not the expected set"), notes
-        extra = names - set(PACKAGE_MEMBERS) - {MANIFEST}
-        extra = {n for n in extra if not n.startswith("__pycache__")}
-        if extra:
-            return _bad(None, f"unexpected files in package: {sorted(extra)}"), notes
         blobs: dict[str, bytes] = {}
         for name in PACKAGE_MEMBERS:
             if name not in names:
@@ -416,7 +493,7 @@ def verify_package(
             blobs[name] = src.read(name)
             if not hmac.compare_digest(_sha(blobs[name]), str(members[name])):
                 return _bad(None, f"member {name} does not match the manifest hash"), notes
-        proof = json.loads(blobs["chain_proof.json"])
+        proof = load_json(blobs["chain_proof.json"])
         keys = _normalise_keys(proof["public_keys"])
         kid = manifest["key_id"]
         if kid not in keys:
@@ -431,7 +508,7 @@ def verify_package(
         if not ed25519_verify(keys[kid], canonical_json(unsigned), sig):
             return _bad(None, "manifest signature invalid"), notes
         notes.append(f"manifest signed by key_id {kid}")
-        data = json.loads(blobs["entries.json"])
+        data = load_json(blobs["entries.json"])
         entries = data["entries"]
         if data.get("case_id") != manifest["case_id"]:
             return _bad(None, "entries.json case_id differs from manifest"), notes
@@ -483,8 +560,12 @@ def verify_package(
             f"{len(listed)} selected) against signed checkpoint(s)"
         )
         return VerifyResult(True, None, "ok", res.redacted, pinned), notes
+    except PackageError as exc:
+        return _bad(None, str(exc)), notes
     except (KeyError, ValueError, TypeError, OSError, zipfile.BadZipFile, AttributeError) as exc:
         return _bad(None, f"package unreadable or malformed ({type(exc).__name__})"), notes
+    except (RecursionError, MemoryError) as exc:
+        return _bad(None, f"package too complex to verify ({type(exc).__name__})"), notes
 
 
 UNPINNED_LINE = (

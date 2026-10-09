@@ -242,7 +242,7 @@ def test_extra_file_in_package_is_rejected(built):
     _, d = built
     (d / "notes.txt").write_text("hi")
     r = run_verify(d)
-    assert r.returncode == 1 and "unexpected files" in r.stdout
+    assert r.returncode == 1 and "unexpected file" in r.stdout
 
 
 def test_chain_entry_forged_inside_package_with_valid_member_hashes_is_caught(built):
@@ -516,3 +516,143 @@ def test_withheld_payload_hash_tamper_fails(store, keyring, tmp_path):
     resign(d, keyring)
     r = run_verify(d, "--allow-unpinned")
     assert r.returncode == 1 and f"entry {ctx['seq']}" in r.stdout
+
+
+# ---------------------------------------------------------------- package structure attacks (item 5)
+def members_of(d: Path) -> list[tuple[str, bytes]]:
+    return [(n, (d / n).read_bytes()) for n in [*PACKAGE_MEMBERS, "manifest.json"]]
+
+
+def write_zip(path: Path, items, *, compress=zipfile.ZIP_STORED, attrs=None):
+    with zipfile.ZipFile(path, "w", compress) as z:
+        for name, data in items:
+            zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            zi.compress_type = compress
+            if attrs and name in attrs:
+                zi.external_attr = attrs[name]
+            z.writestr(zi, data)
+
+
+def cli(path: Path, *extra: str):
+    """Run the shipped verifier on a path (zip or dir) from outside the package."""
+    return subprocess.run(
+        [sys.executable, "-S", "-I", str(path.parent / "verify.py" if path.is_file() else path / "verify.py"), str(path), "--allow-unpinned", *extra],
+        capture_output=True, text=True, env={}, timeout=120,
+    )  # fmt: skip
+
+
+@pytest.fixture
+def pkgdir(built, tmp_path):
+    _, d = built
+    (tmp_path / "verify.py").write_bytes((d / "verify.py").read_bytes())  # trusted copy
+    return d
+
+
+def assert_clean_fail(r, *needles):
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert "Traceback" not in r.stdout + r.stderr
+    assert r.stdout.strip().splitlines()[-1].startswith("FAIL:")
+    for n in needles:
+        assert n in r.stdout, (n, r.stdout)
+
+
+def test_duplicate_zip_member_name_fails(pkgdir, tmp_path):
+    items = members_of(pkgdir)
+    evil = [("entries.json", b'{"hidden": "first copy"}')] + items  # Python would read the last
+    z = tmp_path / "dup.zip"
+    with pytest.warns(UserWarning):
+        write_zip(z, evil)
+    assert_clean_fail(cli(z), "duplicate")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["sub/entries.json", "../escape.json", "/abs.json", "a\\b.json", "dir/", "x/../manifest.json"],
+)
+def test_zip_with_nested_or_traversal_names_fails(pkgdir, tmp_path, name):
+    z = tmp_path / "n.zip"
+    write_zip(z, [*members_of(pkgdir), (name, b"{}")])
+    assert_clean_fail(cli(z), "unexpected")
+
+
+def test_zip_symlink_member_fails(pkgdir, tmp_path):
+    z = tmp_path / "s.zip"
+    items = members_of(pkgdir)
+    write_zip(z, items, attrs={"explanations.md": (0o120777 << 16)})
+    assert_clean_fail(cli(z), "regular file")
+
+
+def test_dir_with_subdirectory_file_symlink_or_extra_fails(pkgdir):
+    sub = pkgdir / "sub"
+    sub.mkdir()
+    (sub / "evil.json").write_text("{}")
+    assert_clean_fail(cli(pkgdir), "unexpected")
+    (sub / "evil.json").unlink()
+    sub.rmdir()
+    (pkgdir / "link.json").symlink_to(pkgdir / "entries.json")
+    assert_clean_fail(cli(pkgdir), "unexpected")
+    (pkgdir / "link.json").unlink()
+    (pkgdir / "explanations.md").unlink()
+    (pkgdir / "explanations.md").symlink_to(pkgdir / "entries.json")
+    assert_clean_fail(cli(pkgdir), "regular file")
+
+
+def test_oversized_declared_member_is_refused_before_reading(pkgdir, tmp_path):
+    z = tmp_path / "big.zip"
+    items = [(n, d) for n, d in members_of(pkgdir)]
+    items = [(n, b"\x00" * (70 * 1024 * 1024) if n == "entries.json" else d) for n, d in items]
+    write_zip(z, items, compress=zipfile.ZIP_DEFLATED)
+    assert_clean_fail(cli(z), "too large")
+
+
+def test_compression_ratio_bomb_is_refused(pkgdir, tmp_path):
+    z = tmp_path / "ratio.zip"
+    items = [
+        (n, b" " * (8 * 1024 * 1024) if n == "explanations.md" else d)
+        for n, d in members_of(pkgdir)
+    ]
+    write_zip(z, items, compress=zipfile.ZIP_DEFLATED)
+    assert_clean_fail(cli(z), "compression ratio")
+
+
+def test_deeply_nested_json_fails_cleanly(pkgdir):
+    for depth in (100, 200_000):  # over the cap; far over the interpreter recursion limit
+        (pkgdir / "entries.json").write_text("[" * depth + "]" * depth)
+        r = cli(pkgdir)  # member hash no longer matches, so test the parser directly too
+        assert_clean_fail(r)
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("v", pkgdir / "verify.py")
+    v = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(v)
+    with pytest.raises(ValueError, match="nested"):
+        v.load_json(b"[" * 100 + b"]" * 100)
+    with pytest.raises(ValueError, match="nested"):
+        v.load_json(b"[" * 200_000 + b"]" * 200_000)
+
+
+def test_resigned_deep_json_in_a_member_fails_cleanly(store, keyring, pkgdir):
+    (pkgdir / "chain_proof.json").write_text("[" * 5000 + "]" * 5000)
+    resign(pkgdir, keyring)
+    assert_clean_fail(cli(pkgdir), "nested")
+
+
+def test_non_utf8_and_garbage_members_fail_cleanly(store, keyring, pkgdir):
+    (pkgdir / "chain_proof.json").write_bytes(b"\xff\xfe\x00garbage")
+    resign(pkgdir, keyring)
+    assert_clean_fail(cli(pkgdir))
+
+
+def test_unexpected_exception_is_not_a_traceback(pkgdir, monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("v2", pkgdir / "verify.py")
+    v = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(v)
+    for exc in (MemoryError(), RecursionError(), RuntimeError("boom")):
+
+        def boom(*a, _e=exc, **k):
+            raise _e
+
+        monkeypatch.setattr(v, "verify_package", boom)
+        assert v.main([str(pkgdir), "--allow-unpinned"]) == 1
