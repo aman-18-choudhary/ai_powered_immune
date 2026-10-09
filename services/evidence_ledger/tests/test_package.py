@@ -13,6 +13,7 @@ from scam_contracts.models import LedgerEntryIn
 
 from evidence_ledger import package as pkg
 from evidence_ledger.keys import KeyRing, Signer
+from evidence_ledger.store import LedgerStore
 from evidence_ledger.verify import PACKAGE_MEMBERS, verify_package
 
 from .conftest import entry_in, tid
@@ -25,11 +26,13 @@ def fill(store, n=12, case_every=3):
         store.append(entry_in(i, refs=refs))
 
 
-def run_verify(path: Path, *extra: str, cwd: Path | None = None):
+def run_verify(path: Path, *extra: str, cwd: Path | None = None, strict: bool = False):
     """Run the shipped verifier the way an expert would: isolated, no site-packages, clean env."""
     script = (path / "verify.py") if path.is_dir() else None
     assert script is not None
     env = {"PATH": "/usr/bin:/bin"}
+    if not any(x.startswith("--trusted") or x == "--allow-unpinned" for x in extra) and not strict:
+        extra = (*extra, "--allow-unpinned")  # most tests are about integrity, not authenticity
     return subprocess.run(
         [sys.executable, "-S", "-I", str(script), str(path), *extra],
         capture_output=True, text=True, env=env, cwd=cwd or path, timeout=60,
@@ -50,9 +53,9 @@ def built(store, keyring, tmp_path):
     return p, extract(p.data, tmp_path / "pkg")
 
 
-def test_package_verify_script_runs_offline(built):
+def test_package_verify_script_runs_offline(built, keyring):
     p, d = built
-    r = run_verify(d)
+    r = run_verify(d, "--trusted-key-id", keyring.signer.key_id)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "PASS" in r.stdout
     # the verifier did not need cryptography or any other third-party package
@@ -69,9 +72,18 @@ def test_verify_script_accepts_zip_and_cwd_default(built, tmp_path):
     r = subprocess.run(
         [sys.executable, "-S", "-I", str(d / "verify.py"), str(z)], capture_output=True, text=True
     )
+    assert r.returncode == 2, r.stdout  # unpinned
+    r = subprocess.run(
+        [sys.executable, "-S", "-I", str(d / "verify.py"), str(z), "--allow-unpinned"],
+        capture_output=True, text=True,
+    )  # fmt: skip
     assert r.returncode == 0, r.stdout
     r = subprocess.run(
-        [sys.executable, "-S", "-I", "verify.py"], cwd=d, capture_output=True, text=True, env={}
+        [sys.executable, "-S", "-I", "verify.py", "--allow-unpinned"],
+        cwd=d,
+        capture_output=True,
+        text=True,
+        env={},
     )
     assert r.returncode == 0  # `python verify.py .` style usage (default path = its own directory)
 
@@ -153,22 +165,77 @@ def test_signature_invalid_when_manifest_edited(built):
     assert not res.ok and "signature" in res.reason
 
 
-def test_resigned_by_attacker_needs_key_pinning(built, store, keyring):
-    """A forger can rebuild a self-consistent package with their own key; only an independently
-    obtained key id (--trusted-key-id) exposes it."""
-    p, d = built
+def pub_b64(ring) -> str:
+    return base64.b64encode(ring.signer.public_raw).decode()
+
+
+def test_genuine_self_forgery_is_exit_2_unpinned_and_exit_1_when_pinned(store, keyring, tmp_path):
+    """The attacker rewrites history (changes an actor), re-chains, signs the checkpoints and the
+    manifest with their own key and ships their own key list: a fully self-consistent package."""
+    fill(store)
+    real = extract(
+        pkg.build(store, keyring, "case-1", case_refs=["case-1"]).data, tmp_path / "real"
+    )
     evil_ring = KeyRing(Signer.from_seed(b"\x09" * 32))
-    evil = pkg.build(store, evil_ring, "case-1", case_refs=["case-1"])
-    # the forger cannot forge the real checkpoint signature, so the chain proof fails...
-    ed = extract(evil.data, d.parent / "evil")
-    r = run_verify(ed)
-    assert r.returncode == 1 and "FAIL" in r.stdout
-    # ... and a pin on the genuine key rejects an otherwise valid package from another signer
-    ok = run_verify(d, "--trusted-key-id", keyring.signer.key_id)
-    assert ok.returncode == 0 and "not pinned" not in ok.stdout
-    bad = run_verify(d, "--trusted-key-id", "0" * 16)
-    assert bad.returncode == 1 and "not the trusted key" in bad.stdout
-    assert "WARNING: signer key not pinned" in run_verify(d).stdout
+    evil_store = LedgerStore(
+        f"sqlite:///{tmp_path}/evil.db", signer=evil_ring.signer, checkpoint_every=5
+    )
+    for i in range(1, 13):
+        refs = ["case-1", tid(i)] if i % 3 == 0 else [tid(i)]
+        evil_store.append(entry_in(i, refs=refs, actor="mallory" if i == 6 else "system:txn-guard"))
+    evil = extract(
+        pkg.build(evil_store, evil_ring, "case-1", case_refs=["case-1"]).data, tmp_path / "evil"
+    )
+    # unpinned: integrity is fine, authenticity is NOT established -> exit 2, loud last line
+    r = run_verify(evil, strict=True)
+    assert r.returncode == 2, r.stdout
+    assert (
+        r.stdout.strip()
+        .splitlines()[-1]
+        .startswith("INTEGRITY OK - UNPINNED: AUTHENTICITY NOT ESTABLISHED")
+    )
+    assert "PASS" not in r.stdout
+    # pinned to the REAL key (full public key or key id) the forgery is exit 1
+    for pin in (
+        ("--trusted-pubkey", pub_b64(keyring)),
+        ("--trusted-key-id", keyring.signer.key_id),
+    ):
+        r = run_verify(evil, *pin)
+        assert r.returncode == 1 and "not the trusted key" in r.stdout, r.stdout
+    # the real package: unpinned -> 2, pinned -> 0, --allow-unpinned -> 0 but still labelled
+    assert run_verify(real, strict=True).returncode == 2
+    assert run_verify(real, "--trusted-pubkey", pub_b64(keyring)).returncode == 0
+    assert run_verify(real, "--trusted-key-id", keyring.signer.key_id).returncode == 0
+    r = run_verify(real, "--allow-unpinned")
+    assert r.returncode == 0 and "UNPINNED" in r.stdout.strip().splitlines()[-1]
+    # a wrong full-key pin fails even if the key_id label were guessed
+    other = pub_b64(evil_ring)
+    assert run_verify(real, "--trusted-pubkey", other).returncode == 1
+
+
+def test_trusted_pubkey_accepts_pem_hex_and_file(built, keyring, tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    _, d = built
+    pem = Ed25519PublicKey.from_public_bytes(keyring.signer.public_raw).public_bytes(
+        Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+    )
+    f = tmp_path / "pub.pem"
+    f.write_bytes(pem)
+    for arg in (str(f), keyring.signer.public_raw.hex(), pub_b64(keyring)):
+        assert run_verify(d, "--trusted-pubkey", arg).returncode == 0, arg
+    assert run_verify(d, "--trusted-pubkey", "not a key").returncode == 1
+
+
+def test_small_order_and_noncanonical_public_keys_rejected():
+    from evidence_ledger.verify import ed25519_verify
+
+    identity = b"\x01" + b"\x00" * 31
+    sig = identity + b"\x00" * 32
+    assert not ed25519_verify(identity, b"m", sig)  # small-order A
+    noncanon = (2**255 - 19 + 1).to_bytes(32, "little")  # y = p + 1 encodes the identity
+    assert not ed25519_verify(noncanon, b"m", sig)
 
 
 def test_extra_file_in_package_is_rejected(built):

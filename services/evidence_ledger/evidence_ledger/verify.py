@@ -136,6 +136,10 @@ def ed25519_verify(public_key: bytes, message: bytes, signature: bytes) -> bool:
     s = int.from_bytes(signature[32:], "little")
     if a_pt is None or r_pt is None or s >= _L:
         return False
+    if _compress(a_pt) != public_key or _compress(r_pt) != signature[:32]:
+        return False  # non-canonical point encodings
+    if _compress(_mul(8, a_pt)) == _compress((0, 1, 1, 0)):
+        return False  # small-order public key
     h = int.from_bytes(hashlib.sha512(signature[:32] + public_key + message).digest(), "little")
     left = _compress(_mul(s, _G))
     right = _compress(_add(r_pt, _mul(h % _L, a_pt)))
@@ -153,6 +157,7 @@ class VerifyResult:
     first_bad_seq: int | None
     reason: str
     redacted: tuple[int, ...] = ()
+    pinned: bool = False
 
 
 def _ok() -> VerifyResult:
@@ -343,9 +348,50 @@ class _Source:
         return (self.dir / name).read_bytes()
 
 
-def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[VerifyResult, list[str]]:
-    """Return (result, notes). Notes are informational lines (signer, segment, caveats)."""
+_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+
+
+def parse_pubkey(token: str) -> bytes:
+    """A trusted Ed25519 public key: 64 hex chars, base64 of the raw 32 bytes, base64/PEM of an
+    X.509 SubjectPublicKeyInfo, or a path to a file holding any of those."""
+    t = token.strip()
+    if len(t) < 4096 and Path(t).is_file():
+        t = Path(t).read_text().strip()
+    body = "".join(ln for ln in t.splitlines() if not ln.startswith("-----"))
+    try:
+        raw = (
+            bytes.fromhex(body)
+            if re.fullmatch(r"[0-9a-fA-F]{64}", body)
+            else base64.b64decode(body, validate=True)
+        )
+    except ValueError:
+        raise ValueError("trusted public key is not hex, base64 or PEM") from None
+    if len(raw) == 44 and raw.startswith(_SPKI_PREFIX):
+        raw = raw[len(_SPKI_PREFIX) :]
+    if len(raw) != 32:
+        raise ValueError("trusted public key must be a 32-byte Ed25519 key")
+    return raw
+
+
+def verify_package(
+    path: Path,
+    trusted_key_ids: Sequence[str] = (),
+    trusted_pubkeys: Sequence[bytes] = (),
+) -> tuple[VerifyResult, list[str]]:
+    """Return (result, notes). ``result.pinned`` is true only if the signer (and every key that
+    signed a checkpoint) was pinned by the caller: ``trusted_pubkeys`` (full keys) or
+    ``trusted_key_ids`` (64-bit labels, weaker). Unpinned verification proves internal
+    consistency only: anyone can build a self-consistent package with their own key."""
     notes: list[str] = []
+    pin_raw = {key_id_of(k): k for k in trusted_pubkeys}
+    pin_ids = set(trusted_key_ids)
+    pinned = bool(pin_raw or pin_ids)
+
+    def is_pinned(kid: str, raw: bytes) -> bool:
+        if kid in pin_raw:
+            return pin_raw[kid] == raw
+        return kid in pin_ids
+
     try:
         src = _Source(path)
         names = set(src.names())
@@ -373,10 +419,10 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
         proof = json.loads(blobs["chain_proof.json"])
         keys = _normalise_keys(proof["public_keys"])
         kid = manifest["key_id"]
-        if trusted_key_id is not None and kid != trusted_key_id:
-            return _bad(None, f"signer key_id {kid} is not the trusted key {trusted_key_id}"), notes
         if kid not in keys:
             return _bad(None, "manifest signer key is not among the package public keys"), notes
+        if pinned and not is_pinned(kid, keys[kid]):
+            return _bad(None, f"signer key_id {kid} is not the trusted key"), notes
         unsigned = {k: v for k, v in manifest.items() if k != "signature_b64"}
         try:
             sig = base64.b64decode(manifest["signature_b64"], validate=True)
@@ -385,11 +431,6 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
         if not ed25519_verify(keys[kid], canonical_json(unsigned), sig):
             return _bad(None, "manifest signature invalid"), notes
         notes.append(f"manifest signed by key_id {kid}")
-        if trusted_key_id is None:
-            notes.append(
-                "WARNING: signer key not pinned; compare this key_id with one obtained "
-                "independently (--trusted-key-id)"
-            )
         data = json.loads(blobs["entries.json"])
         entries = data["entries"]
         if data.get("case_id") != manifest["case_id"]:
@@ -418,6 +459,13 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
             ), notes
         if list(res.redacted) != manifest.get("redacted_seqs"):
             return _bad(None, "manifest redacted_seqs does not match the redacted entries"), notes
+        if pinned:
+            for c in cps:
+                ck = keys.get(c["key_id"])
+                if ck is None or not is_pinned(c["key_id"], ck):
+                    return _bad(
+                        c["seq"], f"checkpoint {c['seq']} signed by a key that is not pinned"
+                    ), notes
         by_seq = {e["seq"]: e["entry_hash"] for e in entries}
         listed = manifest["entries"]
         if [x["seq"] for x in listed] != sorted(set(data["selected_seqs"])):
@@ -434,31 +482,52 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
             f"chain segment {seg['from_seq']}..{seg['to_seq']} verified ({len(entries)} entries, "
             f"{len(listed)} selected) against signed checkpoint(s)"
         )
-        return _ok(), notes
+        return VerifyResult(True, None, "ok", res.redacted, pinned), notes
     except (KeyError, ValueError, TypeError, OSError, zipfile.BadZipFile, AttributeError) as exc:
         return _bad(None, f"package unreadable or malformed ({type(exc).__name__})"), notes
 
 
+UNPINNED_LINE = (
+    "INTEGRITY OK - UNPINNED: AUTHENTICITY NOT ESTABLISHED; obtain the signer public key "
+    "out-of-band and re-run with --trusted-pubkey"
+)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """Exit 0: integrity OK and the signer is pinned (or --allow-unpinned, still labelled).
+    Exit 2: integrity OK but UNPINNED (authenticity not established). Exit 1: failure."""
     ap = argparse.ArgumentParser(description="Offline evidence-package verifier")
     ap.add_argument("path", nargs="?", default=str(Path(__file__).resolve().parent))
-    ap.add_argument("--trusted-key-id", default=None)
-    ap.add_argument("--allow-unpinned", action="store_true")
+    ap.add_argument("--trusted-key-id", action="append", default=[], help="16-hex key label")
+    ap.add_argument("--trusted-pubkey", action="append", default=[],
+                    help="full Ed25519 public key: hex, base64, PEM text or file path")  # fmt: skip
+    ap.add_argument("--allow-unpinned", action="store_true",
+                    help="exit 0 even if unpinned (label still printed)")  # fmt: skip
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
-    res, notes = verify_package(Path(args.path), args.trusted_key_id)
+    try:
+        pubs = [parse_pubkey(t) for t in args.trusted_pubkey]
+        res, notes = verify_package(Path(args.path), args.trusted_key_id, pubs)
+    except ValueError as exc:
+        res, notes = _bad(None, str(exc)), []
+    except Exception as exc:  # never a traceback: this runs on hostile input
+        res, notes = _bad(None, f"verification aborted ({type(exc).__name__})"), []
+    code = 1 if not res.ok else (0 if res.pinned or args.allow_unpinned else 2)
     if args.json:
-        print(json.dumps({"ok": res.ok, "first_bad_seq": res.first_bad_seq, "reason": res.reason,
+        print(json.dumps({"ok": res.ok, "pinned": res.pinned, "exit": code,
+                          "first_bad_seq": res.first_bad_seq, "reason": res.reason,
                           "notes": notes}))  # fmt: skip
     else:
         for n in notes:
             print(f"  {n}")
-        if res.ok:
-            print("PASS: package is internally consistent and signed")
-        else:
+        if not res.ok:
             at = f" (first bad seq {res.first_bad_seq})" if res.first_bad_seq is not None else ""
             print(f"FAIL: {res.reason}{at}")
-    return 0 if res.ok else 1
+        elif res.pinned:
+            print("PASS: package is internally consistent and signed by the pinned key")
+        else:
+            print(UNPINNED_LINE)
+    return code
 
 
 if __name__ == "__main__":
