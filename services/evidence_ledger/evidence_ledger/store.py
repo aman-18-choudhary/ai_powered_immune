@@ -246,7 +246,8 @@ class LedgerStore:
 
     def append(self, entry_in: LedgerEntryIn) -> AppendResult:
         """Idempotent on the exact entry (``chain.idempotency_key``): a repeat returns the
-        existing entry and writes nothing. Raises ``EntryRejected`` for permanent problems (nothing is written)."""
+        existing entry and writes nothing. Raises ``EntryRejected`` for permanent problems
+        (nothing is written)."""
         try:
             validate_entry(entry_in)
         except EntryRejected:
