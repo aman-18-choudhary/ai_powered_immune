@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demo-server"
+version = "0.1.0"
+description = "Single-process composition of the platform's real service code behind the console's /api contract (simulated data)"
+requires-python = ">=3.11"
+dependencies = [
+    "scam-contracts", "svckit", "sim-engine", "call-guard", "txn-guard", "antibody-hub",
+    "evidence-ledger", "fastapi>=0.110", "uvicorn>=0.29", "websockets>=12", "PyJWT>=2.8",
+    "networkx>=3", "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "scam-bench", "httpx2"]
+
+[tool.setuptools.packages.find]
+include = ["demo_server*"]
+
+[tool.setuptools.package-data]
+demo_server = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"demo_server/citizen.py" = ["E501"]
