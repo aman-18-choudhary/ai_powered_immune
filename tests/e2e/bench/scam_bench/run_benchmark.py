@@ -33,6 +33,7 @@ import numpy as np
 from scam_contracts.models import CallEvent, CallRisk, Transaction, TxnDecision
 
 from .antibody_stage import DEFAULT_CONFIRM_DELAY_S
+from .hero_case import run_hero_cases
 from .metrics import (
     Metrics,
     Protection,
@@ -436,6 +437,7 @@ def run_benchmark(
     with_reasons: bool = False,
     antibody_stage: bool = True,
     sensitivity: bool = False,
+    hero_seeds: int = 0,
 ) -> dict[str, Any]:
     """Run baseline + ``ablations`` over a fresh world; write the markdown report to ``out``
     (default ``docs/benchmark_report.md`` at the repo root; ``out=''`` skips writing).
@@ -535,6 +537,7 @@ def run_benchmark(
             for name, st in pipe.stages.items() if name in hidden
         },
         "antibody_stage": antibody_stage,
+        "hero": asyncio.run(run_hero_cases(hero_seeds)) if hero_seeds > 0 else None,
     }  # fmt: skip
     path = default_report_path() if out is None else (Path(out) if out != "" else None)
     if path is not None:
@@ -846,6 +849,7 @@ def render_report(
         "",
     ]
     L += _antibody_section(result)
+    L += _hero_section(result)
     if include_volatile:
         lt = result["latency_ms"]
         L += [
@@ -937,6 +941,45 @@ def render_report(
         "",
     ]
     return "\n".join(L)
+
+
+def _hero_section(result: dict[str, Any]) -> list[str]:
+    h = result.get("hero")
+    if not h:
+        return []
+    c, n = h["counts"], h["seeds"]
+    mo, wa = h["model_only"], h["with_antibody"]
+    lo, hi = h["age_range"]
+    return [
+        "## Hero scenario (hard case: seasoned mule, call undetected)",
+        "",
+        "A constructed hard case, NOT a prevalence estimate. Victim A (bank A) is called with a "
+        "templated digital-arrest script that call-guard catches; A's largest transfer, to a "
+        f"seasoned mule account ({lo}-{hi} days old, so young-payee signals do not fire), is held on "
+        "A's own strong signals. Victim B (bank B, another state) hears an off-template "
+        "'relative in an emergency' script that the shipped call-guard does not alert on, and 90 s "
+        "after A's last transfer pays the SAME mule. Nothing local flags B; only the shared threat "
+        "memory can. Single-channel detection missing a novel script is the point.",
+        "",
+        f"* Hero seeds run: {n}. Call-guard alerts on B's call: {c['b_alerts']} (undetected in "
+        f"every seed); on A's call: alert in {c['a_alerts']} of {n}. A's transfer to the shared mule "
+        f"held by the system (no label): {c['shared_held']} of {n}; antibody due (A's first hold "
+        f"+ {int(DEFAULT_CONFIRM_DELAY_S)} s) before B's transfer: {c['due_before_b']} of {n}; "
+        f"90 s gap held in {c['gap90']} of {n}.",
+        "",
+        "| B's first transfer to the shared mule | allow | step_up | hold_verify |",
+        "|---|---|---|---|",
+        f"| model + policy only (no antibody) | {mo['allow']} | {mo['step_up']} | "
+        f"{mo['hold_verify']} |",
+        f"| with the cross-bank antibody | {wa['allow']} | {wa['step_up']} | {wa['hold_verify']} |",
+        "",
+        f"With the antibody, B's transfer is `hold_verify` with `ANTIBODY_MATCH` in {c['match']} of "
+        f"{n} seeds. What this does NOT show: how often real mules are seasoned, how often a scam "
+        "evades call-guard, or how fast real analysts confirm; the single-cache benchmark also does "
+        "not time cross-bank propagation (the txn-guard two-instance test does: milliseconds, "
+        "limit 5 s).",
+        "",
+    ]
 
 
 def _sensitivity_rows(result: dict[str, Any]) -> list[str]:
@@ -1090,6 +1133,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--stamp", action="store_true", help="add a generated-at line (non-deterministic)"
     )
     ap.add_argument(
+        "--hero-seeds", type=int, default=40, help="hero hard-case seeds to evaluate (0 = skip)"
+    )
+    ap.add_argument(
         "--no-sensitivity",
         action="store_true",
         help="skip the antibody confirmation-delay / hold-gate sensitivity runs (faster)",
@@ -1115,6 +1161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         generated_at=stamp,
         with_reasons=a.reasons,
         sensitivity=not a.no_sensitivity,
+        hero_seeds=a.hero_seeds,
     )
     m: Metrics = res["variants"]["baseline"]["metrics"]
     print(

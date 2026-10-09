@@ -224,3 +224,19 @@ def test_sensitivity_is_off_by_default_in_the_api():
     ] == {} and "Sensitivity of the confirmation model" not in render_report(
         res, include_volatile=False
     )
+
+
+def test_hero_hard_case_section():
+    res = run_benchmark(7, ["no_antibody"], config=TINY, out="", hero_seeds=3)
+    h = res["hero"]
+    assert h["seeds"] == 3 and h["with_antibody"]["hold_verify"] == 3
+    assert h["model_only"]["hold_verify"] == 0 and h["counts"]["b_alerts"] == 0
+    assert h["counts"]["shared_held"] == 3 and h["counts"]["due_before_b"] == 3
+    text = render_report(res, include_volatile=False)
+    for needle in (
+        "## Hero scenario (hard case: seasoned mule, call undetected)",
+        "NOT a prevalence estimate", "off-template", "model + policy only (no antibody)",
+        "with the cross-bank antibody",
+    ):  # fmt: skip
+        assert needle in text, needle
+    assert run_benchmark(7, [], config=TINY, out="")["hero"] is None

@@ -264,9 +264,18 @@ default `label` gate; the `hold` gate confirms every first hold with no labels).
 a free parameter (sensitivity table in the report: 0/60/300/900 s all give 100% here because
 victims are hours apart). Antibody poisoning, false confirmations and legitimate-merchant
 antibodies are not simulated, and "0 benign antibody matches" holds by construction (a tautology).
-In the hero scenario victim B's first transfer goes to a mule victim A already paid
-(`HeroMetadata.shared_mule_payee_hash`, every seed 1..40); the antibody blocks it with
-`ANTIBODY_MATCH` in 40/40 seeds, but the model alone already holds that transfer in 39/40 (a young
-mule payee and a large amount), so in this demo the antibody mostly adds an explanation and a
-guarantee rather than a new decision. `python -m scam_bench.run_benchmark` takes about 3 minutes
-with the sensitivity runs; `--no-sensitivity` skips them.
+The hero demo is the honest HARD case: **seasoned mule + undetected call: only the shared threat
+memory saves victim B.** Victim A (bank A) is called with a templated digital-arrest script that
+call-guard catches; A's first and largest transfer goes to a seasoned mule account (60-400 days
+old, so young-payee signals do not fire) and is held by the system on A's own strong signals (call
+risk + anomalous amount). Victim B (bank B) hears an off-template "relative in an emergency" script
+that the shipped call-guard scores below 0.7 (it is a real call event, scored by the real
+call-guard, not a zeroed call risk) and pays the SAME mule 90 s after A's last transfer. Over hero
+seeds 1..40 the model plus policy alone does not hold B's first transfer (39 allow, 1 step_up, 0
+hold_verify); with A's hold confirmed 60 s later and the antibody applied across two instances (a
+few ms, limit 5 s) it is `hold_verify` with `ANTIBODY_MATCH` in 40/40, with the antibody due before
+B's transfer in 40/40. It proves the mechanism and its latency on a constructed case. It does NOT
+prove how common seasoned mules or evaded calls are, how fast real analysts confirm, or anything
+about prevalence; the young mules used by the other victims of the same campaign are still caught
+by the local model. `python -m scam_bench.run_benchmark` takes a few minutes
+with the sensitivity runs and 40 hero seeds; `--no-sensitivity` and `--hero-seeds 0` skip them.
