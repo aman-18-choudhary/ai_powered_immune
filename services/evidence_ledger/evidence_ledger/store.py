@@ -372,6 +372,18 @@ class LedgerStore:
         with self.engine.connect() as conn:
             return self._head(conn)
 
+    def last_non_audit_seq(self, audit_event: str) -> int:
+        """Highest seq that is not an export-audit entry (keeps repeated exports identical)."""
+        with self.engine.connect() as conn:
+            return (
+                conn.execute(
+                    select(func.max(ledger_entries.c.seq)).where(
+                        ledger_entries.c.event_type != audit_event
+                    )
+                ).scalar()
+                or 0
+            )
+
     def get(self, seq: int) -> LedgerEntry | None:
         with self.engine.connect() as conn:
             r = conn.execute(select(ledger_entries).where(ledger_entries.c.seq == seq)).first()
