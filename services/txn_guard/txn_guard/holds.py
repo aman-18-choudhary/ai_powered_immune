@@ -8,8 +8,9 @@ Audit is a transactional outbox: the audit entry is written into the hold record
 (``audit_pending``) in the SAME compare-and-set as the state change, then ``drain_audit``
 publishes pending entries to the ``AuditSink`` at-least-once and clears them only after a
 successful publish. Each entry carries a deterministic ``payload_hash`` over (event, txn_id,
-decision, decision_seq, score, actor/action, model_version, reason codes): the ledger-side dedupe
-key. Drains happen right after each change, on every idempotent re-entry (repeated
+decision, decision_seq, score, actor/action, model_version, reason codes): part of the ledger's
+full idempotency key (an exact repeat is absorbed, so at-least-once is safe). Drains happen
+right after each change, on every idempotent re-entry (repeated
 create/resolve/upgrade/verify) and from the periodic ``sweep``. A failing sink never fails the
 state change; the entry stays in the outbox.
 """
@@ -104,7 +105,8 @@ class AuditSink(Protocol):
 
 
 class InMemoryAuditSink:
-    """Collects entries; dedupes by ``payload_hash`` like the ledger would."""
+    """Collects entries; dedupes by ``payload_hash`` (a stricter, test-only stand-in: the ledger
+    itself dedupes on the full idempotency key)."""
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
@@ -119,7 +121,8 @@ class InMemoryAuditSink:
 
 class BusAuditSink:
     """Writes ``LedgerEntryIn`` to Topics.LEDGER (the ledger service itself is a later task);
-    at-least-once, so the ledger must dedupe on ``payload_hash``."""
+    at-least-once, so the ledger dedupes on the full idempotency key (service, event_type,
+    payload_hash, actor, model_version, case_refs, payload_present)."""
 
     def __init__(self, bus: Bus) -> None:
         self._bus = bus

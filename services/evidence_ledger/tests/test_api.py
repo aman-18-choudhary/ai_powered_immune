@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -286,14 +287,58 @@ async def test_consumer_appends_dedupes_and_dlqs(client):
         LedgerEntryIn(service="s", actor="a", event_type="e", payload_hash=payload_hash(pii), payload=pii),
     )  # fmt: skip
     await bus.publish(Topics.LEDGER, "k", entry_in(2))
-    assert await wait_for(lambda: store.head().seq == 2 and store.counters.snapshot()["dlq"] >= 3)
+    assert await wait_for(lambda: store.head().seq == 4 and store.counters.snapshot()["dlq"] >= 1)
+    es = store.page(1, 10)
+    assert [e.event_type for e in es] == [
+        "hold.created", "ledger.entry_quarantined.hash_mismatch",
+        "ledger.entry_quarantined.pii", "hold.created",
+    ]  # fmt: skip
+    assert es[1].payload_hash == "0" * 64 and es[2].payload_hash == payload_hash(pii)
     snap = store.counters.snapshot()
-    assert (snap["appended"], snap["duplicates"], snap["rejected"]) == (2, 1, 2)
-    dlq = bus.messages(Topics.LEDGER + Topics.DLQ_SUFFIX)
-    assert len(dlq) == 3 and snap["dlq"] == 3
-    redacted = [json.loads(raw) for _, raw in dlq if raw.startswith(b'{"reason"')]
-    assert {r["reason"] for r in redacted} == {"payload_hash_mismatch", "pii"}
-    assert all("9876543210" not in raw.decode() for _, raw in dlq if raw.startswith(b'{"reason"'))
+    assert (snap["appended"], snap["duplicates"], snap["rejected"], snap["dlq"]) == (4, 1, 2, 1)
+    dlq = bus.messages(Topics.LEDGER + Topics.DLQ_SUFFIX)  # only the unparseable message
+    assert len(dlq) == 1 and dlq[0][1] == b"{not json"
+    rows = store.dlq_events(10)
+    assert len(rows) == 1 and rows[0]["raw_sha256"] == hashlib.sha256(b"{not json").hexdigest()
+    assert "9876543210" not in json.dumps([e.model_dump(mode="json") for e in es])
+    m = (await client.get("/metrics", headers=OFFICER)).text
+    assert 'evidence_ledger_quarantined_total{reason="pii"} 1' in m
+    assert 'evidence_ledger_quarantined_total{reason="hash_mismatch"} 1' in m
+    assert "evidence_ledger_dlq_events_total 1" in m
+
+
+async def test_case_with_txn_id_shaped_refs_is_not_rejected(client):
+    for ref in ("txn_1234567890abcdef", "0123456789abcdef" * 4, "ab" * 16):
+        body = {"case_id": "c-" + ref[:8], "title": "t", "case_refs": [ref]}
+        assert (await client.post("/cases", json=body, headers=OFFICER)).status_code == 201, ref
+    r = await client.post(
+        "/cases",
+        json={"case_id": "c9", "title": "t", "case_refs": ["acct-123456789012"]},
+        headers=OFFICER,
+    )
+    assert r.status_code == 422
+
+
+async def test_package_renders_quarantine_entries_as_withheld(client, keyring):
+    store = client.app.state.store
+    store.append(entry_in(1, refs=["case-q"]))
+    q = store.append_or_quarantine(
+        entry_in(2, payload={"note": "call 9876543210"}).model_copy(
+            update={"payload_hash": payload_hash({"note": "call 9876543210"})}
+        )
+    )
+    assert q.entry.event_type == "ledger.entry_quarantined.pii"
+    await client.post(
+        "/cases",
+        json={"case_id": "case-q", "title": "t", "case_refs": ["case-q"], "seqs": [q.entry.seq]},
+        headers=OFFICER,
+    )
+    r = await client.get("/packages/case-q", headers=OFFICER)
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        md = z.read("explanations.md").decode()
+        assert "entry withheld by the ledger (pii)" in md and "9876543210" not in md
+        assert b"9876543210" not in r.content
 
 
 async def test_verify_detects_tail_truncation_via_retained_checkpoints(client):

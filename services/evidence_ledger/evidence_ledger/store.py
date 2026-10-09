@@ -16,7 +16,9 @@ Invariants
 """
 
 import base64
+import hashlib
 import json
+import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -41,15 +43,24 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-from .chain import GENESIS, EntryRejected, build_entry, idempotency_key, to_model, validate_entry
+from .chain import (
+    GENESIS,
+    EntryRejected,
+    build_entry,
+    idempotency_key,
+    quarantine_entry,
+    to_model,
+    validate_entry,
+)
 from .keys import Signer
 from .verify import canonical_json, checkpoint_message, ts_str
 
 MAX_PAGE = 1000
 ADVISORY_LOCK_ID = 727012
 SCHEMA_LOCK_ID = 727013
-APPEND_ONLY_TABLES = ("ledger_entries", "entry_refs", "checkpoints", "cases")
+APPEND_ONLY_TABLES = ("ledger_entries", "entry_refs", "checkpoints", "cases", "dlq_events")
 
+log = logging.getLogger("evidence_ledger")
 metadata = MetaData()
 
 ledger_entries = Table(
@@ -94,6 +105,15 @@ cases = Table(
     Column("created_at", String(32), nullable=False),
     Column("refs", Text, nullable=False),
     Column("seqs", Text, nullable=False),
+)  # fmt: skip
+
+
+dlq_events = Table(
+    "dlq_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("received_at", String(32), nullable=False),
+    Column("reason", String(64), nullable=False),
+    Column("raw_sha256", String(64), nullable=False),
 )  # fmt: skip
 
 
@@ -155,6 +175,7 @@ _REPLACE_GUARDS = {
     "checkpoints": "checkpoint_id = NEW.checkpoint_id OR seq = NEW.seq",
     "entry_refs": "seq = NEW.seq AND ref = NEW.ref",
     "cases": "case_id = NEW.case_id",
+    "dlq_events": "id = NEW.id",
 }
 
 
@@ -308,6 +329,61 @@ class LedgerStore:
             entry = to_model(d)
         self.counters.inc("appended")
         return AppendResult(entry, True)
+
+    def append_or_quarantine(self, entry_in: LedgerEntryIn) -> AppendResult:
+        """Like ``append`` but never drops: an entry the ledger refuses to store (identifier-looking
+        content, payload-hash mismatch, malformed fields) is replaced by a durable, hash-only
+        ``ledger.entry_quarantined.<reason>`` entry (idempotent on the original payload_hash)."""
+        try:
+            return self.append(entry_in)
+        except EntryRejected as exc:
+            q = quarantine_entry(entry_in, exc.code)
+            log.warning(
+                "ledger entry quarantined reason=%s service=%s",
+                q.event_type.rsplit(".", 1)[-1],
+                q.service,
+            )  # never the payload or any field except the already-validated service name
+            return self.append(q)
+
+    def count_events(self, prefix: str) -> dict[str, int]:
+        """Durable per-event_type counts for event types starting with ``prefix``."""
+        c = ledger_entries.c
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(c.event_type, func.count()).where(c.event_type.like(prefix + "%"))
+                .group_by(c.event_type)
+            ).all()  # fmt: skip
+        return {r[0]: r[1] for r in rows}
+
+    def record_dlq(self, raw: bytes, reason: str) -> None:
+        """Durably count a dead-lettered message. Only its sha256 is stored, never its bytes."""
+        with self._tx() as conn:
+            conn.execute(
+                dlq_events.insert().values(
+                    received_at=ts_str(self._now()),
+                    reason=reason[:64],
+                    raw_sha256=hashlib.sha256(raw).hexdigest(),
+                )  # fmt: skip
+            )
+        self.counters.inc("dlq")
+
+    def dlq_events(self, limit: int) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, MAX_PAGE))
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(dlq_events).order_by(dlq_events.c.id).limit(limit)).all()
+        return [
+            {
+                "id": r.id,
+                "received_at": r.received_at,
+                "reason": r.reason,
+                "raw_sha256": r.raw_sha256,
+            }
+            for r in rows
+        ]
+
+    def count_dlq(self) -> int:
+        with self.engine.connect() as conn:
+            return conn.execute(select(func.count()).select_from(dlq_events)).scalar() or 0
 
     # ------------------------------------------------------------------ checkpoints
     def _checkpoint(self, conn: Connection, head: Head) -> dict[str, Any] | None:

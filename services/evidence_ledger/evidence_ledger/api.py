@@ -32,7 +32,7 @@ from svckit.health import make_health_router
 from svckit.pii import contains_identifier, string_has_identifier
 
 from . import package as pkg
-from .chain import EntryRejected, to_dict
+from .chain import QUARANTINE_PREFIX, EntryRejected, to_dict
 from .consumer import run_maintenance, run_supervised
 from .keys import KeyRing, load_keyring
 from .store import CaseConflict, LedgerStore
@@ -286,6 +286,16 @@ def create_app(
                 f"evidence_ledger_{name}_total {snap[name]}",
             ]
         lines += ["# TYPE evidence_ledger_head_seq gauge", f"evidence_ledger_head_seq {head.seq}"]
+        quarantined = await asyncio.to_thread(store.count_events, QUARANTINE_PREFIX)
+        lines.append("# TYPE evidence_ledger_quarantined_total counter")  # durable: from the chain
+        for reason in ("pii", "hash_mismatch", "invalid"):
+            n = quarantined.get(QUARANTINE_PREFIX + reason, 0)
+            lines.append(f'evidence_ledger_quarantined_total{{reason="{reason}"}} {n}')
+        dlq_total = await asyncio.to_thread(store.count_dlq)
+        lines += [
+            "# TYPE evidence_ledger_dlq_events_total counter",
+            f"evidence_ledger_dlq_events_total {dlq_total}",
+        ]
         return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
     # ------------------------------------------------------------------ chain reads

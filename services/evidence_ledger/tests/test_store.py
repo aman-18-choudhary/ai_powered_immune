@@ -1,3 +1,4 @@
+import hashlib
 import threading
 
 import pytest
@@ -10,7 +11,7 @@ from evidence_ledger.chain import EntryRejected
 from evidence_ledger.store import checkpoints, entry_refs, ledger_entries
 from evidence_ledger.verify import GENESIS, verify_chain
 
-from .conftest import entry_in
+from .conftest import entry_in, tid
 
 
 def all_entries(store):
@@ -308,3 +309,73 @@ def test_model_version_goes_through_the_identifier_guard(store, mv):
 )
 def test_real_model_versions_are_accepted(store, mv):
     assert store.append(entry_in(1).model_copy(update={"model_version": mv})).created
+
+
+# ---------------------------------------------------------------- quarantine (fix round 2, item 1b)
+def pii_entry(n=1):
+    p = {"note": "call 9876543210"}
+    return LedgerEntryIn(
+        service="txn-guard", actor="system:txn-guard", event_type="hold.created",
+        payload_hash=payload_hash(p), payload=p, case_refs=[tid(n)],
+    )  # fmt: skip
+
+
+def test_pii_rejected_entry_becomes_exactly_one_durable_quarantine_entry(store, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    res = [store.append_or_quarantine(pii_entry()) for _ in range(3)]  # replay x3
+    assert [r.created for r in res] == [True, False, False]
+    e = res[0].entry
+    assert e.event_type == "ledger.entry_quarantined.pii" and e.actor == "quarantine"
+    assert e.service == "txn-guard" and e.payload is None and e.case_refs == []
+    assert e.payload_hash == payload_hash({"note": "call 9876543210"})  # the original hash only
+    assert store.head().seq == 1 and verify_chain(all_entries(store)).ok
+    with store.engine.begin() as c:  # the identifier never reaches the database
+        dump = " ".join(
+            str(r)
+            for t in ("ledger_entries", "entry_refs")
+            for r in c.execute(text(f"select * from {t}"))
+        )
+    assert "9876543210" not in dump and tid(1) not in dump
+    assert "9876543210" not in caplog.text and "quarantine" in caplog.text.lower()
+    assert store.counters.snapshot()["rejected"] >= 1
+    assert store.count_events("ledger.entry_quarantined.") == {"ledger.entry_quarantined.pii": 1}
+
+
+@pytest.mark.parametrize(
+    ("entry", "suffix", "service"),
+    [
+        (LedgerEntryIn(service="s", actor="a", event_type="e", payload_hash="0" * 64, payload={"k": "v"}), "hash_mismatch", "s"),
+        (LedgerEntryIn(service="svc 12345", actor="a", event_type="e", payload_hash="b" * 64), "invalid", "unknown"),
+        (LedgerEntryIn(service="s", actor="bob@gmail.com", event_type="e", payload_hash="c" * 64), "invalid", "s"),
+        (LedgerEntryIn(service="s", actor="a", event_type="e", payload_hash="not-a-hash"), "invalid", "s"),
+    ],
+)  # fmt: skip
+def test_every_rejection_class_is_quarantined_not_dropped(store, entry, suffix, service):
+    r = store.append_or_quarantine(entry)
+    assert r.created and r.entry.event_type == f"ledger.entry_quarantined.{suffix}"
+    assert r.entry.service == service and r.entry.payload is None
+    assert verify_chain(all_entries(store)).ok
+
+
+def test_valid_entries_pass_through_append_or_quarantine(store):
+    r = store.append_or_quarantine(entry_in(1))
+    assert r.created and r.entry.event_type == "hold.created"
+
+
+def test_dlq_events_record_hash_only_and_are_append_only(store):
+    raw = b"{not json 9876543210"
+    store.record_dlq(raw, "unparseable")
+    store.record_dlq(raw, "unparseable")
+    rows = store.dlq_events(10)
+    assert len(rows) == 2 and rows[0]["raw_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert "9876543210" not in str(rows) and set(rows[0]) == {
+        "id",
+        "received_at",
+        "reason",
+        "raw_sha256",
+    }
+    assert store.count_dlq() == 2
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(text("delete from dlq_events"))

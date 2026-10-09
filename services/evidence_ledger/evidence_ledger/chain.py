@@ -17,6 +17,8 @@ __all__ = [
     "GENESIS",
     "EntryRejected",
     "build_entry",
+    "quarantine_entry",
+    "QUARANTINE_PREFIX",
     "idempotency_key",
     "validate_entry",
     "to_model",
@@ -62,6 +64,31 @@ def validate_entry(e: LedgerEntryIn) -> None:
             raise EntryRejected("payload_hash_mismatch")
         if json_has_identifier(e.payload):
             raise EntryRejected("pii")
+
+
+QUARANTINE_PREFIX = "ledger.entry_quarantined."
+_QUARANTINE_SUFFIX = {
+    "pii": "pii", "payload_hash_mismatch": "hash_mismatch", "bad_payload": "invalid",
+    "bad_field": "invalid",
+}  # fmt: skip
+_INVALID_HASH = hashlib.sha256(b"ledger.invalid-payload-hash").hexdigest()
+
+
+def quarantine_entry(e: LedgerEntryIn, code: str) -> LedgerEntryIn:
+    """The durable stand-in for an entry the ledger refuses to store. It carries no payload, no
+    refs and no free text: the original service name if it is clean, the ORIGINAL payload_hash
+    if it is well formed (so the fact and the identity of the event survive), and the reason as a
+    fixed event_type suffix. Replays of the same rejected entry collapse into one entry."""
+    service = (
+        e.service
+        if _NAME_RE.match(e.service) and not string_has_identifier(e.service)
+        else "unknown"
+    )
+    ph = e.payload_hash if _HASH_RE.match(e.payload_hash) else _INVALID_HASH
+    suffix = _QUARANTINE_SUFFIX.get(code, "invalid")
+    return LedgerEntryIn(
+        service=service, actor="quarantine", event_type=QUARANTINE_PREFIX + suffix, payload_hash=ph
+    )
 
 
 def idempotency_key(e: LedgerEntryIn) -> str:

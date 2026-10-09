@@ -1,15 +1,17 @@
 """Ledger consumer (topic ``ledger.append``, group ``evidence-ledger``) and maintenance loop.
 
 The topic is NOT ordered across replicas and delivery is at-least-once, so ordering is the
-ledger's receipt order and duplicates are absorbed by the store's idempotency on
-(service, event_type, payload_hash). Permanently bad entries (malformed JSON, payload-hash
-mismatch, identifier-looking content) go to ``ledger.append.dlq`` and are counted, never silently
-dropped. Malformed raw messages are forwarded as received by ``svckit.consume`` (restrict the DLQ
-topic's ACL); entries the ledger itself rejects are forwarded as a REDACTED envelope.
+ledger's receipt order and duplicates are absorbed by the store's idempotency on the FULL entry
+key (service, event_type, payload_hash, actor, model_version, case_refs, payload_present).
+An entry the ledger refuses to store (identifier-looking content, payload-hash mismatch,
+malformed fields) is never dropped: it becomes a durable hash-only
+``ledger.entry_quarantined.<reason>`` entry in the chain. Only messages that are not a
+``LedgerEntryIn`` at all (or whose handling keeps failing) go to ``ledger.append.dlq``; each is
+counted durably in ``dlq_events`` by its sha256 only. ``svckit.consume`` forwards those raw bytes
+to the DLQ topic, so restrict that topic's ACL.
 """
 
 import asyncio
-import json
 import logging
 import re
 from typing import Any
@@ -19,7 +21,6 @@ from scam_contracts.models import LedgerEntryIn
 from scam_contracts.topics import Topics
 from svckit.bus import Bus, consume
 
-from .chain import EntryRejected
 from .store import LedgerStore
 
 log = logging.getLogger("evidence_ledger")
@@ -55,16 +56,11 @@ class CountingBus:
 
     async def publish_raw(self, topic: str, key: str, raw: bytes) -> None:
         await self._bus.publish_raw(topic, key, raw)
-        if topic.endswith(Topics.DLQ_SUFFIX):
-            self._store.counters.inc("dlq")
+        if topic.endswith(Topics.DLQ_SUFFIX):  # durable count; only the sha256 of the bytes
+            await asyncio.to_thread(self._store.record_dlq, raw, "consume_failed")
 
     def subscribe(self, topic: str, group: str) -> Any:
         return self._bus.subscribe(topic, group)
-
-
-def redacted_envelope(msg: LedgerEntryIn, code: str) -> bytes:
-    ph = msg.payload_hash if _HASH.match(msg.payload_hash) else None
-    return json.dumps({"reason": code, "payload_hash": ph}).encode()
 
 
 async def run_ledger_consumer(
@@ -73,13 +69,8 @@ async def run_ledger_consumer(
     counting = CountingBus(bus, store)
 
     async def handle(msg: LedgerEntryIn) -> None:
-        try:
-            await asyncio.to_thread(store.append, msg)
-        except EntryRejected as exc:  # permanent: no point retrying
-            log.warning("ledger entry rejected: %s", exc.code)
-            await counting.publish_raw(
-                DLQ_TOPIC, msg.payload_hash[:64], redacted_envelope(msg, exc.code)
-            )
+        # never drops: a refused entry becomes a durable quarantine entry in the chain
+        await asyncio.to_thread(store.append_or_quarantine, msg)
 
     await consume(
         counting, Topics.LEDGER, GROUP, LedgerEntryIn, handle, _NoDedupe(),

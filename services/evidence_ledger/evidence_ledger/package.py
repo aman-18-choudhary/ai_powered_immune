@@ -134,7 +134,13 @@ def render_explanations(
             f"- Entry hash: {e['entry_hash']}",
         ]
         p = e["payload"]
-        if p is None:
+        if e["event_type"].startswith("ledger.entry_quarantined."):
+            reason = e["event_type"].rsplit(".", 1)[-1]
+            lines.append(
+                f"- Status: entry withheld by the ledger ({reason}); only its original payload "
+                "hash is kept."
+            )
+        elif p is None:
             lines.append("- No payload retained (hash only).")
         else:
             rest = dict(p)

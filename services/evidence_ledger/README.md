@@ -88,6 +88,7 @@ A package export also signs a checkpoint at the head if none covers the case yet
 | Rewrite the whole chain from some point and re-hash | Yes if a signed checkpoint at or after that point survives elsewhere: it cannot be reproduced without the signing key |
 | Rewrite the whole chain AND hold the signing key (or delete all checkpoints and have no external copy) | **No.** Whoever has the key and DB write access can rebuild a consistent history. Keep the key off the database host, ship checkpoints/head hashes to an external append-only store, and keep exported packages |
 | Append a well-formed forged entry after the last checkpoint | **No** until the next checkpoint is signed; the receipt-order chain cannot say who inserted a valid-looking entry (access control and the DB role do) |
+| An emitter sends an entry the ledger refuses to store | Not lost: a hash-only quarantine entry records that it happened (see Consumer); its content is not kept |
 | Redacted context entries in a package | Their content is not shown, only bound by `payload_hash`; withheld payloads can be requested and checked against it |
 | Dishonest or wrong clock | **No.** `ts` is the ledger host's clock; the chain proves order of receipt, not when things happened. Use NTP and treat `ts` as receipt time |
 | A compromised emitting service | **No.** The ledger records what it was told |
@@ -142,28 +143,58 @@ query strings, headers or bodies; the entrypoint runs uvicorn with `access_log=F
 ## Consumer
 
 `run_ledger_consumer` reads `ledger.append` (group `evidence-ledger`) through `svckit.consume`.
-Malformed JSON, payload-hash mismatches, and identifier-looking content go to `ledger.append.dlq`
-and are counted (`rejected`, `dlq`); duplicates are counted (`duplicates`). Entries the ledger
-rejects are forwarded to the DLQ as a redacted envelope `{reason, payload_hash}`; messages that
-cannot even be parsed are forwarded as received, so restrict that topic's ACL. Transient database
-errors are retried (3 attempts, backoff) then dead-lettered. The consumer needs no dedupe memory
-of its own (the store is idempotent). The consumer task is restarted if the bus connection fails.
+
+**What the ledger does when it cannot store an entry.** It never drops one. An entry that fails
+validation (identifier-looking content, payload-hash mismatch, malformed fields) is replaced by a
+durable, hash-only quarantine entry in the chain: `service` = the original service if it is a clean
+name, else `unknown`; `actor` = `quarantine`; `event_type` = `ledger.entry_quarantined.pii`,
+`.hash_mismatch` or `.invalid`; `payload_hash` = the original entry's hash (a constant when even
+that is malformed, so malformed ones of one service collapse into one entry); no payload, no refs,
+no free text. It is idempotent on the original payload_hash (replays write one entry), is logged
+at WARNING without any payload, shows up in packages as an ordinary hash-only entry ("entry
+withheld by the ledger (reason)") and is counted durably from the chain on `/metrics`
+(`evidence_ledger_quarantined_total{reason=...}`). The original event is thus recorded as having
+happened, with its identity hash, and the content is not stored.
+
+Messages that are not a `LedgerEntryIn` at all (or whose handling keeps failing after 3 attempts)
+go to `ledger.append.dlq` and are counted durably in the append-only `dlq_events` table (id,
+receipt time, reason, **sha256 of the raw bytes only**; the bytes are never stored in the
+database; `evidence_ledger_dlq_events_total`). `svckit.consume` forwards the raw bytes to the DLQ
+topic, so restrict that topic's ACL. Duplicates are counted (`duplicates`). The consumer needs no
+dedupe memory of its own (the store is idempotent) and is restarted if the bus connection fails.
 
 ### PII guard
 
-Payload strings, keys and numbers, `case_refs`, `service`/`actor`/`event_type` and case titles go
-through `svckit.pii` (NFKC, separators collapsed, 9+ digits, e-mail/UPI `@`, `+`/`0091`, PAN,
-IFSC). Platform-minted ids are exempt: a lowercase hex token of 16..64 chars (8..64 after a
-`prefix_`) containing a letter, **only if** its longest digit run is shorter than 9 (12 for a
-64-char sha256 digest, where 9-11 digit runs occur by chance in about 1% of real digests). So
-`a1234567890123456` and `acct_123456789012` are rejected. Consequence: about 1% of random
-16-hex ids contain a 9-digit run and are rejected as identifier-looking; emitters should be
-prepared for that (DLQ + count). JSON numbers with a 9+ digit run are rejected (amounts of 9+
-digits, e.g. Rs 10 crore, must be omitted or sent differently); decision sequence numbers, scores
-and rupee amounts below 9 digits are fine. **Known limits:** spelled-out numbers, encoded
-values and fragments of 8 digits or fewer are not detected. The guard is a safety net; emitters
-must not put identifiers in payloads. A raw identifier that does reach a stored payload is
-immutable and ends up in every package that selects the entry.
+Payload strings, keys and numbers, `case_refs`, `service`/`actor`/`event_type`, `model_version`
+and case titles go through `svckit.pii` (NFKC, separators collapsed, 9+ digits, e-mail/UPI `@`,
+`+`/`0091`, PAN, IFSC). Platform-minted opaque ids are accepted **only as whole strings** of an
+exact shape: an optional lowercase `prefix_` (2-8 letters), then exactly 16, 24, 32 or 64
+lowercase hex characters with at least one letter a-f whose longest digit run is at most 15, 21,
+22 or 25 respectively. Everything else (including an id embedded in longer text, and every
+free-text field) gets the strict rule. Numbers (and numeric keys) with a run of 9+ digits are
+rejected: amounts of 9+ digits (for example Rs 10 crore in rupees) must be omitted or sent in a
+different shape; decision sequence numbers, scores and rupee amounts below 9 digits are fine.
+
+Measured false-reject rate on uniformly random lowercase hex ids (1,000,000 per length):
+
+| id length | rejected |
+|---|---|
+| 16 hex (`txn_` + 16) | 0.051% (0.054% is the floor: all-digit ids look like card numbers) |
+| 24 hex | 0.0053% |
+| 32 hex | 0.0089% |
+| 64 hex (sha256) | 0.0074% |
+
+(The earlier "about 1%" claim and the 5-14% of a flat 9-digit rule were wrong or too costly; the
+per-length caps are the smallest that keep the rate under 0.01% where that is possible.) The
+test suite re-measures 200,000 ids per length.
+
+**Residual risk, stated plainly:** a shape rule cannot tell a 15-digit number plus one hex letter
+in a 16-character string from the 0.5% of random 16-hex ids that have a 15-digit run, nor a
+phone-sized digit run padded with hex letters to an id length. Those pass. `a1234567890123456`,
+`1234567890123456a`, `12345678a12345678a` and an id glued into text are rejected. Spelled-out
+numbers, encoded values and fragments of 8 digits or fewer are not detected either. The guard is
+a safety net; emitters must not put identifiers in payloads or refs. A raw identifier that does
+reach a stored payload is immutable and ends up in every package that selects the entry.
 
 ## Evidence packages
 
@@ -211,7 +242,8 @@ retention, who certifies). This service supplies integrity evidence, not complia
 
 1. Obtain `verify.py` from a source you trust (it is also in the package and hashed in the
    manifest; if the package is hostile its own copy is no evidence). It is ~600 lines, stdlib
-   only, readable end to end.
+   only, readable end to end, and runs on **Python 3.8 or newer** (tested on 3.9, 3.10, 3.11,
+   3.13; older interpreters get a clear message and exit 1).
 2. Obtain the agency's Ed25519 **public key** independently of the package (published by the
    operator, notarised, referenced in the certificate). `key_id` is only a 64-bit label, not a
    security pin: pin the full key.
@@ -260,6 +292,7 @@ writer's speed, not with replicas.
 * The ledger grows without bound (retention/archival of an immutable chain is an operations
   decision not implemented here). The consumer DLQ is not replayed automatically.
 * Cases are immutable once created; add refs via a new case id.
-* About 1% of random 16-hex ids are rejected by the PII guard (9-digit run); see above.
+* The PII shape rule has a small false-reject rate (0.05% for 16-hex ids) and the residual risk
+  described above. Quarantined entries keep the event's identity hash but not its content.
 * The standalone verifier duplicates `canonical_json` (3 lines) on purpose; a parity test pins it
   to `scam_contracts.canonical`.
