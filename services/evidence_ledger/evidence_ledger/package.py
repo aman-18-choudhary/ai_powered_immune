@@ -65,6 +65,8 @@ REASON_MEANINGS: dict[str, str] = {
     "RAIL_TYPICAL_AMOUNT_DAMPER": "the amount is typical for the rail, which lowered the score",
     "LATE_CALL_RISK_POST_SETTLEMENT": "call risk arrived after the transfer had settled",
     "LATE_ANTIBODY_POST_SETTLEMENT": "an antibody arrived after the transfer had settled",
+    "CALL_RISK_AMOUNT_GUARD": "an active scam-call risk plus an anomalous amount (policy floor)",
+    "FUTURE_DATED_TIMESTAMP": "the transaction timestamp is in the future (policy floor)",
 }
 
 
