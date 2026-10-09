@@ -100,10 +100,13 @@ def gen_scam_campaign(
     start_ts: datetime | None = None,
     victim_indices: list[int] | None = None,
     second_victim_gap: timedelta | None = None,
+    shared_first_mule: bool = False,
 ) -> Campaign:
     """``victim_indices`` pins the victims (indices into world.citizens). With
     ``second_victim_gap``, the second victim's first transfer is moved to exactly that long
-    after the first victim's last transfer (their calls shift with it)."""
+    after the first victim's last transfer (their calls shift with it). With
+    ``shared_first_mule`` the second victim's FIRST transfer goes to a mule that the first victim
+    already paid (no extra random draws, so every other value is unchanged)."""
     rng = np.random.default_rng([seed, zlib.crc32(campaign_id.encode()), 4])
     camp = Campaign(campaign_id)
     t0 = start_ts or (world.start + timedelta(days=1, hours=float(rng.uniform(9, 17))))
@@ -141,6 +144,7 @@ def gen_scam_campaign(
     inflows: dict[str, list[tuple[datetime, float]]] = {m.account_id: [] for m in mules}
     t = t0
     txn_counter = 0
+    camp_first_mules: list[int] = []
 
     def mk_txn(payer_token, payee_acc, rail, amount, ts, bank_id, device, role) -> Transaction:
         nonlocal txn_counter
@@ -196,9 +200,18 @@ def gen_scam_campaign(
         camp.calls.extend(calls_of_victim)
         first = None
         vic_mules = rng.permutation(n_mules)[: max(2, min(n_mules, 3))]
+        if shared_first_mule and vi == 1:
+            first_mules = [int(m) for m in camp_first_mules]
+            if int(vic_mules[0]) not in first_mules:
+                vic_mules = np.concatenate(
+                    [[first_mules[0]], vic_mules[vic_mules != first_mules[0]]]
+                )
         device = world.device_token(cit.device_id)
         for pi, (rail, amt) in enumerate(_victim_plan(rng, total)):
-            mule = mules[int(vic_mules[pi % len(vic_mules)])]
+            mule_i = int(vic_mules[pi % len(vic_mules)])
+            mule = mules[mule_i]
+            if vi == 0 and mule_i not in camp_first_mules:
+                camp_first_mules.append(mule_i)  # mules victim A actually paid, in order
             txn = mk_txn(vtoken, mule, rail, amt, ts, cit.bank_id, device, "victim_transfer")
             inflows[mule.account_id].append((ts, amt))
             first = first or txn

@@ -193,3 +193,24 @@ async def test_second_post_while_running_is_409_then_new_seed_allowed(world_):
     assert second.json()["campaign_id"] != first.json()["campaign_id"]
     ids = [json.loads(v)["txn_id"] for _, v in bus.messages(Topics.TXN_EVENTS)]
     assert len(ids) > n and len(set(ids)) == len(ids)
+
+
+def test_hero_second_victim_first_transfer_goes_to_a_mule_the_first_victim_paid():
+    """Demo centrepiece: B's first payee_hash was already paid by victim A (so a published antibody
+    for A's mule blocks B), for every hero seed, deterministically, keeping the 90 s gap."""
+    for seed in range(1, 41):
+        world = build_world(5, 600)
+        sc = build_hero_scenario(world, seed=seed)
+        meta = sc.metadata
+        victim_txns = [t for t in sc.txns if sc.campaign.txn_roles[t.txn_id] == "victim_transfer"]
+        a = [t for t in victim_txns if t.payer_token == meta.victim_a_token]
+        b = sorted(
+            (t for t in victim_txns if t.payer_token == meta.victim_b_token), key=lambda t: t.ts
+        )
+        assert b[0].payee_hash == meta.shared_mule_payee_hash, seed
+        assert meta.shared_mule_payee_hash in {t.payee_hash for t in a}, seed
+        assert b[0].ts - max(t.ts for t in a) == timedelta(seconds=meta.victim_b_gap_s), seed
+        again = build_hero_scenario(build_world(5, 600), seed=seed)
+        assert again.metadata == meta and [t.txn_id for t in again.txns] == [
+            t.txn_id for t in sc.txns
+        ]

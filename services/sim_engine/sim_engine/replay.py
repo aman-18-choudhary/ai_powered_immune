@@ -33,6 +33,7 @@ class HeroMetadata(BaseModel):
     victim_b_state: str
     mule_payee_hashes: list[str]
     cashout_payee_hash: str
+    shared_mule_payee_hash: str  # victim B's first payee: a mule victim A already paid
     victim_b_gap_s: float
 
 
@@ -71,6 +72,7 @@ def build_hero_scenario(world: World, seed: int = 1) -> Scenario:
         seed,
         victim_indices=[a_i, b_i],
         second_victim_gap=HERO_GAP,
+        shared_first_mule=True,
     )
     a_tok, b_tok = camp.victim_tokens
     victim_txns = [t for t in camp.txns if camp.txn_roles[t.txn_id] == "victim_transfer"]
@@ -85,6 +87,9 @@ def build_hero_scenario(world: World, seed: int = 1) -> Scenario:
         victim_b_state=b.state,
         mule_payee_hashes=mule_hashes,
         cashout_payee_hash=camp.mule_chain[-1],
+        shared_mule_payee_hash=min(
+            (t for t in victim_txns if t.payer_token == b_tok), key=lambda t: t.ts
+        ).payee_hash,
         victim_b_gap_s=HERO_GAP.total_seconds(),
     )
     return Scenario("hero", camp, meta, list(camp.calls), list(camp.txns))
