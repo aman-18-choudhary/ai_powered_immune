@@ -12,7 +12,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -295,7 +295,7 @@ class SessionScorer:
         async with self._store.lock(call_id):
             state = await self._store.get(call_id)
             if state is not None and state.published < crossing_no:
-                state.published = crossing_no
+                state = replace(state, published=crossing_no)  # never mutate the stored object
                 if ledger is not None:
                     await self._store.put_with_pending(call_id, state, *ledger)
                 else:

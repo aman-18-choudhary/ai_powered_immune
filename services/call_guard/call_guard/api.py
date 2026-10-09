@@ -69,6 +69,9 @@ def create_app(
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            ob = getattr(session_scorer, "ledger_outbox", None)
+            if ob is not None:
+                await ob.aclose()
 
     async def ready() -> bool:
         if redis is not None:
