@@ -22,6 +22,7 @@ class Settings:
     min_signalled_payers: int = 2  # GRAPH_MIN_SIGNALLED_PAYERS (an antibody can replace them)
     relay_min_payers: int = 2  # GRAPH_RELAY_MIN_PAYERS: distinct payers of a pass-through account
     relay_min_inr: int = 10_000  # GRAPH_RELAY_MIN_INR: smaller pass-through flows are not relays
+    min_flagged_share: float = 0.10  # GRAPH_MIN_FLAGGED_SHARE: flagged / distinct payers of a mule
     min_mules: int = 2  # GRAPH_MIN_MULES: pass-through accounts per ring (antibody rings exempt)
     sink_min_share: float = 0.3  # GRAPH_SINK_MIN_SHARE: inflow share from ring relays of a cash-out
     device_max_accounts: int = 20  # GRAPH_DEVICE_MAX_ACCOUNTS: busier devices are ignored

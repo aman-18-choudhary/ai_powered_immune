@@ -36,6 +36,7 @@ from .config import Settings
 from .graph import (
     ACCOUNT,
     DEVICE,
+    SIG_CAP,
     RelayIndex,
     device_accounts,
     devices_of,
@@ -58,6 +59,33 @@ def make_ring_id(core: frozenset[str] | set[str]) -> str:
 def is_seed(g: nx.DiGraph, n: str, now_us: int) -> bool:
     st = ns(g, n)
     return st.kind == ACCOUNT and (st.susp_in > 0 or is_active_antibody(st, now_us))
+
+
+def flagged_payers(g: nx.DiGraph, n: str, cfg: Settings) -> tuple[int, int]:
+    """(distinct payers with a flagged payment to ``n``, distinct payers of ``n``). The node's
+    ``sig`` set is exact below ``SIG_CAP`` entries; at the cap the in-edges are scanned (bounded by
+    ``GRAPH_FANIN_SCAN_CAP``) so a big mule is judged on its real share."""
+    st = ns(g, n)
+    payers = g.in_degree(n)
+    flagged = len(st.sig)
+    if flagged >= SIG_CAP and flagged < payers * cfg.min_flagged_share:
+        pin = pay_in(g, n, cfg.fanin_scan_cap)
+        flagged = sum(1 for _, e in pin if e.susp > 0)
+        payers = min(payers, len(pin))
+    return flagged, payers
+
+
+def is_supported(g: nx.DiGraph, n: str, cfg: Settings, now_us: int) -> bool:
+    """A pass-through account is an evidence-bearing mule only if a real share of its payers were
+    flagged (``GRAPH_MIN_FLAGGED_SHARE``) or an active antibody names it. A busy merchant with a
+    false positive or two forwards its takings too, but its flagged share is tiny."""
+    st = ns(g, n)
+    if is_active_antibody(st, now_us):
+        return True
+    if st.susp_in <= 0:
+        return False
+    flagged, payers = flagged_payers(g, n, cfg)
+    return flagged >= 1 and payers > 0 and flagged >= cfg.min_flagged_share * payers
 
 
 def _tenth(part: int, whole: int) -> bool:
@@ -233,8 +261,15 @@ def _gate(ring: Ring, cfg: Settings, g: nx.DiGraph, now_us: int) -> bool:
     )
     if not big_enough or not ring.core:
         return False
-    if not ring.antibody and ring.victims_signalled < cfg.min_signalled_payers:
-        return False
+    if not ring.antibody:
+        if ring.victims_signalled < cfg.min_signalled_payers:
+            return False
+        supported = sum(
+            1 for n, r in ring.members.items()
+            if r == MULE and n in g and is_supported(g, n, cfg, now_us)
+        )  # fmt: skip
+        if supported < cfg.min_mules:
+            return False
     return ring.victims >= 1 and ring.score >= cfg.min_score
 
 
