@@ -1,10 +1,19 @@
 """Antibody pipeline stage with an explicit, documented analyst-confirmation model.
 
-Assumption (NOT measured, it is a modelling choice): when a victim transfer of a campaign is first
-held (``hold_verify``), a fraud analyst reviews the case and, ``confirm_delay_s`` later
-(default 60 s, deterministic), confirms the payee as a mule. The confirmation is an oracle on the
-simulator's ground truth: only holds whose transaction truly is a campaign victim transfer are ever
-confirmed (a held benign payment is not). The resulting antibody (kind ``mule_account``, TTL 14
+``AnalystOracle`` (this module) stands in for a human analyst's investigation and uses the
+simulator's ground-truth role labels, which a real analyst only approximates. Two gates:
+
+* ``label`` (default): when a transaction that truly is a campaign victim transfer is first held
+  (``hold_verify``), the analyst confirms its payee as a mule ``confirm_delay`` later (default 60 s,
+  deterministic). A held benign payment is never confirmed. "No benign antibody matches" is
+  therefore TRUE BY CONSTRUCTION here (the simulator has no benign mule payees and confirmation is
+  label-gated); it is a tautology, not evidence about analyst accuracy.
+* ``hold``: no labels: every first ``hold_verify`` to a payee is confirmed (a rubber-stamping
+  analyst). Any false positive of the model then poisons its payee, which is what the
+  benign-match count of this variant measures.
+
+The confirmation delay is a free parameter (see the report's sensitivity table). The resulting
+antibody (kind ``mule_account``, TTL 14
 days) is applied to every bank's cache at once (the benchmark has one cache; the simulator has
 second-bank victims only in the hero scenario, so this is optimistic about propagation to other
 banks and says nothing about hub outages). Later transfers to that payee_hash are then subject to
@@ -20,13 +29,15 @@ from txn_guard.antibody_cache import AntibodyLookup, InMemoryAntibodyCache
 from txn_guard.service import TxnGuardService
 
 DEFAULT_CONFIRM_DELAY_S = 60.0
+GATES = ("label", "hold")
 TTL = timedelta(days=14)
 
 
 @dataclass
-class AntibodyStage:
+class AntibodyStage:  # the AnalystOracle + antibody cache for one pipeline variant
     truth: object  # sim_engine GroundTruth (txn_role / is_scam_txn)
     confirm_delay: timedelta = timedelta(seconds=DEFAULT_CONFIRM_DELAY_S)
+    gate: str = "label"
     now: datetime | None = None
     scheduled: dict[str, datetime] = field(default_factory=dict)  # payee_hash -> confirm ts
     _due: list[tuple[datetime, str]] = field(default_factory=list)
@@ -72,11 +83,17 @@ class AntibodyStage:
             self.benign_matches += 1
         return TxnGuardService._antibody_patch(hit)
 
+    def needs_decision(self, txn: Transaction) -> bool:
+        """Whether this transaction's decision must be known immediately (to schedule a
+        confirmation): victim transfers under the label gate, every transaction under the hold
+        gate."""
+        return self.gate == "hold" or self.truth.txn_role(txn.txn_id) == "victim_transfer"  # type: ignore[attr-defined]
+
     def observe(self, txn: Transaction, decision: TxnDecision) -> None:
-        """First hold on a campaign victim transfer schedules the analyst confirmation."""
+        """First hold (label gate: on a campaign victim transfer) schedules the confirmation."""
         if (
             decision.decision == "hold_verify"
-            and self.truth.txn_role(txn.txn_id) == "victim_transfer"  # type: ignore[attr-defined]
+            and self.needs_decision(txn)
             and txn.payee_hash not in self.scheduled
         ):
             at = txn.ts + self.confirm_delay

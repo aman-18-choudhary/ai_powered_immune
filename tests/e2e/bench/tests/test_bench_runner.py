@@ -195,3 +195,32 @@ def test_mule_history_is_public():
     from txn_guard.simdata import mule_history
 
     assert callable(mule_history)
+
+
+def test_antibody_sensitivity_table_and_honest_limitations():
+    res = run_benchmark(7, ["no_antibody"], config=TINY, out="", sensitivity=True)
+    sens = res["sensitivity"]
+    assert set(sens) == {"__delay_0", "__delay_300", "__delay_900", "__hold_gate"}
+
+    def rec(v):
+        return v["metrics"].by_role["victim_transfer"].recall
+
+    assert rec(sens["__delay_0"]) >= rec(res["variants"]["baseline"]) >= rec(sens["__delay_900"])
+    text = render_report(res, include_volatile=False)
+    for needle in (
+        "Sensitivity of the confirmation model", "label-gated, 0 s", "label-gated, 300 s",
+        "label-gated, 900 s", "hold-gated (no labels)", "tautology", "3-6 mule accounts",
+        "poisoning",
+    ):  # fmt: skip
+        assert needle in text, needle
+    assert "__delay" not in text and "__hold_gate" not in text  # hidden variants never leak
+    assert set(res["variants"]) == {"baseline", "no_antibody"}
+
+
+def test_sensitivity_is_off_by_default_in_the_api():
+    res = run_benchmark(7, ["no_antibody"], config=TINY, out="")
+    assert res[
+        "sensitivity"
+    ] == {} and "Sensitivity of the confirmation model" not in render_report(
+        res, include_volatile=False
+    )

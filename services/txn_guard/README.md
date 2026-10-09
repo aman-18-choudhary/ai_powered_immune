@@ -254,3 +254,19 @@ and `consumer.run_antibody_consumer` feed it.
   `ANTIBODY_CACHE_CAPACITY`. Metrics: `txn_guard_antibody_cache_size`,
   `txn_guard_antibody_matches_total`, `txn_guard_antibody_bootstrap_failed`,
   `txn_guard_antibody_bloom_unconfirmed_total`.
+
+### Antibody benchmark caveats and the hero demo
+
+The benchmark's antibody gain (victim-transfer recall 94.5% -> 100% at seed 42) rests on the
+simulator's structure (3-6 mules reused across ~25 victims per campaign) and on an assumed analyst
+oracle that confirms each mule payee 60 s after its first held transfer (ground-truth labels in the
+default `label` gate; the `hold` gate confirms every first hold with no labels). The 60 s delay is
+a free parameter (sensitivity table in the report: 0/60/300/900 s all give 100% here because
+victims are hours apart). Antibody poisoning, false confirmations and legitimate-merchant
+antibodies are not simulated, and "0 benign antibody matches" holds by construction (a tautology).
+In the hero scenario victim B's first transfer goes to a mule victim A already paid
+(`HeroMetadata.shared_mule_payee_hash`, every seed 1..40); the antibody blocks it with
+`ANTIBODY_MATCH` in 40/40 seeds, but the model alone already holds that transfer in 39/40 (a young
+mule payee and a large amount), so in this demo the antibody mostly adds an explanation and a
+guarantee rather than a new decision. `python -m scam_bench.run_benchmark` takes about 3 minutes
+with the sensitivity runs; `--no-sensitivity` skips them.

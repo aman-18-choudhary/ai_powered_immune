@@ -59,9 +59,9 @@ class Ablation:
 
     transform: FeatureTransform | None = None
     call_source: str = "real"
-    antibody: bool = (
-        True  # the antibody stage is part of the baseline; ``no_antibody`` turns it off
-    )
+    antibody: bool = True  # part of the baseline; ``no_antibody`` turns it off
+    antibody_delay_s: float = DEFAULT_CONFIRM_DELAY_S
+    antibody_gate: str = "label"  # "label" (ground-truth oracle) or "hold" (every first hold)
 
 
 def _no_call_signal() -> Ablation:
@@ -84,6 +84,7 @@ ABLATIONS: dict[str, Callable[[], Ablation]] = {
     "degraded_call_signal": _degraded_call_signal,
     "no_antibody": _no_antibody,
 }
+SENSITIVITY_DELAYS_S = (0.0, 60.0, 300.0, 900.0)
 DEFAULT_ABLATIONS = ["no_call_signal", "degraded_call_signal", "no_antibody"]
 
 
@@ -258,7 +259,9 @@ class Pipeline:
         # one antibody stage per variant that has it: each variant issues its own holds, so its
         # analyst confirmations (and the antibodies they create) differ
         self.stages = {
-            name: AntibodyStage(truth)
+            name: AntibodyStage(
+                truth, confirm_delay=timedelta(seconds=ab.antibody_delay_s), gate=ab.antibody_gate
+            )
             for name, ab in variants.items()
             if antibody_stage and ab.antibody and truth is not None
         }
@@ -311,7 +314,7 @@ class Pipeline:
             # A stage needs the decision at once only for campaign victim transfers (a first
             # hold there schedules the analyst confirmation); every other transaction can still
             # be scored in the deferred batch because the cache only changes on those holds.
-            now_needed = stage is not None and self.truth.txn_role(txn.txn_id) == "victim_transfer"
+            now_needed = stage is not None and stage.needs_decision(txn)
             if self.with_reasons or now_needed:
                 out[name] = make_decision(
                     txn.txn_id, f, self.scorer, txn.ts, with_reasons=self.with_reasons
@@ -432,6 +435,7 @@ def run_benchmark(
     generated_at: str | None = None,
     with_reasons: bool = False,
     antibody_stage: bool = True,
+    sensitivity: bool = False,
 ) -> dict[str, Any]:
     """Run baseline + ``ablations`` over a fresh world; write the markdown report to ``out``
     (default ``docs/benchmark_report.md`` at the repo root; ``out=''`` skips writing).
@@ -447,6 +451,14 @@ def run_benchmark(
     sc = build_scenario(seed, cfg)
     variants: dict[str, Ablation] = {"baseline": Ablation()}
     variants.update(dict(zip(ablations, abl, strict=True)))
+    hidden: dict[str, str] = {}  # extra variants for the antibody sensitivity table
+    if sensitivity and antibody_stage:
+        for d in SENSITIVITY_DELAYS_S:
+            if d != DEFAULT_CONFIRM_DELAY_S:
+                variants[f"__delay_{int(d)}"] = Ablation(antibody_delay_s=d)
+                hidden[f"__delay_{int(d)}"] = f"label-gated, {int(d)} s"
+        variants["__hold_gate"] = Ablation(antibody_gate="hold")
+        hidden["__hold_gate"] = f"hold-gated (no labels), {int(DEFAULT_CONFIRM_DELAY_S)} s"
     degraded = (
         degraded_call_risks(sc, seed)
         if any(a.call_source == "degraded" for a in variants.values())
@@ -460,6 +472,7 @@ def run_benchmark(
 
     txn_by_id = {t.txn_id: t for t in sc.txns}
     res_variants: dict[str, Any] = {}
+    sens: dict[str, Any] = {}
     for name, ds in decisions.items():
         detections = [*ds, *(degraded if variants[name].call_source == "degraded" else risks)]
         rows = []
@@ -476,11 +489,15 @@ def run_benchmark(
                     ),
                 )
             )
-        res_variants[name] = {
+        entry = {
             "metrics": compute_metrics(ds, sc.truth, txn_by_id),
             "lead": rows,
             "decision_count": len(ds),
         }
+        if name in hidden:
+            sens[name] = entry | {"label": hidden[name]}
+        else:
+            res_variants[name] = entry
     alerted = {r.call_id for r in risks}
     calls = {
         "scam_calls": len(sc.scam_call_ids),
@@ -504,12 +521,18 @@ def run_benchmark(
         "degraded_params": _degraded_params(),
         "truth": sc.truth,
         "txns": txn_by_id,
-        "decisions": decisions,
+        "decisions": {k: v for k, v in decisions.items() if k not in hidden},
+        "sensitivity": sens,
         "call_risks": risks,
         "antibody_stats": {
             name: {"published": st.published, "matches": st.matches,
                    "scam_matches": st.scam_matches, "benign_matches": st.benign_matches}
-            for name, st in pipe.stages.items()
+            for name, st in pipe.stages.items() if name not in hidden
+        },
+        "sensitivity_stats": {
+            name: {"published": st.published, "matches": st.matches,
+                   "scam_matches": st.scam_matches, "benign_matches": st.benign_matches}
+            for name, st in pipe.stages.items() if name in hidden
         },
         "antibody_stage": antibody_stage,
     }  # fmt: skip
@@ -896,6 +919,14 @@ def render_report(
         "exercised here.",
         "- Lead time uses the simulator's 10th victim as the mass-victimisation point; it is "
         "measured per campaign with few campaigns, so it carries wide uncertainty.",
+        "- The antibody gain (94.5% -> 100% victim recall at seed 42) depends on the simulator's "
+        "structure: each campaign has 3-6 mule accounts reused across ~25 victims, and the oracle "
+        "confirms every mule payee a fixed delay after its first held transfer, so almost every "
+        "later victim transfer hits an already-confirmed payee. The 60 s delay is a free "
+        "parameter (sensitivity table above). Antibody poisoning, false confirmations and "
+        "antibodies on legitimate merchants are NOT simulated, and 'benign antibody matches = 0' "
+        "holds by construction (no benign mule payees in the simulator; label-gated "
+        "confirmation): a tautology, not evidence about analyst accuracy.",
         "- The antibody stage rests on an ASSUMED analyst-confirmation model (first hold_verify on "
         "a campaign victim transfer, confirmed after a fixed delay, using simulator ground truth "
         "as the analyst's oracle), not on measured analyst behaviour; benign holds are never "
@@ -906,6 +937,53 @@ def render_report(
         "",
     ]
     return "\n".join(L)
+
+
+def _sensitivity_rows(result: dict[str, Any]) -> list[str]:
+    sens = result.get("sensitivity") or {}
+    if not sens:
+        return []
+    base, off = result["variants"]["baseline"], result["variants"]["no_antibody"]
+
+    def row(label: str, v: dict[str, Any], st: dict[str, int] | None) -> str:
+        r = v["metrics"].by_role.get("victim_transfer")
+        fr = [
+            x.protection_hold.fraction for x in v["lead"] if x.protection_hold.fraction is not None
+        ]
+        pub = f"{st['published']} / {st['matches']} / {st['benign_matches']}" if st else "n/a"
+        return (
+            f"| {label} | {_pct(r.recall if r else None, None, 1)} | {_pct(_mean(fr), None, 1)} "
+            f"| {pub} |"
+        )
+
+    by_delay = {int(float(k.split("_")[-1])): k for k in sens if k.startswith("__delay_")}
+    rows = [row("no antibody", off, None)]
+    for d in SENSITIVITY_DELAYS_S:
+        if d == DEFAULT_CONFIRM_DELAY_S:
+            rows.append(row(f"label-gated, {int(d)} s (baseline)", base,
+                            result["antibody_stats"].get("baseline")))  # fmt: skip
+        else:
+            k = by_delay[int(d)]
+            rows.append(row(sens[k]["label"], sens[k], result["sensitivity_stats"].get(k)))
+    if "__hold_gate" in sens:
+        rows.append(row(sens["__hold_gate"]["label"], sens["__hold_gate"],
+                        result["sensitivity_stats"].get("__hold_gate")))  # fmt: skip
+    return [
+        "Sensitivity of the confirmation model (same seed, deterministic). The delay is a free "
+        "parameter; the hold-gated row confirms EVERY first hold_verify to a payee with no "
+        "ground-truth label, so any model false positive poisons its payee (benign matches "
+        "below measure that).",
+        "",
+        "| Confirmation model | Victim-transfer recall | Share of post-detection victim transfers "
+        "held | Antibodies / matches / benign matches |",
+        "|---|---|---|---|",
+        *rows,
+        "",
+        "In this simulator the delay barely matters because victims of a campaign are minutes to "
+        "hours apart, far longer than the delays tried; a slower real confirmation process, "
+        "tighter victim spacing or a mule used by few victims would shrink the benefit.",
+        "",
+    ]
 
 
 def _antibody_section(result: dict[str, Any]) -> list[str]:
@@ -956,6 +1034,7 @@ def _antibody_section(result: dict[str, Any]) -> list[str]:
     ]  # fmt: skip
     for label, x, y in rows:
         L.append(f"| {label} | {x} | {y} |")
+    L += [""] + _sensitivity_rows(result)
     st = result["antibody_stats"].get("baseline", {})
     L += [
         "",
@@ -1010,6 +1089,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument(
         "--stamp", action="store_true", help="add a generated-at line (non-deterministic)"
     )
+    ap.add_argument(
+        "--no-sensitivity",
+        action="store_true",
+        help="skip the antibody confirmation-delay / hold-gate sensitivity runs (faster)",
+    )
     a = ap.parse_args(argv)
     ablations = DEFAULT_ABLATIONS if a.ablations is None else a.ablations
     try:
@@ -1030,6 +1114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         include_volatile=a.include_latency,
         generated_at=stamp,
         with_reasons=a.reasons,
+        sensitivity=not a.no_sensitivity,
     )
     m: Metrics = res["variants"]["baseline"]["metrics"]
     print(
