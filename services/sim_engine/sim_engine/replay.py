@@ -16,6 +16,7 @@ from .scam import Campaign, gen_scam_campaign
 from .world import World
 
 HERO_CAMPAIGN_ID = "hero-digital-arrest"  # suffixed with the seed
+HARD_CASE = "seasoned mule + undetected call: only the shared threat memory saves victim B"
 HERO_GAP = timedelta(seconds=90)  # victim B's transfer starts this long after A's completes
 
 SleepFn = Callable[[float], Awaitable[None]]
@@ -34,6 +35,9 @@ class HeroMetadata(BaseModel):
     mule_payee_hashes: list[str]
     cashout_payee_hash: str
     shared_mule_payee_hash: str  # victim B's first payee: a mule victim A already paid
+    shared_mule_age_days: int  # seasoned (>= 60 days): young-payee signals do not fire for B
+    second_victim_call_detected: bool  # False: B's real call is an off-template script
+    hard_case: str
     victim_b_gap_s: float
 
 
@@ -73,10 +77,13 @@ def build_hero_scenario(world: World, seed: int = 1) -> Scenario:
         victim_indices=[a_i, b_i],
         second_victim_gap=HERO_GAP,
         shared_first_mule=True,
+        seasoned_shared_mule=True,
+        evasive_second_victim_call=True,
     )
     a_tok, b_tok = camp.victim_tokens
     victim_txns = [t for t in camp.txns if camp.txn_roles[t.txn_id] == "victim_transfer"]
     mule_hashes = sorted({t.payee_hash for t in victim_txns})
+    b_first = min((t for t in victim_txns if t.payer_token == b_tok), key=lambda t: t.ts)
     meta = HeroMetadata(
         campaign_id=camp.campaign_id,
         victim_a_token=a_tok,
@@ -87,9 +94,10 @@ def build_hero_scenario(world: World, seed: int = 1) -> Scenario:
         victim_b_state=b.state,
         mule_payee_hashes=mule_hashes,
         cashout_payee_hash=camp.mule_chain[-1],
-        shared_mule_payee_hash=min(
-            (t for t in victim_txns if t.payer_token == b_tok), key=lambda t: t.ts
-        ).payee_hash,
+        shared_mule_payee_hash=b_first.payee_hash,
+        shared_mule_age_days=b_first.payee_account_age_days,
+        second_victim_call_detected=False,
+        hard_case=HARD_CASE,
         victim_b_gap_s=HERO_GAP.total_seconds(),
     )
     return Scenario("hero", camp, meta, list(camp.calls), list(camp.txns))

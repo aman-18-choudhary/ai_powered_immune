@@ -678,3 +678,21 @@ def gen_benign_calls(
             idx += 1
     all_events.sort(key=lambda e: e.ts)
     yield from all_events
+
+
+def evasive_scam_chunks() -> list[str]:
+    """A real scam script that is NOT a digital-arrest template: the "relative in an emergency
+    needs a hospital deposit" pretext. It has no authority impersonation, no "safe account", no
+    secrecy demand, so the shipped call-guard (rules + classifier) scores it far below the alert
+    threshold at chunk and session level. That miss is the point of the hero hard case: single
+    channel detection fails on novel scripts."""
+    return [
+        "Hello uncle, I am calling from the city hospital emergency ward regarding your nephew Arjun.",
+        "He has been brought in after a bike accident and the doctors say he needs an operation this evening.",
+        "The hospital counter is asking for a deposit before they start, and his phone battery is dead so he asked me to call you.",
+        "Could you send forty five thousand to the hospital account I will message now, the receptionist will confirm it.",
+        "The surgery team is waiting for the deposit, please pay as soon as you can so they can begin.",
+        "I will stay here with him, just send the transfer and share the transaction id with me on this number.",
+        "There is one more charge for the blood arrangement, another fifteen thousand to the same account please.",
+        "Thank you for helping, he will call you himself once he is out of the operation room.",
+    ]

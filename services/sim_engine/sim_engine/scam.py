@@ -13,6 +13,7 @@ from .calls import (
     LANGS,
     SCAM_VIDEO_CHANNEL_P,
     chunks_to_events,
+    evasive_scam_chunks,
     pick_name,
     scam_call_chunks,
 )
@@ -52,6 +53,14 @@ def _mk_account(world: World, rng: np.random.Generator, key: str, kind: str, whe
         acc_id, bank, stable_id("hold", world.seed, key), when - timedelta(days=age), kind
     )
     world.accounts[acc_id] = acc
+    return acc
+
+
+def _season(world: World, old: Account, when: datetime, seed: int, campaign_id: str) -> Account:
+    """An aged mule account: 60-400 days old (deterministic, no RNG draw)."""
+    age = 60 + zlib.crc32(f"{seed}:{campaign_id}:seasoned".encode()) % 341
+    acc = Account(old.account_id, old.bank_id, old.holder_id, when - timedelta(days=age), old.kind)
+    world.accounts[acc.account_id] = acc
     return acc
 
 
@@ -101,12 +110,19 @@ def gen_scam_campaign(
     victim_indices: list[int] | None = None,
     second_victim_gap: timedelta | None = None,
     shared_first_mule: bool = False,
+    seasoned_shared_mule: bool = False,
+    evasive_second_victim_call: bool = False,
 ) -> Campaign:
     """``victim_indices`` pins the victims (indices into world.citizens). With
     ``second_victim_gap``, the second victim's first transfer is moved to exactly that long
     after the first victim's last transfer (their calls shift with it). With
     ``shared_first_mule`` the second victim's FIRST transfer goes to a mule that the first victim
-    already paid (no extra random draws, so every other value is unchanged)."""
+    already paid (no extra random draws, so every other value is unchanged); that shared mule is
+    the payee of the first victim's FIRST (and largest) transfer. ``seasoned_shared_mule`` makes it
+    an aged account (60-400 days, a purchased/rented account) so young-payee signals do not fire for
+    the second victim. ``evasive_second_victim_call`` gives the second victim a real but off-template
+    scam call (a relative-in-an-emergency deposit script) that the shipped call-guard does not
+    alert on."""
     rng = np.random.default_rng([seed, zlib.crc32(campaign_id.encode()), 4])
     camp = Campaign(campaign_id)
     t0 = start_ts or (world.start + timedelta(days=1, hours=float(rng.uniform(9, 17))))
@@ -186,6 +202,12 @@ def gen_scam_campaign(
             rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:b", vtoken, caller, call_start,
             scam_call_chunks(rng, lang, name, "full"), lang, _channel(rng),
         )  # fmt: skip
+        if evasive_second_victim_call and vi == 1:
+            events = []
+            main = chunks_to_events(
+                rng, f"s:{world.seed}:{seed}:{campaign_id}:{vi}:e", vtoken, caller, t,
+                evasive_scam_chunks(), "en", "pstn",
+            )  # fmt: skip
         calls_of_victim = [*events, *main]
         # victim transfers follow the demand within minutes; skewed-high, split, repeated;
         # UPI is capped per day, so larger totals continue over IMPS
@@ -200,18 +222,25 @@ def gen_scam_campaign(
         camp.calls.extend(calls_of_victim)
         first = None
         vic_mules = rng.permutation(n_mules)[: max(2, min(n_mules, 3))]
-        if shared_first_mule and vi == 1:
-            first_mules = [int(m) for m in camp_first_mules]
-            if int(vic_mules[0]) not in first_mules:
-                vic_mules = np.concatenate(
-                    [[first_mules[0]], vic_mules[vic_mules != first_mules[0]]]
+        plan = _victim_plan(rng, total)
+        if shared_first_mule and vi == 0:
+            # the first victim's LARGEST transfer goes first (inside the 15-minute call-risk window,
+            # so it is held on A's own strong signals) and its payee is the shared mule
+            big = max(range(len(plan)), key=lambda i: plan[i][1])
+            plan.insert(0, plan.pop(big))
+            camp_first_mules.append(int(vic_mules[0]))
+            if seasoned_shared_mule:
+                mules[camp_first_mules[0]] = _season(
+                    world, mules[camp_first_mules[0]], t0, seed, campaign_id
                 )
+        if shared_first_mule and vi == 1:
+            shared = camp_first_mules[0]
+            if int(vic_mules[0]) != shared:
+                vic_mules = np.concatenate([[shared], vic_mules[vic_mules != shared]])
         device = world.device_token(cit.device_id)
-        for pi, (rail, amt) in enumerate(_victim_plan(rng, total)):
+        for pi, (rail, amt) in enumerate(plan):
             mule_i = int(vic_mules[pi % len(vic_mules)])
             mule = mules[mule_i]
-            if vi == 0 and mule_i not in camp_first_mules:
-                camp_first_mules.append(mule_i)  # mules victim A actually paid, in order
             txn = mk_txn(vtoken, mule, rail, amt, ts, cit.bank_id, device, "victim_transfer")
             inflows[mule.account_id].append((ts, amt))
             first = first or txn

@@ -214,3 +214,25 @@ def test_hero_second_victim_first_transfer_goes_to_a_mule_the_first_victim_paid(
         assert again.metadata == meta and [t.txn_id for t in again.txns] == [
             t.txn_id for t in sc.txns
         ]
+
+
+def test_hero_is_the_hard_case_seasoned_shared_mule_and_off_template_call():
+    from sim_engine.calls import evasive_scam_chunks
+
+    for seed in range(1, 41):
+        sc = build_hero_scenario(build_world(5, 600), seed=seed)
+        meta = sc.metadata
+        assert meta.hard_case.startswith("seasoned mule + undetected call")
+        assert 60 <= meta.shared_mule_age_days <= 401 and meta.second_victim_call_detected is False
+        vt = [t for t in sc.txns if sc.campaign.txn_roles[t.txn_id] == "victim_transfer"]
+        shared = [t for t in vt if t.payee_hash == meta.shared_mule_payee_hash]
+        assert shared and all(t.payee_account_age_days >= 60 for t in shared), seed
+        young = [t for t in vt if t.payee_hash != meta.shared_mule_payee_hash]
+        assert all(t.payee_account_age_days < 30 for t in young), seed  # the other mules stay young
+        a = [t for t in vt if t.payer_token == meta.victim_a_token]
+        biggest = max(a, key=lambda t: t.amount_inr)
+        assert biggest.payee_hash == meta.shared_mule_payee_hash, seed  # A's largest transfer
+        b_calls = [e.transcript_chunk for e in sc.calls if e.victim_token == meta.victim_b_token]
+        a_calls = [e.transcript_chunk for e in sc.calls if e.victim_token == meta.victim_a_token]
+        assert b_calls == evasive_scam_chunks() and a_calls and a_calls != b_calls
+        assert {e.victim_token for e in sc.calls} == {meta.victim_a_token, meta.victim_b_token}
