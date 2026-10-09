@@ -290,7 +290,7 @@ def verify_chain(
     prev_seq: int | None = None
     prev_hash: str | None = None
     redacted: list[int] = []
-    for e, raw in zip(ents, stored):  # noqa: B905  (equal lengths; strict= needs 3.10)
+    for e, raw in zip(ents, stored):  # noqa: B905  (equal lengths; the strict flag needs 3.10)
         seq = e["seq"]
         if not isinstance(raw, Mapping) or not set(raw) <= ENTRY_FIELDS:
             return _bad(seq if isinstance(seq, int) else None, f"entry {seq} has an unknown field")

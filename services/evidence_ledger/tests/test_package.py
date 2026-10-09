@@ -681,7 +681,7 @@ def test_verifier_parses_as_python_3_8():
 
     for banned in ("datetime.UTC", "removeprefix", "removesuffix", "bit_count", "import tomllib"):
         assert banned not in src, banned
-    assert "strict=" not in src  # zip(strict=) is 3.10+
+    assert not re.search(r"strict\s*=\s*True", src)  # the zip strict flag is 3.10+
     assert not re.search(r"^\s*match\s+\S+.*:\s*$", src, re.M)
     assert not re.search(r"^_\w+ = (tuple|list|dict|set)\[", src, re.M)  # runtime PEP 585
     assert src.lstrip().startswith("#!") and "from __future__ import annotations" in src
