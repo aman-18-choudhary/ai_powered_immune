@@ -5,6 +5,7 @@ store's own lock. Persistence and memory move together: the transaction is commi
 (rolled back on error) and the in-memory change is undone if the transaction fails.
 """
 
+import json
 import logging
 import re
 import threading
@@ -75,6 +76,7 @@ class GraphTwin:
         self.pending_decisions = 0
         self._carry: tuple[list[RingEvent], set[str], set[str]] = ([], set(), set())
         # immutable copies for readers on the event loop (replaced atomically, never mutated)
+        self.pending_audit_rows: list[AuditRow] = []
         self.published: dict[str, Ring] = {}
         self.published_alias: dict[str, str] = {}
         self.load()
@@ -113,7 +115,7 @@ class GraphTwin:
                 self.tg.recompute_node(n)
             self.tg.idx = RelayIndex.build(g, self.cfg, to_us(self.clock()))
             for r in data["rings"]:
-                snap = __import__("json").loads(r["body"])
+                snap = json.loads(r["body"])
                 ring = Ring.from_snapshot(snap, r["version"], to_us(aware(r["updated_at"])))  # type: ignore[arg-type]
                 self.registry.load(ring)
             self._publish(set(self.registry.rings), set())
@@ -517,8 +519,6 @@ class GraphTwin:
                 self._mark_dirty(*[n for n in r.core if n in g])
             self.pending_audit_rows = audit_rows
             return {"removed_nodes": len(dead), "evicted": evicted, **purged}
-
-    pending_audit_rows: list[AuditRow] = []
 
     # -------------------------------------------------------------------- stats
     def stats(self) -> dict[str, int]:
