@@ -27,9 +27,10 @@ _RULES = [
 # one hex letter in a 16-char string is accepted, as are phone-sized digit runs padded with hex
 # letters to an id length.
 # The prefix is an ALLOWLIST (txn_, cmp_, kh_, ab_, tok_, redacted_, or a case-ref namespace
-# payee_ref: / call_ref: / device_ref: / script_ref:); any other prefix gets the strict rule.
+# payee_ref: / call_ref: / device_ref: / script_ref: / ring:); any other prefix gets the strict
+# rule.
 _ID_RE = re.compile(
-    r"(?:(?:txn|cmp|kh|ab|tok|redacted)_|(?:payee|call|device|script)_ref:)?"
+    r"(?:(?:txn|cmp|kh|ab|tok|redacted)_|(?:payee|call|device|script)_ref:|ring:)?"
     r"([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})"
 )
 # A whole-string UTC timestamp "YYYY-MM-DDTHH:MM:SSZ" (valid ranges only) is exempt: it carries 14

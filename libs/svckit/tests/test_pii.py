@@ -213,3 +213,12 @@ def test_allowlisted_prefixes(ok):
 )  # fmt: skip
 def test_free_form_prefixes_are_not_exempt(bad):
     assert string_has_identifier(bad)
+
+
+# ---------------------------------------------------------------- Task 14: ring: case-ref namespace
+def test_ring_case_ref_namespace():
+    assert not string_has_identifier("ring:3a9f0c12d45b7e68")
+    assert not string_has_identifier("ring:0a1b2c3d4e5f6a7b")
+    assert string_has_identifier("ring:1234567890123456")  # all digits: never an id
+    assert string_has_identifier("ring:3a9f0c12d45b7e68 9876543210")
+    assert string_has_identifier("ring:3a9f0c12d45b7e68123")
