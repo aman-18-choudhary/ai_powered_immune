@@ -1,0 +1,24 @@
+{
+ "exit_code": 0,
+ "status": "PASS_PINNED",
+ "lines": [
+  "manifest signed by key_id 6e30f23562589e4a",
+  "redacted (payload withheld): 6 context entries, seqs [2, 6, 8, 9, 11, 12]; the chain binds only their payload_hash",
+  "chain segment 1..12 verified (12 entries, 6 selected) against signed checkpoint(s)",
+  "PASS: package is internally consistent and signed by the pinned key"
+ ],
+ "redacted_seqs": [
+  2,
+  6,
+  8,
+  9,
+  11,
+  12
+ ],
+ "entries": 12,
+ "checkpoints": null,
+ "case_id": "hero-case",
+ "pinned_key_id": "6e30f23562589e4a",
+ "public_key_hex": "27fbeb540323efc467a8bf5f5a1266439b32b6e5fd7604eada3f461cd1eabb76",
+ "simulated": true
+}

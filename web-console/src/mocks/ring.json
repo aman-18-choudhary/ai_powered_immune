@@ -1,0 +1,191 @@
+{
+ "ring_id": "d46a16a49bc0f0cd",
+ "computed_from": "this run's transactions (simulated)",
+ "horizon_days": 7,
+ "members": [
+  "10d28f0f7677",
+  "1cf27ea96dab",
+  "2315111f9fbd",
+  "db4337516e6e"
+ ],
+ "victims": 2,
+ "inflow_inr": "81342.00",
+ "inflow_bucket": "10k-100k",
+ "harm_inr": "569394.00",
+ "nodes": [
+  {
+   "id": "10d28f0f7677",
+   "role": "mule",
+   "tier": 1,
+   "bank": "bank_icici",
+   "flags": [
+    "held_payee"
+   ],
+   "first_seen": "2026-01-06T08:28:17.292139Z",
+   "last_seen": "2026-01-06T08:53:41.614200Z",
+   "in_inr": "32823.00",
+   "out_inr": "32823.00"
+  },
+  {
+   "id": "1cf27ea96dab",
+   "role": "cash_out",
+   "tier": 3,
+   "bank": null,
+   "flags": [],
+   "first_seen": "2026-01-06T08:39:38.106685Z",
+   "last_seen": "2026-01-06T08:53:41.614200Z",
+   "in_inr": "81342.00",
+   "out_inr": "0.00"
+  },
+  {
+   "id": "2315111f9fbd",
+   "role": "mule",
+   "tier": 1,
+   "bank": "bank_hdfc",
+   "flags": [
+    "held_payee",
+    "antibody"
+   ],
+   "first_seen": "2026-01-06T08:24:04.734157Z",
+   "last_seen": "2026-01-06T08:46:49.280532Z",
+   "in_inr": "29332.00",
+   "out_inr": "29332.00"
+  },
+  {
+   "id": "b142dfd2e3b9",
+   "role": "victim",
+   "tier": 0,
+   "bank": "bank_axis",
+   "flags": [],
+   "first_seen": "2026-01-06T08:29:47.292139Z",
+   "last_seen": "2026-01-06T08:35:38.769075Z",
+   "in_inr": "0.00",
+   "out_inr": "51140.00"
+  },
+  {
+   "id": "db4337516e6e",
+   "role": "mule",
+   "tier": 1,
+   "bank": "bank_sbi",
+   "flags": [
+    "held_payee"
+   ],
+   "first_seen": "2026-01-06T08:32:40.156373Z",
+   "last_seen": "2026-01-06T08:39:38.106685Z",
+   "in_inr": "19187.00",
+   "out_inr": "19187.00"
+  },
+  {
+   "id": "ed770039db71",
+   "role": "victim",
+   "tier": 0,
+   "bank": "bank_hdfc",
+   "flags": [],
+   "first_seen": "2026-01-06T08:24:04.734157Z",
+   "last_seen": "2026-01-06T08:28:17.292139Z",
+   "in_inr": "0.00",
+   "out_inr": "30202.00"
+  }
+ ],
+ "edges": [
+  {
+   "src": "10d28f0f7677",
+   "dst": "1cf27ea96dab",
+   "count": 1,
+   "total_inr": "32823.00",
+   "first_ts": "2026-01-06T08:53:41.614200Z",
+   "last_ts": "2026-01-06T08:53:41.614200Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 0
+  },
+  {
+   "src": "2315111f9fbd",
+   "dst": "1cf27ea96dab",
+   "count": 1,
+   "total_inr": "29332.00",
+   "first_ts": "2026-01-06T08:46:49.280532Z",
+   "last_ts": "2026-01-06T08:46:49.280532Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 0
+  },
+  {
+   "src": "b142dfd2e3b9",
+   "dst": "10d28f0f7677",
+   "count": 1,
+   "total_inr": "18621.00",
+   "first_ts": "2026-01-06T08:35:38.769075Z",
+   "last_ts": "2026-01-06T08:35:38.769075Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 1
+  },
+  {
+   "src": "b142dfd2e3b9",
+   "dst": "2315111f9fbd",
+   "count": 1,
+   "total_inr": "13332.00",
+   "first_ts": "2026-01-06T08:29:47.292139Z",
+   "last_ts": "2026-01-06T08:29:47.292139Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 1
+  },
+  {
+   "src": "b142dfd2e3b9",
+   "dst": "db4337516e6e",
+   "count": 1,
+   "total_inr": "19187.00",
+   "first_ts": "2026-01-06T08:32:40.156373Z",
+   "last_ts": "2026-01-06T08:32:40.156373Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 1
+  },
+  {
+   "src": "db4337516e6e",
+   "dst": "1cf27ea96dab",
+   "count": 1,
+   "total_inr": "19187.00",
+   "first_ts": "2026-01-06T08:39:38.106685Z",
+   "last_ts": "2026-01-06T08:39:38.106685Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 0
+  },
+  {
+   "src": "ed770039db71",
+   "dst": "10d28f0f7677",
+   "count": 1,
+   "total_inr": "14202.00",
+   "first_ts": "2026-01-06T08:28:17.292139Z",
+   "last_ts": "2026-01-06T08:28:17.292139Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 1
+  },
+  {
+   "src": "ed770039db71",
+   "dst": "2315111f9fbd",
+   "count": 1,
+   "total_inr": "16000.00",
+   "first_ts": "2026-01-06T08:24:04.734157Z",
+   "last_ts": "2026-01-06T08:24:04.734157Z",
+   "rails": [
+    "UPI"
+   ],
+   "flagged": 1
+  }
+ ],
+ "truncated": false,
+ "version": 9,
+ "simulated": true
+}

@@ -1,0 +1,51 @@
+{
+ "hotspots": [
+  {
+   "city": "Ahmedabad",
+   "state": "Gujarat",
+   "lat": 23.023,
+   "lon": 72.572,
+   "count": 0,
+   "prev_count": 0,
+   "total": 4,
+   "kinds": {
+    "held_transfer": 2,
+    "scam_call": 2
+   },
+   "trend": "flat"
+  },
+  {
+   "city": "Kolkata",
+   "state": "West Bengal",
+   "lat": 22.573,
+   "lon": 88.364,
+   "count": 0,
+   "prev_count": 1,
+   "total": 4,
+   "kinds": {
+    "held_transfer": 3,
+    "protected": 1
+   },
+   "trend": "down"
+  }
+ ],
+ "cash_out_points": [
+  {
+   "city": "Bengaluru",
+   "state": "Karnataka",
+   "lat": 12.972,
+   "lon": 77.594,
+   "count": 2
+  },
+  {
+   "city": "Mumbai",
+   "state": "Maharashtra",
+   "lat": 19.076,
+   "lon": 72.878,
+   "count": 1
+  }
+ ],
+ "window_s": 600.0,
+ "t": 2609.067,
+ "simulated": true
+}

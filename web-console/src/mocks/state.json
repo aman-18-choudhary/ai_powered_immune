@@ -1,0 +1,31 @@
+{
+ "run_id": "562eaeebc703",
+ "status": "finished",
+ "t": 2609.067,
+ "duration": 2609.067,
+ "speed": 20.0,
+ "step": "evidence_sealed",
+ "counters": {
+  "chunks": 19,
+  "call_alerts": 2,
+  "txns_scored": 5,
+  "holds_created": 5,
+  "holds_open": 4,
+  "holds_resolved": 1,
+  "antibodies_published": 1,
+  "antibodies_applied": 1,
+  "antibody_matches": 1,
+  "ledger_entries": 12,
+  "geo_points": 11,
+  "ring_members": 4
+ },
+ "simulated": true,
+ "mode": "hero",
+ "seed": 1,
+ "epoch": 0,
+ "last_event_id": 157,
+ "banks": {
+  "bank_a": "hdfc",
+  "bank_b": "axis"
+ }
+}

@@ -1,0 +1,205 @@
+{
+ "holds": [
+  {
+   "txn_ref": "txn_ceb756dbc2258882",
+   "bank": "bank_a",
+   "bank_name": "hdfc",
+   "state": "blocked",
+   "decision": "hold_verify",
+   "decision_seq": 1,
+   "score": 0.85,
+   "reasons": [
+    {
+     "code": "ACTIVE_SCAM_CALL",
+     "weight": 0.0006,
+     "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+    },
+    {
+     "code": "AMOUNT_ANOMALY",
+     "weight": 0.0006,
+     "detail": "Amount is about 34x this payer's typical transfer (z-score 10.0)"
+    },
+    {
+     "code": "NEW_PAYEE",
+     "weight": 0.0006,
+     "detail": "First payment from this payer to this payee"
+    },
+    {
+     "code": "CALL_RISK_AMOUNT_GUARD",
+     "weight": 0.8494,
+     "detail": "Scam-call risk 1.00 active and amount (Rs 16,000) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
+    }
+   ],
+   "rail": "UPI",
+   "amount_bucket": "10k-100k",
+   "amount_inr": "16000.00",
+   "payee_ref": "2315111f9fbd",
+   "hero": true,
+   "created_t": 832.187,
+   "deadline_t": 952.187,
+   "deadline": "2026-01-06T08:26:04.734157Z",
+   "overdue": false,
+   "resolved_by": "analyst-1",
+   "resolved_at": "2026-01-06T08:25:04.734157Z",
+   "call_ref": "call_ref:799607a7e1bcb336"
+  },
+  {
+   "txn_ref": "txn_5382ec8250db1ea5",
+   "bank": "bank_a",
+   "bank_name": "hdfc",
+   "state": "open",
+   "decision": "hold_verify",
+   "decision_seq": 1,
+   "score": 0.9896,
+   "reasons": [
+    {
+     "code": "YOUNG_PAYEE_ACCOUNT",
+     "weight": 0.9889,
+     "detail": "Payee account is only 5 days old"
+    },
+    {
+     "code": "AMOUNT_ANOMALY",
+     "weight": 0.9751,
+     "detail": "Amount is about 28x this payer's typical transfer (z-score 5.6)"
+    },
+    {
+     "code": "ACTIVE_SCAM_CALL",
+     "weight": 0.0529,
+     "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+    },
+    {
+     "code": "NEW_PAYEE",
+     "weight": 0.0275,
+     "detail": "First payment from this payer to this payee"
+    }
+   ],
+   "rail": "UPI",
+   "amount_bucket": "10k-100k",
+   "amount_inr": "14202.00",
+   "payee_ref": "10d28f0f7677",
+   "hero": true,
+   "created_t": 1084.745,
+   "deadline_t": 1204.745,
+   "deadline": "2026-01-06T08:30:17.292139Z",
+   "overdue": true,
+   "resolved_by": null,
+   "resolved_at": null,
+   "call_ref": "call_ref:109bbcc2a84a9fb3"
+  },
+  {
+   "txn_ref": "txn_d75f5773a0838cfc",
+   "bank": "bank_b",
+   "bank_name": "axis",
+   "state": "open",
+   "decision": "hold_verify",
+   "decision_seq": 1,
+   "score": 0.9,
+   "reasons": [
+    {
+     "code": "AMOUNT_ANOMALY",
+     "weight": 0.0,
+     "detail": "Amount is about 28x this payer's typical transfer (z-score 9.6)"
+    },
+    {
+     "code": "NEW_PAYEE",
+     "weight": 0.0,
+     "detail": "First payment from this payer to this payee"
+    },
+    {
+     "code": "ANTIBODY_MATCH",
+     "weight": 0.9,
+     "detail": "Payee matches a confirmed mule_account antibody 9352d6a9 (expires 2026-01-20); policy floor to hold_verify"
+    }
+   ],
+   "rail": "UPI",
+   "amount_bucket": "10k-100k",
+   "amount_inr": "13332.00",
+   "payee_ref": "2315111f9fbd",
+   "hero": true,
+   "created_t": 1174.745,
+   "deadline_t": 1294.745,
+   "deadline": "2026-01-06T08:31:47.292139Z",
+   "overdue": true,
+   "resolved_by": null,
+   "resolved_at": null,
+   "call_ref": null
+  },
+  {
+   "txn_ref": "txn_cbe6bb1e0d9bb253",
+   "bank": "bank_b",
+   "bank_name": "axis",
+   "state": "open",
+   "decision": "hold_verify",
+   "decision_seq": 1,
+   "score": 0.9621,
+   "reasons": [
+    {
+     "code": "YOUNG_PAYEE_ACCOUNT",
+     "weight": 0.9621,
+     "detail": "Payee account is only 7 days old"
+    },
+    {
+     "code": "AMOUNT_ANOMALY",
+     "weight": 0.9621,
+     "detail": "Amount is about 38x this payer's typical transfer (z-score 6.4)"
+    },
+    {
+     "code": "NEW_PAYEE",
+     "weight": 0.1624,
+     "detail": "First payment from this payer to this payee"
+    }
+   ],
+   "rail": "UPI",
+   "amount_bucket": "10k-100k",
+   "amount_inr": "19187.00",
+   "payee_ref": "db4337516e6e",
+   "hero": true,
+   "created_t": 1347.609,
+   "deadline_t": 1467.609,
+   "deadline": "2026-01-06T08:34:40.156373Z",
+   "overdue": true,
+   "resolved_by": null,
+   "resolved_at": null,
+   "call_ref": null
+  },
+  {
+   "txn_ref": "txn_f059698ae645715c",
+   "bank": "bank_b",
+   "bank_name": "axis",
+   "state": "open",
+   "decision": "hold_verify",
+   "decision_seq": 1,
+   "score": 1.0,
+   "reasons": [
+    {
+     "code": "YOUNG_PAYEE_ACCOUNT",
+     "weight": 0.9994,
+     "detail": "Payee account is only 5 days old"
+    },
+    {
+     "code": "AMOUNT_ANOMALY",
+     "weight": 0.9429,
+     "detail": "Amount is about 34x this payer's typical transfer (z-score 4.5)"
+    },
+    {
+     "code": "NEW_PAYEE",
+     "weight": 0.0104,
+     "detail": "First payment from this payer to this payee"
+    }
+   ],
+   "rail": "UPI",
+   "amount_bucket": "10k-100k",
+   "amount_inr": "18621.00",
+   "payee_ref": "10d28f0f7677",
+   "hero": true,
+   "created_t": 1526.222,
+   "deadline_t": 1646.222,
+   "deadline": "2026-01-06T08:37:38.769075Z",
+   "overdue": false,
+   "resolved_by": null,
+   "resolved_at": null,
+   "call_ref": null
+  }
+ ],
+ "simulated": true
+}

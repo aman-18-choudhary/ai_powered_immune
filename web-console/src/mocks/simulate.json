@@ -1,0 +1,25 @@
+{
+ "harm_before": "569394.00",
+ "harm_after": "0.00",
+ "reduction_pct": 100.0,
+ "removed": [
+  "1cf27ea96dab"
+ ],
+ "cut_edges": 3,
+ "cut_edge_list": [
+  {
+   "src": "10d28f0f7677",
+   "dst": "1cf27ea96dab"
+  },
+  {
+   "src": "2315111f9fbd",
+   "dst": "1cf27ea96dab"
+  },
+  {
+   "src": "db4337516e6e",
+   "dst": "1cf27ea96dab"
+  }
+ ],
+ "mode": "k",
+ "simulated": true
+}

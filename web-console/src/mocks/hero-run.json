@@ -1,0 +1,3357 @@
+[
+ {
+  "id": 0,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.715Z",
+  "kind": "scenario.state",
+  "run_id": "562eaeebc703",
+  "status": "starting",
+  "duration": 2609.067,
+  "speed": 20.0,
+  "step": null,
+  "counters": {
+   "chunks": 0,
+   "call_alerts": 0,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 0,
+   "geo_points": 0,
+   "ring_members": 0
+  },
+  "simulated": true,
+  "mode": "hero",
+  "seed": 1,
+  "epoch": 0,
+  "last_event_id": 0,
+  "banks": {
+   "bank_a": "hdfc",
+   "bank_b": "axis"
+  },
+  "events": []
+ },
+ {
+  "id": 1,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.732Z",
+  "kind": "scenario.started",
+  "run_id": "562eaeebc703",
+  "seed": 1,
+  "mode": "hero",
+  "duration": 2609.067,
+  "simulated": true,
+  "banks": {
+   "bank_a": "hdfc",
+   "bank_b": "axis"
+  }
+ },
+ {
+  "id": 2,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.735Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "call_begins",
+  "title": "A scam call begins",
+  "caption": "A caller posing as an investigator phones Victim A (simulated call)."
+ },
+ {
+  "id": 3,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.735Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:799607a7e1bcb336",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Hello, kya main Priya Nair ji se baat kar raha hoon? Main inspector Rakesh Verma bol raha hoon, CBI se. Aapke khilaf ek gambhir case darj hua hai.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 4,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.735Z",
+  "kind": "call.alert",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:799607a7e1bcb336",
+  "victim": "A",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "threshold": 0.7,
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 5,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.735Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "call_flagged",
+  "title": "Call-guard flags the call",
+  "caption": "The session risk crosses the alert threshold; the paying bank is told."
+ },
+ {
+  "id": 6,
+  "t": 0.0,
+  "wall": "2026-10-09T23:19:24.735Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 23.023,
+  "lon": 72.572,
+  "point_kind": "scam_call",
+  "city": "Ahmedabad",
+  "state": "Gujarat"
+ },
+ {
+  "id": 7,
+  "t": 30.0,
+  "wall": "2026-10-09T23:19:26.248Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 1,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 0,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 8,
+  "t": 60.0,
+  "wall": "2026-10-09T23:19:27.757Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 1,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 0,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 9,
+  "t": 66.849,
+  "wall": "2026-10-09T23:19:28.107Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:799607a7e1bcb336",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Priya Nair ji, hamari jaanch me saamne aaya hai ki aapke naam se ek parcel pakda gaya hai jisme drugs, paanch passport aur aapka Aadhaar link mila hai. Yeh PMLA aur NDPS act ke tahat criminal offence hai.",
+  "score": 0.9556,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 10,
+  "t": 66.849,
+  "wall": "2026-10-09T23:19:28.109Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 1,
+  "event_type": "callrisk.alert",
+  "service": "call-guard",
+  "actor_ref": "system:call-guard",
+  "entry_hash_prefix": "e4c97f118fb3"
+ },
+ {
+  "id": 11,
+  "t": 89.256,
+  "wall": "2026-10-09T23:19:29.238Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:799607a7e1bcb336",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Theek hai sir, main video call par hoon.",
+  "score": 0.963,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 12,
+  "t": 90.0,
+  "wall": "2026-10-09T23:19:29.278Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 13,
+  "t": 120.0,
+  "wall": "2026-10-09T23:19:30.785Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 14,
+  "t": 150.0,
+  "wall": "2026-10-09T23:19:32.292Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 15,
+  "t": 180.0,
+  "wall": "2026-10-09T23:19:33.800Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 16,
+  "t": 210.0,
+  "wall": "2026-10-09T23:19:35.307Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 17,
+  "t": 240.0,
+  "wall": "2026-10-09T23:19:36.814Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 18,
+  "t": 270.0,
+  "wall": "2026-10-09T23:19:38.322Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 19,
+  "t": 300.0,
+  "wall": "2026-10-09T23:19:39.829Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 20,
+  "t": 330.0,
+  "wall": "2026-10-09T23:19:41.338Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 21,
+  "t": 360.0,
+  "wall": "2026-10-09T23:19:42.846Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 22,
+  "t": 390.0,
+  "wall": "2026-10-09T23:19:44.353Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 23,
+  "t": 420.0,
+  "wall": "2026-10-09T23:19:45.860Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 24,
+  "t": 450.0,
+  "wall": "2026-10-09T23:19:47.367Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 3,
+   "call_alerts": 1,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 1,
+   "geo_points": 1,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 25,
+  "t": 454.457,
+  "wall": "2026-10-09T23:19:47.595Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Hello, kya main Priya Nair ji se baat kar raha hoon? Main inspector Deepak Mishra bol raha hoon, Enforcement Directorate se. Aapke khilaf ek gambhir case darj hua hai.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 26,
+  "t": 454.457,
+  "wall": "2026-10-09T23:19:47.595Z",
+  "kind": "call.alert",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "threshold": 0.7,
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 27,
+  "t": 454.457,
+  "wall": "2026-10-09T23:19:47.595Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 23.023,
+  "lon": 72.572,
+  "point_kind": "scam_call",
+  "city": "Ahmedabad",
+  "state": "Gujarat"
+ },
+ {
+  "id": 28,
+  "t": 478.109,
+  "wall": "2026-10-09T23:19:48.825Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Priya Nair ji, hamari jaanch me saamne aaya hai ki aapka bank account ek money laundering case se juda hai, hawala ke karodon rupaye ka lenden hua hai aur arrest warrant nikal chuka hai. Yeh PMLA aur NDPS act ke tahat criminal offence hai.",
+  "score": 0.9835,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 29,
+  "t": 478.109,
+  "wall": "2026-10-09T23:19:48.826Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 2,
+  "event_type": "callrisk.alert",
+  "service": "call-guard",
+  "actor_ref": "system:call-guard",
+  "entry_hash_prefix": "86ed90ba143f"
+ },
+ {
+  "id": 30,
+  "t": 480.0,
+  "wall": "2026-10-09T23:19:48.923Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 5,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 31,
+  "t": 510.0,
+  "wall": "2026-10-09T23:19:50.431Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 5,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 32,
+  "t": 539.679,
+  "wall": "2026-10-09T23:19:51.925Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Theek hai sir, main video call par hoon.",
+  "score": 0.9412,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 33,
+  "t": 540.0,
+  "wall": "2026-10-09T23:19:51.943Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 6,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 34,
+  "t": 564.281,
+  "wall": "2026-10-09T23:19:53.166Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Supreme Court ke order ke tahat aap digital arrest me hain. Video call mat kaatiye, camera band mat kijiye aur kamre se bahar mat jaiye.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "ISOLATION_DEMAND",
+    "weight": 0.75,
+    "detail": "caller demands the victim stay on the call, stay silent or stay in view"
+   },
+   {
+    "code": "DIGITAL_ARREST_PHRASE",
+    "weight": 0.69,
+    "detail": "caller says the victim is under 'digital arrest'"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 35,
+  "t": 570.0,
+  "wall": "2026-10-09T23:19:53.456Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 7,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 36,
+  "t": 600.0,
+  "wall": "2026-10-09T23:19:54.963Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 7,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 37,
+  "t": 606.373,
+  "wall": "2026-10-09T23:19:55.288Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Yeh case bilkul confidential hai. Kisi ko mat batana, na ghar walon ko, na bank ko, na vakeel ko. Kisi ko bataya to yeh obstruction of justice hoga.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "ISOLATION_DEMAND",
+    "weight": 0.75,
+    "detail": "caller demands the victim stay on the call, stay silent or stay in view"
+   },
+   {
+    "code": "DIGITAL_ARREST_PHRASE",
+    "weight": 0.69,
+    "detail": "caller says the victim is under 'digital arrest'"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 38,
+  "t": 630.0,
+  "wall": "2026-10-09T23:19:56.478Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 8,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 39,
+  "t": 650.525,
+  "wall": "2026-10-09T23:19:57.512Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Apni begunahi sabit karne ke liye hume aapka account verify karna hoga. Bank ka naam, balance aur UPI app batayiye, aur Aadhaar PAN details bhi share kijiye.",
+  "score": 0.9839,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "ISOLATION_DEMAND",
+    "weight": 0.75,
+    "detail": "caller demands the victim stay on the call, stay silent or stay in view"
+   },
+   {
+    "code": "DIGITAL_ARREST_PHRASE",
+    "weight": 0.69,
+    "detail": "caller says the victim is under 'digital arrest'"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "ACCOUNT_VERIFICATION_ASK",
+    "weight": 0.45,
+    "detail": "caller asks to 'verify' the victim's account, balance or ID"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 40,
+  "t": 660.0,
+  "wall": "2026-10-09T23:19:57.992Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 9,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 41,
+  "t": 677.511,
+  "wall": "2026-10-09T23:19:58.876Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "RBI verification ke liye aapko apne paise us RBI safe account me transfer karne honge jo main abhi bhej raha hoon. Paise check hoke 24 ghante me wapas mil jayenge. Abhi UPI se kisht me bhejiye.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "ISOLATION_DEMAND",
+    "weight": 0.75,
+    "detail": "caller demands the victim stay on the call, stay silent or stay in view"
+   },
+   {
+    "code": "DIGITAL_ARREST_PHRASE",
+    "weight": 0.69,
+    "detail": "caller says the victim is under 'digital arrest'"
+   },
+   {
+    "code": "SAFE_ACCOUNT_TRANSFER",
+    "weight": 0.69,
+    "detail": "caller demands moving funds to a 'safe'/RBI/verification account"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "ACCOUNT_VERIFICATION_ASK",
+    "weight": 0.45,
+    "detail": "caller asks to 'verify' the victim's account, balance or ID"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   },
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 42,
+  "t": 690.0,
+  "wall": "2026-10-09T23:19:59.506Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 10,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 43,
+  "t": 710.384,
+  "wall": "2026-10-09T23:20:00.534Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:109bbcc2a84a9fb3",
+  "victim": "A",
+  "speaker": "caller",
+  "text": "Bheja? Screenshot yahan bhejiye. Verification amount abhi kam hai, bacha hua balance safe account me transfer kijiye.",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "SCRIPT_CLASSIFIER_MATCH",
+    "weight": 1.0,
+    "detail": "text matches known digital-arrest call scripts"
+   },
+   {
+    "code": "ISOLATION_DEMAND",
+    "weight": 0.75,
+    "detail": "caller demands the victim stay on the call, stay silent or stay in view"
+   },
+   {
+    "code": "DIGITAL_ARREST_PHRASE",
+    "weight": 0.69,
+    "detail": "caller says the victim is under 'digital arrest'"
+   },
+   {
+    "code": "SAFE_ACCOUNT_TRANSFER",
+    "weight": 0.69,
+    "detail": "caller demands moving funds to a 'safe'/RBI/verification account"
+   },
+   {
+    "code": "LEGAL_THREAT",
+    "weight": 0.55,
+    "detail": "caller alleges a criminal case, warrant, seized parcel or similar"
+   },
+   {
+    "code": "ACCOUNT_VERIFICATION_ASK",
+    "weight": 0.45,
+    "detail": "caller asks to 'verify' the victim's account, balance or ID"
+   },
+   {
+    "code": "AUTHORITY_IMPERSONATION",
+    "weight": 0.4,
+    "detail": "caller claims to be a law-enforcement or regulatory body"
+   },
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "hi-Latn",
+  "channel": "video",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 44,
+  "t": 720.0,
+  "wall": "2026-10-09T23:20:01.021Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 11,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 45,
+  "t": 750.0,
+  "wall": "2026-10-09T23:20:02.529Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 11,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 46,
+  "t": 753.551,
+  "wall": "2026-10-09T23:20:02.710Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "Hello uncle, I am calling from the city hospital emergency ward regarding your nephew Arjun.",
+  "score": 0.0,
+  "reasons": [
+   {
+    "code": "NO_RISK_INDICATORS",
+    "weight": 0.0,
+    "detail": "no scam cues detected"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 47,
+  "t": 780.0,
+  "wall": "2026-10-09T23:20:04.041Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 12,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 48,
+  "t": 791.545,
+  "wall": "2026-10-09T23:20:04.625Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "He has been brought in after a bike accident and the doctors say he needs an operation this evening.",
+  "score": 0.0,
+  "reasons": [
+   {
+    "code": "NO_RISK_INDICATORS",
+    "weight": 0.0,
+    "detail": "no scam cues detected"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 49,
+  "t": 810.0,
+  "wall": "2026-10-09T23:20:05.555Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 13,
+   "call_alerts": 2,
+   "txns_scored": 0,
+   "holds_created": 0,
+   "holds_open": 0,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 2,
+   "geo_points": 2,
+   "ring_members": 0
+  }
+ },
+ {
+  "id": 50,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.699Z",
+  "kind": "txn.scored",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_ceb756dbc2258882",
+  "bank": "bank_a",
+  "bank_name": "hdfc",
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "decision": "hold_verify",
+  "score": 0.85,
+  "reasons": [
+   {
+    "code": "ACTIVE_SCAM_CALL",
+    "weight": 0.0006,
+    "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.0006,
+    "detail": "Amount is about 34x this payer's typical transfer (z-score 10.0)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0006,
+    "detail": "First payment from this payer to this payee"
+   },
+   {
+    "code": "CALL_RISK_AMOUNT_GUARD",
+    "weight": 0.8494,
+    "detail": "Scam-call risk 1.00 active and amount (Rs 16,000) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
+   }
+  ],
+  "seq": 1,
+  "victim": "A",
+  "hero": true
+ },
+ {
+  "id": 51,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.699Z",
+  "kind": "hold.created",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_ceb756dbc2258882",
+  "bank": "bank_a",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 0.85,
+  "reasons": [
+   {
+    "code": "ACTIVE_SCAM_CALL",
+    "weight": 0.0006,
+    "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.0006,
+    "detail": "Amount is about 34x this payer's typical transfer (z-score 10.0)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0006,
+    "detail": "First payment from this payer to this payee"
+   },
+   {
+    "code": "CALL_RISK_AMOUNT_GUARD",
+    "weight": 0.8494,
+    "detail": "Scam-call risk 1.00 active and amount (Rs 16,000) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 952.187,
+  "state": "open"
+ },
+ {
+  "id": 52,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.700Z",
+  "kind": "ring.updated",
+  "run_id": "562eaeebc703",
+  "ring_id": "d46a16a49bc0f0cd",
+  "members": 1,
+  "victims": 1,
+  "inflow_bucket": "10k-100k"
+ },
+ {
+  "id": 53,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.700Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 23.023,
+  "lon": 72.572,
+  "point_kind": "held_transfer",
+  "city": "Ahmedabad",
+  "state": "Gujarat"
+ },
+ {
+  "id": 54,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.700Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "transfer_held",
+  "title": "Bank A holds the transfer",
+  "caption": "Victim A's transfer to a mule account is held for verification."
+ },
+ {
+  "id": 55,
+  "t": 832.187,
+  "wall": "2026-10-09T23:20:06.705Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 3,
+  "event_type": "hold.created",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "8994688c7d02"
+ },
+ {
+  "id": 56,
+  "t": 840.0,
+  "wall": "2026-10-09T23:20:07.100Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 13,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 1,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 3,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 57,
+  "t": 854.891,
+  "wall": "2026-10-09T23:20:07.850Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "The hospital counter is asking for a deposit before they start, and his phone battery is dead so he asked me to call you.",
+  "score": 0.0,
+  "reasons": [
+   {
+    "code": "NO_RISK_INDICATORS",
+    "weight": 0.0,
+    "detail": "no scam cues detected"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 58,
+  "t": 870.0,
+  "wall": "2026-10-09T23:20:08.613Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 14,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 1,
+   "holds_resolved": 0,
+   "antibodies_published": 0,
+   "antibodies_applied": 0,
+   "antibody_matches": 0,
+   "ledger_entries": 3,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 59,
+  "t": 888.966,
+  "wall": "2026-10-09T23:20:09.570Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "Could you send forty five thousand to the hospital account I will message now, the receptionist will confirm it.",
+  "score": 0.15,
+  "reasons": [
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 60,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.734Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "analyst_confirms",
+  "title": "Analyst confirms the mule",
+  "caption": "A human analyst confirms the payee is a mule account and blocks the transfer."
+ },
+ {
+  "id": 61,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.743Z",
+  "kind": "antibody.published",
+  "run_id": "562eaeebc703",
+  "antibody_ref": "9352d6a9c66148c3",
+  "antibody_kind": "mule_account",
+  "bank": "bank_a"
+ },
+ {
+  "id": 62,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.743Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "antibody_shared",
+  "title": "Antibody shared with other banks",
+  "caption": "A privacy-preserving threat marker for the mule account is published to every bank."
+ },
+ {
+  "id": 63,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.743Z",
+  "kind": "antibody.applied",
+  "run_id": "562eaeebc703",
+  "antibody_ref": "9352d6a9c66148c3",
+  "bank": "bank_b",
+  "latency_ms": 7.4
+ },
+ {
+  "id": 64,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.744Z",
+  "kind": "hold.resolved",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_ceb756dbc2258882",
+  "bank": "bank_a",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 0.85,
+  "reasons": [
+   {
+    "code": "ACTIVE_SCAM_CALL",
+    "weight": 0.0006,
+    "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.0006,
+    "detail": "Amount is about 34x this payer's typical transfer (z-score 10.0)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0006,
+    "detail": "First payment from this payer to this payee"
+   },
+   {
+    "code": "CALL_RISK_AMOUNT_GUARD",
+    "weight": 0.8494,
+    "detail": "Scam-call risk 1.00 active and amount (Rs 16,000) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 952.187,
+  "state": "blocked",
+  "action": "confirm_block",
+  "resolved_by": "analyst-1",
+  "source": "auto"
+ },
+ {
+  "id": 65,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.748Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 4,
+  "event_type": "antibody.created",
+  "service": "antibody-hub",
+  "actor_ref": "analyst-1",
+  "entry_hash_prefix": "46e048b52731"
+ },
+ {
+  "id": 66,
+  "t": 892.187,
+  "wall": "2026-10-09T23:20:09.748Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 5,
+  "event_type": "hold.resolved",
+  "service": "txn-guard",
+  "actor_ref": "analyst-1",
+  "entry_hash_prefix": "7b3e948f336f"
+ },
+ {
+  "id": 67,
+  "t": 900.0,
+  "wall": "2026-10-09T23:20:10.143Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 15,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 68,
+  "t": 911.599,
+  "wall": "2026-10-09T23:20:10.729Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "The surgery team is waiting for the deposit, please pay as soon as you can so they can begin.",
+  "score": 0.1424,
+  "reasons": [
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 69,
+  "t": 930.0,
+  "wall": "2026-10-09T23:20:11.657Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 16,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 70,
+  "t": 947.402,
+  "wall": "2026-10-09T23:20:12.534Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "I will stay here with him, just send the transfer and share the transaction id with me on this number.",
+  "score": 0.1311,
+  "reasons": [
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 71,
+  "t": 960.0,
+  "wall": "2026-10-09T23:20:13.170Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 17,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 72,
+  "t": 967.546,
+  "wall": "2026-10-09T23:20:13.553Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "There is one more charge for the blood arrangement, another fifteen thousand to the same account please.",
+  "score": 0.1251,
+  "reasons": [
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 73,
+  "t": 990.0,
+  "wall": "2026-10-09T23:20:14.685Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 18,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 74,
+  "t": 1020.0,
+  "wall": "2026-10-09T23:20:16.192Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 18,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 75,
+  "t": 1025.626,
+  "wall": "2026-10-09T23:20:16.479Z",
+  "kind": "call.chunk",
+  "run_id": "562eaeebc703",
+  "call_ref": "call_ref:2e049a3445a055e3",
+  "victim": "B",
+  "speaker": "caller",
+  "text": "Thank you for helping, he will call you himself once he is out of the operation room.",
+  "score": 0.1094,
+  "reasons": [
+   {
+    "code": "URGENCY",
+    "weight": 0.15,
+    "detail": "caller applies time pressure"
+   }
+  ],
+  "lang": "en",
+  "channel": "pstn",
+  "model_version": "clf-v1"
+ },
+ {
+  "id": 76,
+  "t": 1050.0,
+  "wall": "2026-10-09T23:20:17.706Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 77,
+  "t": 1080.0,
+  "wall": "2026-10-09T23:20:19.213Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 1,
+   "holds_created": 1,
+   "holds_open": 0,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 5,
+   "geo_points": 3,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 78,
+  "t": 1084.745,
+  "wall": "2026-10-09T23:20:19.477Z",
+  "kind": "txn.scored",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_5382ec8250db1ea5",
+  "bank": "bank_a",
+  "bank_name": "hdfc",
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "decision": "hold_verify",
+  "score": 0.9896,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9889,
+    "detail": "Payee account is only 5 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9751,
+    "detail": "Amount is about 28x this payer's typical transfer (z-score 5.6)"
+   },
+   {
+    "code": "ACTIVE_SCAM_CALL",
+    "weight": 0.0529,
+    "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0275,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "seq": 1,
+  "victim": "A",
+  "hero": true
+ },
+ {
+  "id": 79,
+  "t": 1084.745,
+  "wall": "2026-10-09T23:20:19.478Z",
+  "kind": "hold.created",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_5382ec8250db1ea5",
+  "bank": "bank_a",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 0.9896,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9889,
+    "detail": "Payee account is only 5 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9751,
+    "detail": "Amount is about 28x this payer's typical transfer (z-score 5.6)"
+   },
+   {
+    "code": "ACTIVE_SCAM_CALL",
+    "weight": 0.0529,
+    "detail": "Scam-call risk 1.00 for this payer in the last 15 minutes"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0275,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 1204.745,
+  "state": "open"
+ },
+ {
+  "id": 80,
+  "t": 1084.745,
+  "wall": "2026-10-09T23:20:19.478Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 23.023,
+  "lon": 72.572,
+  "point_kind": "held_transfer",
+  "city": "Ahmedabad",
+  "state": "Gujarat"
+ },
+ {
+  "id": 81,
+  "t": 1084.745,
+  "wall": "2026-10-09T23:20:19.482Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 6,
+  "event_type": "hold.created",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "ca931b7a7c33"
+ },
+ {
+  "id": 82,
+  "t": 1110.0,
+  "wall": "2026-10-09T23:20:20.754Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 2,
+   "holds_created": 2,
+   "holds_open": 1,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 6,
+   "geo_points": 4,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 83,
+  "t": 1140.0,
+  "wall": "2026-10-09T23:20:22.262Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 2,
+   "holds_created": 2,
+   "holds_open": 1,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 6,
+   "geo_points": 4,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 84,
+  "t": 1170.0,
+  "wall": "2026-10-09T23:20:23.769Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 2,
+   "holds_created": 2,
+   "holds_open": 1,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 0,
+   "ledger_entries": 6,
+   "geo_points": 4,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 85,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "txn.scored",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_d75f5773a0838cfc",
+  "bank": "bank_b",
+  "bank_name": "axis",
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "decision": "hold_verify",
+  "score": 0.9,
+  "reasons": [
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.0,
+    "detail": "Amount is about 28x this payer's typical transfer (z-score 9.6)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0,
+    "detail": "First payment from this payer to this payee"
+   },
+   {
+    "code": "ANTIBODY_MATCH",
+    "weight": 0.9,
+    "detail": "Payee matches a confirmed mule_account antibody 9352d6a9 (expires 2026-01-20); policy floor to hold_verify"
+   }
+  ],
+  "seq": 1,
+  "victim": "B",
+  "hero": true
+ },
+ {
+  "id": 86,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "hold.created",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_d75f5773a0838cfc",
+  "bank": "bank_b",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 0.9,
+  "reasons": [
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.0,
+    "detail": "Amount is about 28x this payer's typical transfer (z-score 9.6)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0,
+    "detail": "First payment from this payer to this payee"
+   },
+   {
+    "code": "ANTIBODY_MATCH",
+    "weight": 0.9,
+    "detail": "Payee matches a confirmed mule_account antibody 9352d6a9 (expires 2026-01-20); policy floor to hold_verify"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 1294.745,
+  "state": "open"
+ },
+ {
+  "id": 87,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "ring.updated",
+  "run_id": "562eaeebc703",
+  "ring_id": "d46a16a49bc0f0cd",
+  "members": 1,
+  "victims": 2,
+  "inflow_bucket": "10k-100k"
+ },
+ {
+  "id": 88,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 22.573,
+  "lon": 88.364,
+  "point_kind": "held_transfer",
+  "city": "Kolkata",
+  "state": "West Bengal"
+ },
+ {
+  "id": 89,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "bank_b_blocks",
+  "title": "Bank B blocks the same mule",
+  "caption": "Victim B, at another bank, pays the same account: nothing local looks wrong, the shared antibody holds it."
+ },
+ {
+  "id": 90,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.044Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 22.573,
+  "lon": 88.364,
+  "point_kind": "protected",
+  "city": "Kolkata",
+  "state": "West Bengal"
+ },
+ {
+  "id": 91,
+  "t": 1174.745,
+  "wall": "2026-10-09T23:20:24.048Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 7,
+  "event_type": "hold.created",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "b2537cbf4aa7"
+ },
+ {
+  "id": 92,
+  "t": 1200.0,
+  "wall": "2026-10-09T23:20:25.321Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 3,
+   "holds_created": 3,
+   "holds_open": 2,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 7,
+   "geo_points": 6,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 93,
+  "t": 1230.0,
+  "wall": "2026-10-09T23:20:26.827Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 3,
+   "holds_created": 3,
+   "holds_open": 2,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 7,
+   "geo_points": 6,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 94,
+  "t": 1260.0,
+  "wall": "2026-10-09T23:20:28.335Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 3,
+   "holds_created": 3,
+   "holds_open": 2,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 7,
+   "geo_points": 6,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 95,
+  "t": 1290.0,
+  "wall": "2026-10-09T23:20:29.841Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 3,
+   "holds_created": 3,
+   "holds_open": 2,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 7,
+   "geo_points": 6,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 96,
+  "t": 1320.0,
+  "wall": "2026-10-09T23:20:31.348Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 3,
+   "holds_created": 3,
+   "holds_open": 2,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 7,
+   "geo_points": 6,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 97,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.777Z",
+  "kind": "txn.scored",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_cbe6bb1e0d9bb253",
+  "bank": "bank_b",
+  "bank_name": "axis",
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "decision": "hold_verify",
+  "score": 0.9621,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9621,
+    "detail": "Payee account is only 7 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9621,
+    "detail": "Amount is about 38x this payer's typical transfer (z-score 6.4)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.1624,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "seq": 1,
+  "victim": "B",
+  "hero": true
+ },
+ {
+  "id": 98,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.777Z",
+  "kind": "hold.created",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_cbe6bb1e0d9bb253",
+  "bank": "bank_b",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 0.9621,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9621,
+    "detail": "Payee account is only 7 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9621,
+    "detail": "Amount is about 38x this payer's typical transfer (z-score 6.4)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.1624,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 1467.609,
+  "state": "open"
+ },
+ {
+  "id": 99,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.777Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 22.573,
+  "lon": 88.364,
+  "point_kind": "held_transfer",
+  "city": "Kolkata",
+  "state": "West Bengal"
+ },
+ {
+  "id": 100,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.784Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 8,
+  "event_type": "hold.created",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "8bb349c61884"
+ },
+ {
+  "id": 101,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.784Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 9,
+  "event_type": "hold.overdue",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "09c0fe61c0af"
+ },
+ {
+  "id": 102,
+  "t": 1347.609,
+  "wall": "2026-10-09T23:20:32.784Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 10,
+  "event_type": "hold.overdue",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "685cbfe74443"
+ },
+ {
+  "id": 103,
+  "t": 1350.0,
+  "wall": "2026-10-09T23:20:32.905Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 104,
+  "t": 1380.0,
+  "wall": "2026-10-09T23:20:34.412Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 105,
+  "t": 1410.0,
+  "wall": "2026-10-09T23:20:35.920Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 106,
+  "t": 1440.0,
+  "wall": "2026-10-09T23:20:37.427Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 107,
+  "t": 1470.0,
+  "wall": "2026-10-09T23:20:38.935Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 108,
+  "t": 1500.0,
+  "wall": "2026-10-09T23:20:40.443Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 4,
+   "holds_created": 4,
+   "holds_open": 3,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 10,
+   "geo_points": 7,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 109,
+  "t": 1526.222,
+  "wall": "2026-10-09T23:20:41.788Z",
+  "kind": "txn.scored",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_f059698ae645715c",
+  "bank": "bank_b",
+  "bank_name": "axis",
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "decision": "hold_verify",
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9994,
+    "detail": "Payee account is only 5 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9429,
+    "detail": "Amount is about 34x this payer's typical transfer (z-score 4.5)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0104,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "seq": 1,
+  "victim": "B",
+  "hero": true
+ },
+ {
+  "id": 110,
+  "t": 1526.222,
+  "wall": "2026-10-09T23:20:41.788Z",
+  "kind": "hold.created",
+  "run_id": "562eaeebc703",
+  "txn_ref": "txn_f059698ae645715c",
+  "bank": "bank_b",
+  "decision": "hold_verify",
+  "decision_seq": 1,
+  "score": 1.0,
+  "reasons": [
+   {
+    "code": "YOUNG_PAYEE_ACCOUNT",
+    "weight": 0.9994,
+    "detail": "Payee account is only 5 days old"
+   },
+   {
+    "code": "AMOUNT_ANOMALY",
+    "weight": 0.9429,
+    "detail": "Amount is about 34x this payer's typical transfer (z-score 4.5)"
+   },
+   {
+    "code": "NEW_PAYEE",
+    "weight": 0.0104,
+    "detail": "First payment from this payer to this payee"
+   }
+  ],
+  "rail": "UPI",
+  "amount_bucket": "10k-100k",
+  "deadline_t": 1646.222,
+  "state": "open"
+ },
+ {
+  "id": 111,
+  "t": 1526.222,
+  "wall": "2026-10-09T23:20:41.789Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 22.573,
+  "lon": 88.364,
+  "point_kind": "held_transfer",
+  "city": "Kolkata",
+  "state": "West Bengal"
+ },
+ {
+  "id": 112,
+  "t": 1526.222,
+  "wall": "2026-10-09T23:20:41.793Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 11,
+  "event_type": "hold.created",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "651049637860"
+ },
+ {
+  "id": 113,
+  "t": 1526.222,
+  "wall": "2026-10-09T23:20:41.793Z",
+  "kind": "ledger.entry",
+  "run_id": "562eaeebc703",
+  "seq": 12,
+  "event_type": "hold.overdue",
+  "service": "txn-guard",
+  "actor_ref": "system:txn-guard",
+  "entry_hash_prefix": "bcde692339ad"
+ },
+ {
+  "id": 114,
+  "t": 1530.0,
+  "wall": "2026-10-09T23:20:41.984Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 115,
+  "t": 1560.0,
+  "wall": "2026-10-09T23:20:43.494Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 116,
+  "t": 1590.0,
+  "wall": "2026-10-09T23:20:45.001Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 117,
+  "t": 1620.0,
+  "wall": "2026-10-09T23:20:46.508Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 118,
+  "t": 1650.0,
+  "wall": "2026-10-09T23:20:48.016Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 119,
+  "t": 1680.0,
+  "wall": "2026-10-09T23:20:49.523Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 120,
+  "t": 1710.0,
+  "wall": "2026-10-09T23:20:51.033Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 121,
+  "t": 1740.0,
+  "wall": "2026-10-09T23:20:52.547Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 8,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 122,
+  "t": 1765.559,
+  "wall": "2026-10-09T23:20:53.835Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "cash_out",
+  "title": "Funds reach the cash-out account",
+  "caption": "Mule accounts forward the money onward; the ring graph links them."
+ },
+ {
+  "id": 123,
+  "t": 1765.559,
+  "wall": "2026-10-09T23:20:53.835Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 12.972,
+  "lon": 77.594,
+  "point_kind": "cash_out",
+  "city": "Bengaluru",
+  "state": "Karnataka"
+ },
+ {
+  "id": 124,
+  "t": 1770.0,
+  "wall": "2026-10-09T23:20:54.060Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 125,
+  "t": 1800.0,
+  "wall": "2026-10-09T23:20:55.568Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 126,
+  "t": 1830.0,
+  "wall": "2026-10-09T23:20:57.075Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 127,
+  "t": 1860.0,
+  "wall": "2026-10-09T23:20:58.584Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 128,
+  "t": 1890.0,
+  "wall": "2026-10-09T23:21:00.091Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 129,
+  "t": 1920.0,
+  "wall": "2026-10-09T23:21:01.597Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 130,
+  "t": 1950.0,
+  "wall": "2026-10-09T23:21:03.105Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 131,
+  "t": 1980.0,
+  "wall": "2026-10-09T23:21:04.612Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 132,
+  "t": 2010.0,
+  "wall": "2026-10-09T23:21:06.121Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 133,
+  "t": 2040.0,
+  "wall": "2026-10-09T23:21:07.629Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 134,
+  "t": 2070.0,
+  "wall": "2026-10-09T23:21:09.136Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 135,
+  "t": 2100.0,
+  "wall": "2026-10-09T23:21:10.644Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 136,
+  "t": 2130.0,
+  "wall": "2026-10-09T23:21:12.152Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 137,
+  "t": 2160.0,
+  "wall": "2026-10-09T23:21:13.659Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 138,
+  "t": 2190.0,
+  "wall": "2026-10-09T23:21:15.166Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 9,
+   "ring_members": 1
+  }
+ },
+ {
+  "id": 139,
+  "t": 2196.733,
+  "wall": "2026-10-09T23:21:15.506Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 12.972,
+  "lon": 77.594,
+  "point_kind": "cash_out",
+  "city": "Bengaluru",
+  "state": "Karnataka"
+ },
+ {
+  "id": 140,
+  "t": 2196.733,
+  "wall": "2026-10-09T23:21:15.507Z",
+  "kind": "ring.updated",
+  "run_id": "562eaeebc703",
+  "ring_id": "d46a16a49bc0f0cd",
+  "members": 3,
+  "victims": 2,
+  "inflow_bucket": "10k-100k"
+ },
+ {
+  "id": 141,
+  "t": 2220.0,
+  "wall": "2026-10-09T23:21:16.683Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 142,
+  "t": 2250.0,
+  "wall": "2026-10-09T23:21:18.190Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 143,
+  "t": 2280.0,
+  "wall": "2026-10-09T23:21:19.697Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 144,
+  "t": 2310.0,
+  "wall": "2026-10-09T23:21:21.206Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 145,
+  "t": 2340.0,
+  "wall": "2026-10-09T23:21:22.714Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 146,
+  "t": 2370.0,
+  "wall": "2026-10-09T23:21:24.221Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 147,
+  "t": 2400.0,
+  "wall": "2026-10-09T23:21:25.729Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 148,
+  "t": 2430.0,
+  "wall": "2026-10-09T23:21:27.235Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 149,
+  "t": 2460.0,
+  "wall": "2026-10-09T23:21:28.743Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 150,
+  "t": 2490.0,
+  "wall": "2026-10-09T23:21:30.253Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 151,
+  "t": 2520.0,
+  "wall": "2026-10-09T23:21:31.760Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 152,
+  "t": 2550.0,
+  "wall": "2026-10-09T23:21:33.269Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 153,
+  "t": 2580.0,
+  "wall": "2026-10-09T23:21:34.776Z",
+  "kind": "metric.tick",
+  "run_id": "562eaeebc703",
+  "counters": {
+   "chunks": 19,
+   "call_alerts": 2,
+   "txns_scored": 5,
+   "holds_created": 5,
+   "holds_open": 4,
+   "holds_resolved": 1,
+   "antibodies_published": 1,
+   "antibodies_applied": 1,
+   "antibody_matches": 1,
+   "ledger_entries": 12,
+   "geo_points": 10,
+   "ring_members": 3
+  }
+ },
+ {
+  "id": 154,
+  "t": 2609.067,
+  "wall": "2026-10-09T23:21:36.238Z",
+  "kind": "geo.point",
+  "run_id": "562eaeebc703",
+  "lat": 19.076,
+  "lon": 72.878,
+  "point_kind": "cash_out",
+  "city": "Mumbai",
+  "state": "Maharashtra"
+ },
+ {
+  "id": 155,
+  "t": 2609.067,
+  "wall": "2026-10-09T23:21:36.238Z",
+  "kind": "ring.updated",
+  "run_id": "562eaeebc703",
+  "ring_id": "d46a16a49bc0f0cd",
+  "members": 4,
+  "victims": 2,
+  "inflow_bucket": "10k-100k"
+ },
+ {
+  "id": 156,
+  "t": 2609.067,
+  "wall": "2026-10-09T23:21:36.250Z",
+  "kind": "scenario.step",
+  "run_id": "562eaeebc703",
+  "key": "evidence_sealed",
+  "title": "Evidence sealed",
+  "caption": "Every decision is in the hash-chained ledger; an offline verifier can check the package."
+ },
+ {
+  "id": 157,
+  "t": 2609.067,
+  "wall": "2026-10-09T23:21:36.259Z",
+  "kind": "scenario.finished",
+  "run_id": "562eaeebc703",
+  "reason": "completed",
+  "ledger_entries": 12,
+  "antibody_published": true,
+  "victim_b_protected": true,
+  "latency_ms": 7.4
+ }
+]

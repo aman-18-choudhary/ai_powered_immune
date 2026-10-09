@@ -1,0 +1,845 @@
+{
+ "ablations": {
+  "baseline": {
+   "f1": {
+    "ci95": null,
+    "value": 0.904992
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.844847,
+     0.895091
+    ],
+    "value": 0.872059
+   },
+   "fn": 118,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.000177
+    ],
+    "value": 0.0
+   },
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "money_at_risk_after_first_hold_inr": "18227511.69",
+   "money_prevented_upper_bound_inr": "18227511.69",
+   "mule_forward_recall": {
+    "ci95": [
+     0.569436,
+     0.675969
+    ],
+    "value": 0.624204
+   },
+   "n_benign": 21736,
+   "n_scam": 680,
+   "precision": {
+    "ci95": [
+     0.993211,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "recall": {
+    "ci95": [
+     0.796194,
+     0.85308
+    ],
+    "value": 0.826471
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "tn": 21736,
+   "tp": 562,
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  "degraded_call_signal": {
+   "f1": {
+    "ci95": null,
+    "value": 0.901613
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.000742,
+     0.001642
+    ],
+    "value": 0.001104
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.843263,
+     0.89375
+    ],
+    "value": 0.870588
+   },
+   "fn": 121,
+   "fp": 1,
+   "fpr": {
+    "ci95": [
+     8e-06,
+     0.000261
+    ],
+    "value": 4.6e-05
+   },
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.994392
+   },
+   "money_at_risk_after_first_hold_inr": "18201984.69",
+   "money_prevented_upper_bound_inr": "18155236.69",
+   "mule_forward_recall": {
+    "ci95": [
+     0.569436,
+     0.675969
+    ],
+    "value": 0.624204
+   },
+   "n_benign": 21736,
+   "n_scam": 680,
+   "precision": {
+    "ci95": [
+     0.989955,
+     0.999685
+    ],
+    "value": 0.998214
+   },
+   "recall": {
+    "ci95": [
+     0.791527,
+     0.848972
+    ],
+    "value": 0.822059
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.000705,
+     0.001587
+    ],
+    "value": 0.001058
+   },
+   "tn": 21735,
+   "tp": 559,
+   "victim_transfer_recall": {
+    "ci95": [
+     0.976182,
+     0.997209
+    ],
+    "value": 0.991803
+   }
+  },
+  "no_antibody": {
+   "f1": {
+    "ci95": null,
+    "value": 0.88707
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.81963,
+     0.873513
+    ],
+    "value": 0.848529
+   },
+   "fn": 138,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.000177
+    ],
+    "value": 0.0
+   },
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.944854
+   },
+   "money_at_risk_after_first_hold_inr": "18227511.69",
+   "money_prevented_upper_bound_inr": "17892546.17",
+   "mule_forward_recall": {
+    "ci95": [
+     0.569436,
+     0.675969
+    ],
+    "value": 0.624204
+   },
+   "n_benign": 21736,
+   "n_scam": 680,
+   "precision": {
+    "ci95": [
+     0.992962,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "recall": {
+    "ci95": [
+     0.7652,
+     0.82558
+    ],
+    "value": 0.797059
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "tn": 21736,
+   "tp": 542,
+   "victim_transfer_recall": {
+    "ci95": [
+     0.917108,
+     0.964351
+    ],
+    "value": 0.945355
+   }
+  },
+  "no_call_signal": {
+   "f1": {
+    "ci95": null,
+    "value": 0.898785
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.835361,
+     0.887028
+    ],
+    "value": 0.863235
+   },
+   "fn": 125,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.000177
+    ],
+    "value": 0.0
+   },
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.991451
+   },
+   "money_at_risk_after_first_hold_inr": "18088915.69",
+   "money_prevented_upper_bound_inr": "18017534.20",
+   "mule_forward_recall": {
+    "ci95": [
+     0.569436,
+     0.675969
+    ],
+    "value": 0.624204
+   },
+   "n_benign": 21736,
+   "n_scam": 680,
+   "precision": {
+    "ci95": [
+     0.993126,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "recall": {
+    "ci95": [
+     0.785315,
+     0.843486
+    ],
+    "value": 0.816176
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.000632,
+     0.001477
+    ],
+    "value": 0.000966
+   },
+   "tn": 21736,
+   "tp": 555,
+   "victim_transfer_recall": {
+    "ci95": [
+     0.961054,
+     0.990705
+    ],
+    "value": 0.980874
+   }
+  }
+ },
+ "antibody": {
+  "confirm_delay_s": 60.0,
+  "stage_enabled": true,
+  "stats": {
+   "baseline": {
+    "benign_matches": 0,
+    "matches": 345,
+    "published": 21,
+    "scam_matches": 345
+   },
+   "degraded_call_signal": {
+    "benign_matches": 0,
+    "matches": 342,
+    "published": 21,
+    "scam_matches": 342
+   },
+   "no_call_signal": {
+    "benign_matches": 0,
+    "matches": 338,
+    "published": 21,
+    "scam_matches": 338
+   }
+  }
+ },
+ "calls": {
+  "alerts_published": 163,
+  "benign_calls": 1076,
+  "benign_calls_alerted": 0,
+  "scam_calls": 163,
+  "scam_calls_alerted": 163
+ },
+ "config": {
+  "benign_call_rate": 0.05,
+  "days": 14,
+  "n_campaigns": 5,
+  "n_citizens": 1500,
+  "victims_per_campaign": 25,
+  "warmup_days": 5
+ },
+ "headline": {
+  "f1": {
+   "ci95": null,
+   "value": 0.904992
+  },
+  "flagged_fpr": {
+   "ci95": [
+    0.000632,
+    0.001477
+   ],
+   "value": 0.000966
+  },
+  "flagged_recall": {
+   "ci95": [
+    0.844847,
+    0.895091
+   ],
+   "value": 0.872059
+  },
+  "fn": 118,
+  "fp": 0,
+  "fpr": {
+   "ci95": [
+    0.0,
+    0.000177
+   ],
+   "value": 0.0
+  },
+  "n_benign": 21736,
+  "n_scam": 680,
+  "precision": {
+   "ci95": [
+    0.993211,
+    1.0
+   ],
+   "value": 1.0
+  },
+  "recall": {
+   "ci95": [
+    0.796194,
+    0.85308
+   ],
+   "value": 0.826471
+  },
+  "step_up_benign_rate": {
+   "ci95": [
+    0.000632,
+    0.001477
+   ],
+   "value": 0.000966
+  },
+  "tn": 21736,
+  "tp": 562
+ },
+ "hero": {
+  "counts": {
+   "a_alerts": 40,
+   "b_alerts": 0,
+   "due_before_b": 40,
+   "gap90": 40,
+   "match": 40,
+   "shared_held": 40
+  },
+  "model_only": {
+   "allow": 39,
+   "hold_verify": 0,
+   "step_up": 1
+  },
+  "mule_age_days_range": [
+   68,
+   398
+  ],
+  "seeds": 40,
+  "with_antibody": {
+   "allow": 0,
+   "hold_verify": 40,
+   "step_up": 0
+  }
+ },
+ "latency_ms": {
+  "n": 2242,
+  "p50": 5.287000000407716,
+  "p99": 15.334635969738883
+ },
+ "limitations": [
+  "Simulator only. Every number here is measured on synthetic data generated by the same codebase that the models were trained on (disjoint seeds, shared generators). Treat the figures as a regression and ablation harness, not as real-world performance.",
+  "NEFT has no scam transactions: the simulator's scam flows use UPI and IMPS only, so NEFT recall is undefined and the model never saw NEFT positives. NEFT amounts are naturally ~5x larger, so txn-guard scales its absolute-amount policy thresholds per rail (NEFT x5), requires z >= 6 on NEFT before the overlays escalate and caps the model at step-up-minus-0.01 there unless a call risk is active or history is short. NEFT benign transactions are held at 0.00% (hold) and flagged at 0.83% (step-up or hold) in this run. The scaling has a cost: Rs 25k-250k NEFT to payees >= 30 days old with no call passes, NEFT test-then-escalate holds for payees < 7 days old or at amounts >= Rs 2.5L at any age, and NEFT scams in the Rs 25k-125k range rely on the young-payee floors. NEFT detection is tested by hand-written scenarios only (no NEFT scams in the simulator) and the scale and z values are simulator-derived, not real-data-derived.",
+  "Call signal is idealised in the main run: simulator call-guard alerts every scam call and no benign call, whereas txn-guard was trained and calibrated on 85% call recall and 1.5% spurious benign risk. The call signal matters: recall falls from 82.6% with calls to 81.6% without them. Compare with the `degraded_call_signal` row for a training-like imperfect signal.",
+  "Calibration prevalence: the txn-guard model was calibrated at roughly 1% scam prevalence; this run's prevalence is 3.03% and real prevalence is far lower. Precision depends directly on prevalence (see the prevalence table); recall and FPR do not.",
+  "Call alerts reach txn-guard once, at the threshold crossing (as in production call-guard), and count as active for 15 minutes; long calls can outlast the window.",
+  "Held transactions are still recorded in the payer's history (the pipeline does not model the hold changing later behaviour). Duplicate and out-of-order events are not exercised here.",
+  "Lead time uses the simulator's 10th victim as the mass-victimisation point; it is measured per campaign with few campaigns, so it carries wide uncertainty.",
+  "The antibody gain (94.5% -> 100% victim recall at seed 42) depends on the simulator's structure: each campaign has 3-6 mule accounts reused across ~25 victims, and the oracle confirms every mule payee a fixed delay after its first held transfer, so almost every later victim transfer hits an already-confirmed payee. The 60 s delay is a free parameter (sensitivity table above). Antibody poisoning, false confirmations and antibodies on legitimate merchants are NOT simulated, and 'benign antibody matches = 0' holds by construction (no benign mule payees in the simulator; label-gated confirmation): a tautology, not evidence about analyst accuracy.",
+  "The antibody stage rests on an ASSUMED analyst-confirmation model (first hold_verify on a campaign victim transfer, confirmed after a fixed delay, using simulator ground truth as the analyst's oracle), not on measured analyst behaviour; benign holds are never confirmed. The benchmark has one shared cache, and second-bank victims exist only in the hero scenario, so cross-bank propagation latency and hub outages are not exercised here (see the txn-guard acceptance test). Only the payee of a victim transfer is blocked; the cash-out account (a different payee_hash) is not."
+ ],
+ "meta": {
+  "ablations_requested": [
+   "no_call_signal",
+   "degraded_call_signal",
+   "no_antibody"
+  ],
+  "command": "python -m scam_bench.run_benchmark --seed 42",
+  "forbidden_seeds": {
+   "call_guard_train": [
+    1000,
+    2000,
+    3000
+   ],
+   "txn_guard_calibration": [
+    201,
+    202,
+    203
+   ],
+   "txn_guard_eval (held out, reported only)": [
+    9001,
+    9002,
+    9003,
+    9004
+   ],
+   "txn_guard_train": [
+    101,
+    102,
+    103,
+    104,
+    105,
+    106
+   ]
+  },
+  "git_commit": "2a8da35",
+  "model_versions": {
+   "call_guard": "clf-v1",
+   "txn_guard": "gbm-v1"
+  },
+  "runtime_s": 193.6,
+  "seed": 42
+ },
+ "per_rail": {
+  "IMPS": {
+   "f1": {
+    "ci95": null,
+    "value": 0.96
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.001881,
+     0.007305
+    ],
+    "value": 0.003711
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.880001,
+     0.958918
+    ],
+    "value": 0.928994
+   },
+   "fn": 13,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.001779
+    ],
+    "value": 0.0
+   },
+   "n_benign": 2156,
+   "n_scam": 169,
+   "precision": {
+    "ci95": [
+     0.975967,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "recall": {
+    "ci95": [
+     0.872851,
+     0.954497
+    ],
+    "value": 0.923077
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.001881,
+     0.007305
+    ],
+    "value": 0.003711
+   },
+   "tn": 2156,
+   "tp": 156
+  },
+  "NEFT": {
+   "f1": {
+    "ci95": null,
+    "value": null
+   },
+   "flagged_fpr": {
+    "ci95": [
+     0.004503,
+     0.015171
+    ],
+    "value": 0.008278
+   },
+   "flagged_recall": {
+    "ci95": null,
+    "value": null
+   },
+   "fn": 0,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.00317
+    ],
+    "value": 0.0
+   },
+   "n_benign": 1208,
+   "n_scam": 0,
+   "precision": {
+    "ci95": null,
+    "value": null
+   },
+   "recall": {
+    "ci95": null,
+    "value": null
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     0.004503,
+     0.015171
+    ],
+    "value": 0.008278
+   },
+   "tn": 1208,
+   "tp": 0
+  },
+  "UPI": {
+   "f1": {
+    "ci95": null,
+    "value": 0.885496
+   },
+   "flagged_fpr": {
+    "ci95": [
+     5.6e-05,
+     0.00048
+    ],
+    "value": 0.000163
+   },
+   "flagged_recall": {
+    "ci95": [
+     0.819912,
+     0.881275
+    ],
+    "value": 0.853229
+   },
+   "fn": 105,
+   "fp": 0,
+   "fpr": {
+    "ci95": [
+     0.0,
+     0.000209
+    ],
+    "value": 0.0
+   },
+   "n_benign": 18372,
+   "n_scam": 511,
+   "precision": {
+    "ci95": [
+     0.990627,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "recall": {
+    "ci95": [
+     0.757352,
+     0.827294
+    ],
+    "value": 0.794521
+   },
+   "step_up_benign_rate": {
+    "ci95": [
+     5.6e-05,
+     0.00048
+    ],
+    "value": 0.000163
+   },
+   "tn": 18372,
+   "tp": 406
+  }
+ },
+ "per_role": {
+  "mule_forward": {
+   "flagged": 227,
+   "flagged_recall": {
+    "ci95": [
+     0.67096,
+     0.769512
+    ],
+    "value": 0.72293
+   },
+   "held": 196,
+   "n": 314,
+   "recall": {
+    "ci95": [
+     0.569436,
+     0.675969
+    ],
+    "value": 0.624204
+   }
+  },
+  "victim_transfer": {
+   "flagged": 366,
+   "flagged_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   },
+   "held": 366,
+   "n": 366,
+   "recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  }
+ },
+ "schema_version": 1,
+ "sensitivity": [
+  {
+   "antibodies_published": null,
+   "antibody_matches": null,
+   "benign_matches": null,
+   "delay_s": null,
+   "gate": "none",
+   "label": "no antibody",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.944854
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.917108,
+     0.964351
+    ],
+    "value": 0.945355
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 345,
+   "benign_matches": 0,
+   "delay_s": 0.0,
+   "gate": "label",
+   "label": "label-gated, 0 s",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 345,
+   "benign_matches": 0,
+   "delay_s": 60.0,
+   "gate": "label",
+   "label": "label-gated, 60 s (baseline)",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 342,
+   "benign_matches": 0,
+   "delay_s": 300.0,
+   "gate": "label",
+   "label": "label-gated, 300 s",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 335,
+   "benign_matches": 0,
+   "delay_s": 900.0,
+   "gate": "label",
+   "label": "label-gated, 900 s",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 313,
+   "benign_matches": 0,
+   "delay_s": 3600.0,
+   "gate": "label",
+   "label": "label-gated, 1 h",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 225,
+   "benign_matches": 0,
+   "delay_s": 21600.0,
+   "gate": "label",
+   "label": "label-gated, 6 h",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.991571
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.976182,
+     0.997209
+    ],
+    "value": 0.991803
+   }
+  },
+  {
+   "antibodies_published": 21,
+   "antibody_matches": 0,
+   "benign_matches": 0,
+   "delay_s": 86400.0,
+   "gate": "label",
+   "label": "label-gated, 24 h",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 0.944854
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.917108,
+     0.964351
+    ],
+    "value": 0.945355
+   }
+  },
+  {
+   "antibodies_published": 26,
+   "antibody_matches": 650,
+   "benign_matches": 0,
+   "delay_s": 60.0,
+   "gate": "hold",
+   "label": "hold-gated (no labels), 60 s",
+   "mean_share_post_detection_held": {
+    "ci95": null,
+    "value": 1.0
+   },
+   "victim_transfer_recall": {
+    "ci95": [
+     0.989613,
+     1.0
+    ],
+    "value": 1.0
+   }
+  }
+ ],
+ "simulated": true
+}

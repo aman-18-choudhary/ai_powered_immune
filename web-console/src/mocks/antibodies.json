@@ -1,0 +1,14 @@
+{
+ "antibodies": [
+  {
+   "antibody_ref": "9352d6a9c66148c3",
+   "kind": "mule_account",
+   "source_bank": "bank_a",
+   "state": "active",
+   "key_hash_prefix": "2315111f",
+   "created_at": "2026-01-06T08:25:04.734157Z",
+   "expires_at": "2026-01-20T08:25:04.734157Z"
+  }
+ ],
+ "simulated": true
+}
