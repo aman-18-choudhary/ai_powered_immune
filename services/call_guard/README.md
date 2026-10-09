@@ -10,6 +10,22 @@ and `call_guard/rules.py` docstrings for exactly how it is produced.
 * With `KAFKA_BOOTSTRAP` set the service consumes `call.events` and publishes `call.risk` when a
   call's accumulated score crosses 0.7 (session state in Redis when `REDIS_URL` is set).
 
+## Ledger entry per alert (Task 13)
+
+Each threshold crossing publishes one `callrisk.alert` ledger entry (service `call-guard`, actor
+`system:call-guard`) together with the CallRisk, in the same idempotent step of the consumer: the
+ledger entry first, then `call.risk`, then the `published` marker. If either publish fails the
+claim is released and the whole step is retried; the retry re-sends byte-identical messages (the
+ledger absorbs the duplicate entry, CallRisk consumers dedupe on payload hash), so an alert's audit
+entry is neither lost nor counted twice. A ledger payload the PII guard refuses is logged and
+skipped: an audit-format bug never suppresses the alert.
+
+Payload: `call_ref` (first 16 hex of `sha256(call_id)`; the call id is never emitted), `crossing`,
+`score` (4 dp, the peak at the crossing), `reason_codes` (sorted codes, no free text),
+`model_version`, `chunk_count` (events scored when the crossing happened), `threshold`,
+`crossed_ts`. Case refs: `[call_ref:<16 hex>]`. Not in the ledger: call text, caller number or
+hash, victim token, reason detail.
+
 ## Retraining the call-guard classifier
 
 ```bash

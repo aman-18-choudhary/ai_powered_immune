@@ -54,6 +54,21 @@ matches `X-Gateway-Secret` (constant time) or `TRUST_GATEWAY_HEADERS=1`; otherwi
 * Storage: SQLAlchemy Core, `HUB_DATABASE_URL` (SQLite in tests, Postgres via the `postgres`
   extra). Env: `KAFKA_BOOTSTRAP` (else an in-memory bus, dev only).
 
+## Ledger entries (Task 13)
+
+Every state change enqueues one ledger entry in the same transaction as the change (service
+`antibody-hub`, actor = the confirming/revoking principal, `system:expiry` for expiry,
+`sub@bank` for corroborations). Payload: `antibody_id, event, generation, kind, key_hash_prefix`
+(8 hex), `expires_at` (`YYYY-MM-DDTHH:MM:SSZ`), `actor_role` (gateway role, `system` for expiry),
+`actor_bank?` (pseudonymous lowercase slug). `event` is one of `created, extended, expired,
+revoked, revoked.cross_bank, corroborated`; `protected.added` / `protected.removed` carry `event,
+key_hash_prefix, actor_role, at` (microsecond UTC). Case refs: `[antibody_id, payee_ref:<16 hex of
+key_hash>]` (`device_ref:` / `script_ref:` for those kinds; `payee_ref:` only for protected
+hashes), so an antibody's whole lifecycle joins the txn-guard holds on the same payee in one case.
+Not in the ledger: the full `key_hash`, `evidence_ref`, revoke reason, protected-hash note, any
+raw identifier. The outbox dedupe key is `sha256(actor | payload_hash)`, so two analysts
+corroborating the same antibody remain two entries.
+
 ## Free text, validation errors and logs
 
 `evidence_ref` is an opaque reference `^[A-Za-z0-9._:-]{1,64}$`; `reason` and `note` are free text

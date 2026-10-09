@@ -175,9 +175,11 @@ What is and is not guaranteed:
   request).
 * **Audit** is a transactional outbox: the entry is stored in the hold record in the same
   compare-and-set as the state change and drained to the sink at-least-once (on every change, every
-  idempotent re-entry and a periodic sweep, `AUDIT_DRAIN_INTERVAL_S`, default 5). The
-  `payload_hash` (txn_id, decision, decision_seq, score, actor/action, model_version, reason codes)
-  is the ledger-side dedupe key. `hold.overdue` is emitted once per hold (durable marker).
+  idempotent re-entry and a periodic sweep, `AUDIT_DRAIN_INTERVAL_S`, default 5). `BusAuditSink`
+  sends structured, PII-checked `LedgerEntryIn` entries (`svckit.ledger.emit_ledger`) with
+  `payload_hash = sha256(canonical_json(payload))`; payloads use only the hold's own timestamps, so
+  a retry re-sends byte-identical content that the ledger absorbs. `hold.overdue` is emitted once
+  per hold (durable marker). See "Ledger entries" below.
 * **Deadlines.** Past `HOLD_DEADLINE_S` (default 120) holds stay open, flagged `overdue`
   (`txn_guard_holds_overdue`, `txn_guard_holds_overdue_total`); never auto-released or auto-blocked.
 * **Resolve**: non-empty actor, idempotent for the same action, 409 on a conflicting action or when
@@ -200,6 +202,29 @@ consumers run), `HOLD_DEADLINE_S`, `AUDIT_DRAIN_INTERVAL_S`, `GATEWAY_SHARED_SEC
 `TRUST_GATEWAY_HEADERS`, `METRICS_TOKEN`, `PORT`. Run: `python -m txn_guard`. The Scorer runs in a
 worker thread (`asyncio.to_thread`); measured consumer-path latency with fakeredis stores is
 p50 ~7 ms / p99 ~14 ms per transaction.
+
+## Ledger entries (Task 13)
+
+Service `txn-guard`, actor `system:txn-guard` except `hold.resolved` (actor = the resolver's
+pseudonymous principal subject), `model_version` = the scorer's. Payload fields (`score` is
+rounded to 4 dp, `reason_codes` is the sorted list of codes only, no reason text, `deadline_ts` is
+`YYYY-MM-DDTHH:MM:SSZ`):
+
+| event | payload |
+|---|---|
+| `hold.created` | `txn_id, decision, decision_seq, score, reason_codes, model_version, rail, amount_bucket, deadline_ts, payee_ref?, call_ref?`; a hold created by a late upgrade of an `allow` adds `from_decision: allow` and `trigger` |
+| `hold.upgraded` | the same plus `from_decision, to_decision, trigger` (`call_risk`, `antibody`, `late_call_risk`, `late_antibody`) |
+| `hold.resolved` | the same plus `action` (`release`/`confirm_block`), `resolver_role`, `resolver_ref`, `resolved_ts` |
+| `hold.overdue` | the same plus `overdue: true` |
+
+`amount_bucket` is one of `<1k`, `1k-10k`, `10k-100k`, `100k-1m`, `>=1m` (rupees). **Not in the
+ledger:** the amount, payer token, payee hash (only its 16-hex `payee_ref`), account numbers,
+phones, reason text, device ids. `payee_ref` is the first 16 hex of the keyed payee hash (the next
+16-hex block if the first is all digits); `call_ref` is the first 16 hex of `sha256(call_id)` of
+the highest-scoring call risk inside the 15-minute window that influenced the decision (audit
+linking only: it never changes a decision). Case refs per entry: `[txn_id, payee_ref:<16 hex>,
+call_ref:<16 hex>]` (the last two when known). Holds created before this version keep sending
+hash-only entries from their old outbox.
 
 ## Cross-bank antibodies (Task 11)
 

@@ -168,10 +168,12 @@ dedupe memory of its own (the store is idempotent) and is restarted if the bus c
 Payload strings, keys and numbers, `case_refs`, `service`/`actor`/`event_type`, `model_version`
 and case titles go through `svckit.pii` (NFKC, separators collapsed, 9+ digits, e-mail/UPI `@`,
 `+`/`0091`, PAN, IFSC). Platform-minted opaque ids are accepted **only as whole strings** of an
-exact shape: an optional lowercase `prefix_` (2-8 letters), then exactly 16, 24, 32 or 64
-lowercase hex characters with at least one letter a-f whose longest digit run is at most 15, 21,
+exact shape: an optional lowercase `prefix_` (2-8 letters) or case-ref namespace `prefix_ref:`, then
+exactly 16, 24, 32 or 64 lowercase hex characters with at least one letter a-f whose longest digit run is at most 15, 21,
 22 or 25 respectively. Everything else (including an id embedded in longer text, and every
-free-text field) gets the strict rule. Numbers (and numeric keys) with a run of 9+ digits are
+free-text field) gets the strict rule. A whole-string UTC timestamp
+`YYYY-MM-DDTHH:MM:SSZ` (valid ranges only, optional fractional seconds) is also accepted, since its
+14 digits would otherwise trip the 9-digit rule. Numbers (and numeric keys) with a run of 9+ digits are
 rejected: amounts of 9+ digits (for example Rs 10 crore in rupees) must be omitted or sent in a
 different shape; decision sequence numbers, scores and rupee amounts below 9 digits are fine.
 
@@ -195,6 +197,31 @@ phone-sized digit run padded with hex letters to an id length. Those pass. `a123
 numbers, encoded values and fragments of 8 digits or fewer are not detected either. The guard is
 a safety net; emitters must not put identifiers in payloads or refs. A raw identifier that does
 reach a stored payload is immutable and ends up in every package that selects the entry.
+
+## Emitter conventions (Task 13)
+
+Services build entries with `svckit.ledger.build_ledger_entry` / `emit_ledger`, which compute
+`payload_hash` with the shared canonical helper and refuse (`LedgerPayloadError`, message never
+echoes the value) payloads with forbidden key names (`phone, mobile, account, account_number,
+name, email, address, upi, vpa, pan, aadhaar, otp, password, token_secret`, case-insensitive
+substring), PII-looking values, more than 4 KiB, or more than 10 refs. The ledger still re-checks
+everything (a refused entry is quarantined). Conventions:
+
+| ref | definition | joins |
+|---|---|---|
+| `<txn_id>` (`txn_<16 hex>`) | the transaction id | txn-guard holds of one transfer |
+| `payee_ref:<16 hex>` | first 16 hex of the keyed payee hash (`key_hash` in the hub); the next 16-hex block if that one is all digits | the same (mule) account across banks: A's and B's holds and the antibody lifecycle |
+| `call_ref:<16 hex>` | first 16 hex of `sha256(call_id)` (same all-digit fallback) | call-guard's `callrisk.alert` and the holds that call influenced |
+| `<antibody_id>` | sha256 hex | antibody lifecycle |
+
+`payee_ref` identifies a mule account across banks (that is its purpose); it is a truncated keyed
+hash, so it reveals nothing about the account number, but anyone holding the federation key can
+test a guessed account against it. Payload timestamps are `YYYY-MM-DDTHH:MM:SSZ` strings (the PII
+guard exempts that exact whole-string shape and `prefix_ref:`-namespaced 16-hex ids; nothing
+else with 9+ digits passes). Payloads must be deterministic (no wall clock read at send time):
+the ledger's idempotency key makes an exact repeat a no-op, anything that varies between retries
+becomes a second entry. Chain order is receipt order; emitters need no cross-event ordering.
+The full flow is exercised in `tests/e2e/audit` (see `docs/audit-trail.md`).
 
 ## Evidence packages
 
