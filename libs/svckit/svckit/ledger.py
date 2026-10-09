@@ -171,3 +171,71 @@ def utc_ts(ts: datetime, *, micros: bool = False) -> str:
     if ts.tzinfo is None:
         raise ValueError("timestamp must be timezone-aware")
     return ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ" if micros else "%Y-%m-%dT%H:%M:%SZ")
+
+
+def txn_ref(txn_id: str) -> str:
+    """The id a transaction carries in ledger payloads and case refs: the id itself when the PII
+    guard accepts it (``txn_<16 hex>``), otherwise ``txn_`` + 16 hex of ``sha256(txn_id)``.
+    Real rails use numeric ids (UPI RRNs are 12 digits), which the guard must refuse. Cases must be
+    created with this reference."""
+    if _REF_RE.match(txn_id) and not string_has_identifier(txn_id):
+        return txn_id
+    return "txn_" + opaque_hex16(hashlib.sha256(txn_id.encode()).hexdigest())
+
+
+def redacted_ref(value: str) -> str:
+    """``redacted_<16 hex>``: a stable stand-in for a value the guard refused to carry."""
+    return "redacted_" + opaque_hex16(hashlib.sha256(value.encode()).hexdigest())
+
+
+_ACTOR_OK = re.compile(r"^[A-Za-z0-9._:/-]{1,100}(@[a-z0-9_-]{2,32})?$")
+
+
+def safe_actor(actor: str) -> str:
+    """The actor if the ledger would accept it, else ``redacted_<16 hex>`` of it."""
+    if _ACTOR_OK.match(actor) and not string_has_identifier(actor.replace("@", "-")):
+        return actor
+    return redacted_ref(actor)
+
+
+def build_or_placeholder(
+    service: str,
+    actor: str,
+    event_type: str,
+    payload: Mapping[str, Any],
+    *,
+    model_version: str | None = None,
+    case_refs: Iterable[str] = (),
+    placeholder: Mapping[str, Any],
+    placeholder_refs: Iterable[str] = (),
+) -> tuple[LedgerEntryIn, bool]:
+    """Never raises: the entry, or if the guard refuses it a fixed-shape placeholder (the caller's
+    ``placeholder`` payload plus ``audit: payload_refused``, no model version, a redacted actor if
+    needed, only the placeholder refs the guard accepts). Returns (entry, refused). The chain thus
+    still records that an event of this type happened. The error is never echoed."""
+    try:
+        return (
+            build_ledger_entry(
+                service, actor, event_type, payload, model_version=model_version,
+                case_refs=case_refs,
+            ),
+            False,
+        )  # fmt: skip
+    except LedgerPayloadError:
+        pass
+    body = {**placeholder, "audit": "payload_refused"}
+    refs = [r for r in placeholder_refs if _REF_RE.match(r) and not string_has_identifier(r)]
+    for attempt in (
+        (body, refs),
+        ({"audit": "payload_refused"}, []),
+    ):
+        try:
+            return (
+                build_ledger_entry(
+                    service, safe_actor(actor), event_type, attempt[0], case_refs=attempt[1]
+                ),
+                True,
+            )  # fmt: skip
+        except LedgerPayloadError:
+            continue
+    raise LedgerPayloadError("placeholder entry refused")  # event_type/service themselves bad

@@ -195,3 +195,21 @@ def test_utc_timestamps_are_exempt_whole_string(ts):
 )  # fmt: skip
 def test_timestamp_exemption_is_exact(text):
     assert string_has_identifier(text), text
+
+
+# ---------------------------------------------------------------- fix round 1: prefix allowlist
+@pytest.mark.parametrize(
+    "ok", ["txn_3a9f0c12d45b7e68", "cmp_3a9f0c12d45b7e68", "kh_3a9f0c12d45b7e68",
+           "ab_3a9f0c12d45b7e68", "redacted_3a9f0c12d45b7e68", "payee_ref:3a9f0c12d45b7e68",
+           "call_ref:3a9f0c12d45b7e68", "device_ref:3a9f0c12d45b7e68"],
+)  # fmt: skip
+def test_allowlisted_prefixes(ok):
+    assert not string_has_identifier(ok)
+
+
+@pytest.mark.parametrize(
+    "bad", ["acct_3a9f0c12d45b7e68", "phone_3a9f0c12d45b7e68", "acct_ref:3a9f0c12d45b7e68",
+            "upi_ref:3a9f0c12d45b7e68", "pan:3a9f0c12d45b7e68"],
+)  # fmt: skip
+def test_free_form_prefixes_are_not_exempt(bad):
+    assert string_has_identifier(bad)

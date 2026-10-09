@@ -181,3 +181,46 @@ async def test_emit_rejects_pii_keys_and_publishes_nothing():
         with pytest.raises(LedgerPayloadError):
             await emit_ledger(bus, "s", "a", "e", payload)
     assert bus.messages(Topics.LEDGER) == []
+
+
+# ---------------------------------------------------------------- fix round 1
+from svckit.ledger import build_or_placeholder, redacted_ref, safe_actor, txn_ref  # noqa: E402
+from svckit.pii import string_has_identifier  # noqa: E402
+
+
+def test_txn_ref_passes_safe_ids_and_hashes_the_rest():
+    assert txn_ref("txn_3a9f0c12d45b7e68") == "txn_3a9f0c12d45b7e68"
+    assert txn_ref("t1") == "t1"
+    for raw in ("402312345678", "UPI/402312345678/x", "a" * 80, "has space"):
+        r = txn_ref(raw)
+        assert r.startswith("txn_") and len(r) == 20 and raw not in r
+        assert not string_has_identifier(r) and r == txn_ref(raw)
+
+
+def test_redacted_ref_and_safe_actor():
+    assert safe_actor("analyst-7") == "analyst-7" and safe_actor("a1@bank_a") == "a1@bank_a"
+    for bad in ("919876543210", "user@okaxis.com", "x" * 120):
+        r = safe_actor(bad)
+        assert r.startswith("redacted_") and bad not in r and not string_has_identifier(r)
+    assert redacted_ref("abc") == redacted_ref("abc") != redacted_ref("abd")
+
+
+def test_build_or_placeholder_never_raises_and_never_echoes():
+    e, refused = build_or_placeholder(
+        "svc", "analyst-1", "ev.x", {"ok": 1}, case_refs=["r1"],
+        placeholder={"event": "ev.x", "audit": "payload_refused"}, placeholder_refs=["r1"],
+    )  # fmt: skip
+    assert not refused and e.payload == {"ok": 1}
+    e, refused = build_or_placeholder(
+        "svc", "919876543210", "ev.x", {"note": "9876543210"}, model_version="v9876543210",
+        case_refs=["9876543210"],
+        placeholder={"event": "ev.x"}, placeholder_refs=["9876543210", "r1"],
+    )  # fmt: skip
+    assert refused and e.payload == {"event": "ev.x", "audit": "payload_refused"}
+    assert e.actor.startswith("redacted_") and e.case_refs == ["r1"] and e.model_version is None
+    assert "9876543210" not in e.model_dump_json()
+    e, refused = build_or_placeholder(
+        "svc", "a", "ev.x", {"phone": 1},
+        placeholder={"phone": "still bad"}, placeholder_refs=[],
+    )  # fmt: skip
+    assert refused and e.payload == {"audit": "payload_refused"}

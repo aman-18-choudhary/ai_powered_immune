@@ -26,9 +26,11 @@ _RULES = [
 # Residual risk (unavoidable for a shape rule at this false-reject rate): a 15-digit number plus
 # one hex letter in a 16-char string is accepted, as are phone-sized digit runs padded with hex
 # letters to an id length.
-# The prefix may also be a case-reference namespace such as "payee_ref:" / "call_ref:".
+# The prefix is an ALLOWLIST (txn_, cmp_, kh_, ab_, tok_, redacted_, or a case-ref namespace
+# payee_ref: / call_ref: / device_ref: / script_ref:); any other prefix gets the strict rule.
 _ID_RE = re.compile(
-    r"(?:[a-z]{2,8}_|[a-z]{2,8}_ref:)?([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})"
+    r"(?:(?:txn|cmp|kh|ab|tok|redacted)_|(?:payee|call|device|script)_ref:)?"
+    r"([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})"
 )
 # A whole-string UTC timestamp "YYYY-MM-DDTHH:MM:SSZ" (valid ranges only) is exempt: it carries 14
 # digits that the 9-digit rule would reject, and the exact shape cannot hold an account or phone
