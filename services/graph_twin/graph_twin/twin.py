@@ -10,6 +10,7 @@ import re
 import threading
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from scam_contracts.models import Antibody, Transaction, TxnDecision
@@ -73,6 +74,9 @@ class GraphTwin:
         self.counters: Counter[str] = Counter()
         self.pending_decisions = 0
         self._carry: tuple[list[RingEvent], set[str], set[str]] = ([], set(), set())
+        # immutable copies for readers on the event loop (replaced atomically, never mutated)
+        self.published: dict[str, Ring] = {}
+        self.published_alias: dict[str, str] = {}
         self.load()
 
     # ------------------------------------------------------------------ restart
@@ -112,6 +116,7 @@ class GraphTwin:
                 snap = __import__("json").loads(r["body"])
                 ring = Ring.from_snapshot(snap, r["version"], to_us(aware(r["updated_at"])))  # type: ignore[arg-type]
                 self.registry.load(ring)
+            self._publish(set(self.registry.rings), set())
             self.pending_decisions = data["pending"]
             now_us = to_us(self.clock())
             self.dirty = set(seeds_of(g, now_us))
@@ -352,6 +357,7 @@ class GraphTwin:
             if events or changed or deleted:
                 try:
                     res.audit = self._flush_rings(events, changed, deleted, now_us)
+                    self._publish(changed, deleted)
                 except BaseException:
                     self._carry = (events, changed, deleted)
                     self.dirty |= batch
@@ -359,6 +365,21 @@ class GraphTwin:
             res.touched_rings = changed
             self.counters["rings_detected"] = len(self.registry.rings)
             return res
+
+    def _publish(self, changed: set[str], deleted: set[str]) -> None:
+        pub = {k: v for k, v in self.published.items() if k not in deleted}
+        for rid in changed:
+            r = self.registry.rings.get(rid)
+            if r is not None:
+                pub[rid] = replace(r, members=dict(r.members))
+        self.published = pub
+        self.published_alias = dict(self.registry.alias)
+
+    def resolve_published(self, ring_id: str) -> Ring | None:
+        r = self.published.get(ring_id)
+        if r is None:
+            r = self.published.get(self.published_alias.get(ring_id, ""))
+        return r
 
     def _flush_rings(
         self, events: list[RingEvent], changed: set[str], deleted: set[str], now_us: int
@@ -491,6 +512,7 @@ class GraphTwin:
             if events or changed or deleted:
                 try:
                     audit_rows = self._flush_rings(events, changed - deleted, deleted, now_us)
+                    self._publish(changed - deleted, deleted)
                 except BaseException:
                     self._carry = (events, changed, deleted)
                     raise
