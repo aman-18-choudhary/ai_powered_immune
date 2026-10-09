@@ -78,3 +78,39 @@ async def test_aclose_cancels_background_tasks():
     await asyncio.sleep(0)
     await d.aclose()
     assert d.live_tasks == 0
+
+
+async def test_cancel_before_first_step_frees_the_key_and_leaves_no_warning():
+    async def fn():
+        return True
+
+    d = Drainer(cap=2, timeout_s=1, cooldown_s=1)
+    t = d.schedule("k", fn)
+    t.cancel()  # before the task ever ran
+    await asyncio.gather(t, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert d.live_tasks == 0 and d.schedule("k", fn) is not None
+    await d.settle()
+
+
+async def test_schedule_from_another_thread_raises_clearly_and_does_not_stick():
+    import threading
+
+    d = Drainer(cap=2, timeout_s=1, cooldown_s=1)
+    err: list[BaseException] = []
+
+    async def fn():
+        return True
+
+    def work():
+        try:
+            d.schedule("k", fn)
+        except BaseException as e:  # noqa: BLE001
+            err.append(e)
+
+    th = threading.Thread(target=work)
+    th.start()
+    th.join()
+    assert len(err) == 1 and isinstance(err[0], RuntimeError) and "event loop" in str(err[0])
+    assert d.schedule("k", fn) is not None  # the key was not left in flight
+    await d.settle()

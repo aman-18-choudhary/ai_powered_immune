@@ -48,7 +48,7 @@ class Drainer:
         self._clock = clock
         self._failures = 0
         self._open_until = 0.0
-        self._inflight: set[str] = set()
+        self._inflight: dict[str, object] = {}  # key -> the task that owns it
         self._tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------ state
@@ -74,7 +74,8 @@ class Drainer:
 
     # --------------------------------------------------------------- delivery
     async def _attempt(self, key: str, fn: Callable[[], Awaitable[bool]]) -> bool:
-        self._inflight.add(key)
+        me = asyncio.current_task()
+        self._inflight[key] = me
         ok = False
         try:
             ok = bool(await asyncio.wait_for(fn(), self.timeout_s))
@@ -85,23 +86,34 @@ class Drainer:
         except Exception as e:
             log.warning("ledger delivery failed (%s)", type(e).__name__)
         finally:
-            self._inflight.discard(key)
+            if self._inflight.get(key) is me:
+                del self._inflight[key]
         self._note(ok)
         return ok
 
     def schedule(self, key: str, fn: Callable[[], Awaitable[bool]]) -> "asyncio.Task[None] | None":
         """Start a background delivery unless the key is in flight, the cap is reached or the
         breaker is cooling down. Never awaits; never raises."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError("Drainer.schedule must be called on the event loop thread") from None
         if key in self._inflight or len(self._tasks) >= self.cap or self._cooling():
             return None
-        self._inflight.add(key)  # claim before the task starts (a second schedule is a no-op)
 
         async def run() -> None:
             await self._attempt(key, fn)
 
         task = asyncio.ensure_future(run())
+        self._inflight[key] = task  # claimed before the task starts: a second schedule is a no-op
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+
+        def done(t: "asyncio.Task[None]") -> None:
+            self._tasks.discard(t)
+            if self._inflight.get(key) is t:  # e.g. cancelled before its first step
+                del self._inflight[key]
+
+        task.add_done_callback(done)
         return task
 
     async def sweep(self, keys: Sequence[str], fn: Callable[[str], Awaitable[bool]]) -> int:
