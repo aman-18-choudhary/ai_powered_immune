@@ -379,3 +379,58 @@ def test_create_service_app_wires_cache_capacity_and_bank_prefix(monkeypatch):
     cache = app.state.service.antibodies.cache
     assert cache.capacity == 1234 and "bank_b" in cache._p
     assert app.state.service.antibodies.use_bloom is True
+
+
+# -------------------------------------------------------------- bootstrap off the event loop
+class SlowApplyCache(InMemoryAntibodyCache):
+    def apply(self, event):
+        time.sleep(0.005)  # a blocking Redis EVAL per item
+        super().apply(event)
+
+
+async def test_bootstrap_does_not_stall_the_event_loop():
+    clock = Clock()
+    c = SlowApplyCache(clock=clock)
+    pages = [{"items": [item(p * 100 + i) for i in range(100)], "next_cursor": str(p + 1) if p < 1 else None}
+             for p in range(2)]  # fmt: skip
+    gaps, stop = [], False
+
+    async def ticker():
+        last = time.perf_counter()
+        while not stop:
+            await asyncio.sleep(0.002)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    task = asyncio.create_task(ticker())
+    t0 = time.perf_counter()
+    n = await bootstrap(c, Hub(pages), "bank_a", clock=clock)
+    total = time.perf_counter() - t0
+    stop = True
+    await task
+    assert n == 200 and total >= 0.9  # 200 items x 5 ms of blocking work
+    assert max(gaps) < 0.1 and max(gaps) < total / 5  # the loop kept ticking during each page
+
+
+async def test_bootstrap_deadline_is_checked_between_pages():
+    clock = Clock()
+    c = SlowApplyCache(clock=clock)
+    pages = [{"items": [item(p * 50 + i) for i in range(50)], "next_cursor": str(p + 1)}
+             for p in range(20)]  # fmt: skip
+    stats: dict[str, float] = {}
+    t0 = time.perf_counter()
+    n = await bootstrap(c, Hub(pages), "bank_a", clock=clock, stats=stats, deadline_s=0.5)
+    assert time.perf_counter() - t0 < 1.5 and 0 < n < 1000
+    assert n % 50 == 0  # whole pages only: it stopped between pages
+    assert stats["bootstrap_failed"] == 1
+
+
+async def test_threaded_bootstrap_keeps_sticky_tombstones():
+    clock = Clock()
+    c = InMemoryAntibodyCache(clock=clock)
+    c.apply(ab("b1", key=f"{1:064x}", revoked=True, exp=T0 + timedelta(days=9)))
+    await bootstrap(
+        c, Hub([{"items": [item(1), item(2)], "next_cursor": None}]), "bank_a", clock=clock
+    )
+    assert c.contains(f"{1:064x}") is None and c.contains(f"{2:064x}") is not None

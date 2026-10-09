@@ -433,24 +433,33 @@ async def bootstrap(
     ``bootstrap_failed`` to 0."""
     stats = stats if stats is not None else {}
     n = 0
+    t_end = time.monotonic() + deadline_s
 
-    async def run() -> None:
-        nonlocal n
+    def apply_page(items: list[dict[str, Any]]) -> tuple[int, int]:
+        """One thread hop per page (blocking cache clients must not run on the event loop)."""
+        ok = skipped = 0
+        for it in items:
+            try:
+                cache.apply(_parse_item(it, clock()))
+                ok += 1
+            except Exception:
+                skipped += 1
+        return ok, skipped
+
+    try:
         cursor = None
         for _ in range(max_pages):
-            page = await client.exact_page(bank_id, cursor, limit)
-            for it in page.get("items", []):
-                try:
-                    cache.apply(_parse_item(it, clock()))
-                    n += 1
-                except Exception:
-                    stats["bootstrap_skipped"] = stats.get("bootstrap_skipped", 0) + 1
+            remaining = t_end - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("antibody bootstrap deadline exceeded between pages")
+            page = await asyncio.wait_for(client.exact_page(bank_id, cursor, limit), remaining)
+            ok, skipped = await asyncio.to_thread(apply_page, list(page.get("items", [])))
+            n += ok
+            if skipped:
+                stats["bootstrap_skipped"] = stats.get("bootstrap_skipped", 0) + skipped
             cursor = page.get("next_cursor")
             if not cursor:
                 break
-
-    try:
-        await asyncio.wait_for(run(), timeout=deadline_s)
     except Exception:  # includes TimeoutError
         stats["bootstrap_failed"] = stats.get("bootstrap_failed", 0) + 1
         log.warning("antibody bootstrap failed; running with the events-only cache", exc_info=True)
