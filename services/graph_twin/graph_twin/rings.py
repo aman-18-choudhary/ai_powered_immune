@@ -36,6 +36,7 @@ from .config import Settings
 from .graph import (
     ACCOUNT,
     DEVICE,
+    RelayIndex,
     device_accounts,
     devices_of,
     is_active_antibody,
@@ -59,24 +60,22 @@ def is_seed(g: nx.DiGraph, n: str, now_us: int) -> bool:
     return st.kind == ACCOUNT and (st.susp_in > 0 or is_active_antibody(st, now_us))
 
 
-def is_relay(g: nx.DiGraph, n: str, cfg: Settings, now_us: int = 0) -> bool:
-    """Pass-through account (see the module docstring)."""
-    st = ns(g, n)
-    if st.kind != ACCOUNT or st.in_tot < cfg.relay_min_inr * 100:
-        return False
-    if st.out_tot < cfg.passthrough_ratio * st.in_tot:
-        return False
-    t = cfg.passthrough_max_us
-    if abs(st.out_first - st.in_first) > t or abs(st.out_last - st.in_last) > t:
-        return False
-    return g.in_degree(n) >= cfg.relay_min_payers or (now_us > 0 and is_active_antibody(st, now_us))
-
-
 def _tenth(part: int, whole: int) -> bool:
     return part * 10 >= whole
 
 
-def expand(g: nx.DiGraph, starts: list[str], cfg: Settings, now_us: int) -> set[str]:
+def _device_peers(g: nx.DiGraph, n: str, cfg: Settings) -> list[str]:
+    out: list[str] = []
+    for d in sorted(devices_of(g, n)):
+        if g.in_degree(d) > cfg.device_max_accounts:
+            continue
+        out.extend(a for a in sorted(device_accounts(g, d)) if a != n)
+    return out
+
+
+def expand(
+    g: nx.DiGraph, idx: RelayIndex, starts: list[str], cfg: Settings, now_us: int
+) -> set[str]:  # fmt: skip
     members: set[str] = set()
     q: deque[str] = deque(sorted(starts))
     while q and len(members) < cfg.max_component:
@@ -85,25 +84,16 @@ def expand(g: nx.DiGraph, starts: list[str], cfg: Settings, now_us: int) -> set[
             continue
         members.add(n)
         st = ns(g, n)
-        if is_relay(g, n, cfg, now_us):
+        if idx.is_relay(n):
             for m, e in sorted(pay_out(g, n), key=lambda x: x[0]):
                 if m.startswith("a:") and m not in members and _tenth(e.total, st.out_tot):
                     q.append(m)
-        for p, e in sorted(pay_in(g, n, cfg.fanin_scan_cap), key=lambda x: x[0]):
-            if p not in members and p.startswith("a:") and is_relay(g, p, cfg, now_us):
-                if _tenth(e.total, ns(g, p).out_tot):
-                    q.append(p)
-        for d in sorted(devices_of(g, n)):
-            accs = device_accounts(g, d)
-            if len(accs) > cfg.device_max_accounts:
-                continue
-            for a in sorted(accs):
-                if (
-                    a != n
-                    and a not in members
-                    and (is_relay(g, a, cfg, now_us) or is_seed(g, a, now_us))
-                ):
-                    q.append(a)
+        for p in sorted(idx.relay_into.get(n, ())):
+            if p not in members and _tenth(g.edges[p, n]["s"].total, ns(g, p).out_tot):
+                q.append(p)
+        for a in _device_peers(g, n, cfg):
+            if a not in members and (idx.is_relay(a) or is_seed(g, a, now_us)):
+                q.append(a)
     return members
 
 
@@ -137,15 +127,17 @@ def _component_graph(g: nx.DiGraph, members: set[str], cfg: Settings) -> nx.Grap
     return h
 
 
-def classify(g: nx.DiGraph, members: set[str], cfg: Settings, now_us: int) -> dict[str, str]:
-    relay = {n: is_relay(g, n, cfg, now_us) for n in members}
+def classify(
+    g: nx.DiGraph, idx: RelayIndex, members: set[str], cfg: Settings, now_us: int
+) -> dict[str, str]:
     roles: dict[str, str] = {}
     for n in sorted(members):
-        if relay[n]:
+        if idx.is_relay(n):
             roles[n] = MULE
             continue
-        fed = any(p in members and relay.get(p, False) for p, _ in pay_in(g, n, cfg.fanin_scan_cap))
-        roles[n] = CASH_OUT if fed else UNKNOWN
+        fed = sum(g.edges[p, n]["s"].total for p in idx.relay_into.get(n, ()) if p in members)
+        sink = fed > 0 and fed >= cfg.sink_min_share * ns(g, n).in_tot
+        roles[n] = CASH_OUT if sink else UNKNOWN
     return roles
 
 
@@ -251,10 +243,10 @@ def seeds_of(g: nx.DiGraph, now_us: int) -> list[str]:
 
 
 def candidates_from(
-    g: nx.DiGraph, starts: list[str], cfg: Settings, now_us: int
+    g: nx.DiGraph, idx: RelayIndex, starts: list[str], cfg: Settings, now_us: int
 ) -> list[Ring]:  # fmt: skip
     """Expand from ``starts`` and return the rings that pass the gates (fresh ids)."""
-    members = expand(g, starts, cfg, now_us)
+    members = expand(g, idx, starts, cfg, now_us)
     if not members:
         return []
     h = _component_graph(g, members, cfg)
@@ -270,7 +262,7 @@ def candidates_from(
             parts = [comp]
         for part in parts:
             pset = set(part)
-            roles = classify(g, pset, cfg, now_us)
+            roles = classify(g, idx, pset, cfg, now_us)
             core = frozenset(
                 n for n, r in roles.items()
                 if r in (MULE, CASH_OUT) or (r == UNKNOWN and is_active_antibody(ns(g, n), now_us))
@@ -291,6 +283,7 @@ def detect_rings(
     cfg: Settings | None = None,
     now_us: int | None = None,
     starts: list[str] | None = None,
+    idx: RelayIndex | None = None,
 ) -> list[Ring]:
     """Full (non-incremental) detection over ``g``. ``min_size`` counts accounts excluding
     victims. ``now_us`` defaults to the latest activity in the graph (stream time)."""
@@ -298,36 +291,44 @@ def detect_rings(
     cfg = replace(base, min_size=min_size)
     if now_us is None:
         now_us = max((ns(g, n).last for n in g.nodes), default=0)
+    idx = idx or RelayIndex.build(g, cfg, now_us)
     st = starts if starts is not None else seeds_of(g, now_us)
-    return candidates_from(g, st, cfg, now_us)
+    return candidates_from(g, idx, st, cfg, now_us)
 
 
 def region_starts(
-    g: nx.DiGraph, dirty: set[str], cfg: Settings, now_us: int
-) -> tuple[list[str], set[str]]:
-    """Seeds reachable from the touched nodes through relay-capable accounts (bounded) and the
-    visited region. Pure sources (victims) are not expanded, so a merchant's fan-in costs one
-    capped scan, not a traversal."""
-    seen: set[str] = set()
-    q: deque[str] = deque(sorted(n for n in dirty if n in g))
+    g: nx.DiGraph, idx: RelayIndex, dirty: set[str], cfg: Settings, now_us: int
+) -> tuple[list[str], set[str]]:  # fmt: skip
+    """Seeds near the touched nodes, found through the relay index: a touched node matters if it
+    is a seed, a relay, or fed by relays. Everything else (a merchant's customers, a citizen's
+    shops) costs O(1), so ingestion of unrelated traffic does not trigger expansions."""
     seeds: set[str] = set()
-    while q and len(seen) < cfg.max_component:
-        n = q.popleft()
-        if n in seen or n not in g or ns(g, n).kind == DEVICE:
+    seen: set[str] = set()
+    for n in sorted(dirty):
+        if n not in g or ns(g, n).kind == DEVICE:
             continue
-        seen.add(n)
         if is_seed(g, n, now_us):
             seeds.add(n)
-        for m, _ in sorted(pay_out(g, n), key=lambda x: x[0]):
-            if m not in seen and m.startswith("a:"):
-                q.append(m)
-        for p, _ in sorted(pay_in(g, n, cfg.fanin_scan_cap), key=lambda x: x[0]):
-            if p not in seen and p.startswith("a:") and is_relay(g, p, cfg, now_us):
-                q.append(p)
-        for d in sorted(devices_of(g, n)):
-            accs = device_accounts(g, d)
-            if len(accs) <= cfg.device_max_accounts:
-                q.extend(a for a in sorted(accs) if a not in seen)
+        sinks = set(idx.relay_of.get(n, ()))
+        if n in idx.relay_into:
+            sinks.add(n)
+        if idx.is_relay(n):
+            seen.add(n)
+        for s in sorted(sinks):
+            seen.add(s)
+            if is_seed(g, s, now_us):
+                seeds.add(s)
+            for r in sorted(idx.relay_into.get(s, ())):
+                seen.add(r)
+                if is_seed(g, r, now_us):
+                    seeds.add(r)
+        if idx.is_relay(n) or n in idx.relay_into:
+            for a in _device_peers(g, n, cfg):
+                seen.add(a)
+                if is_seed(g, a, now_us):
+                    seeds.add(a)
+        if len(seen) >= cfg.max_component:
+            break
     return sorted(seeds), seen
 
 

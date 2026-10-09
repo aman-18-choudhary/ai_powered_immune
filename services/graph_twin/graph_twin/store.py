@@ -433,11 +433,14 @@ class GraphStore:
                 out.append(d)
             return out
 
-    def txns_from(self, src_keys: list[str], limit: int) -> list[dict[str, Any]]:
+    def terminal_txns_after(
+        self, dst_keys: list[str], after: datetime, limit: int
+    ) -> list[dict[str, Any]]:
+        """Transactions into ``dst_keys`` at or after ``after`` (hindsight for the timeline)."""
         with self.engine.connect() as c:
             rows = c.execute(
-                select(txns).where(txns.c.src.in_(src_keys)).order_by(txns.c.ts, txns.c.txn_id)
-                .limit(limit)
+                select(txns).where(txns.c.dst.in_(dst_keys), txns.c.ts >= after)
+                .order_by(txns.c.ts, txns.c.txn_id).limit(limit)
             )  # fmt: skip
             out = []
             for r in rows:

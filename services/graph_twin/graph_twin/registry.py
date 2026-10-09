@@ -17,6 +17,7 @@ from typing import Any
 import networkx as nx
 
 from .config import Settings
+from .graph import RelayIndex
 from .model import Ring
 from .rings import classify, make_ring_id, ring_stats
 
@@ -76,7 +77,7 @@ class RingRegistry:
 
     # ----------------------------------------------------------------- reconcile
     def reconcile(
-        self, cand: Ring, g: nx.DiGraph, now_us: int
+        self, cand: Ring, g: nx.DiGraph, idx: RelayIndex, now_us: int
     ) -> tuple[list[RingEvent], set[str], set[str]]:  # fmt: skip
         """Fold one candidate in. Returns (events, changed ring ids, deleted ring ids)."""
         events: list[RingEvent] = []
@@ -118,7 +119,7 @@ class RingRegistry:
             events.append(RingEvent("merged", surv.ring_id, {"absorbed": aid}))
         surv.members.update(cand.members)
         surv.core = surv.core | cand.core
-        surv.members = classify(g, set(surv.members), self.cfg, now_us)
+        surv.members = classify(g, idx, set(surv.members), self.cfg, now_us)
         surv.core = frozenset(
             n for n, r in surv.members.items() if r in ("mule", "cash_out") or n in surv.core
         )
@@ -150,7 +151,7 @@ class RingRegistry:
             r.updated_us = now_us
 
     def refresh(
-        self, ring_id: str, g: nx.DiGraph, now_us: int
+        self, ring_id: str, g: nx.DiGraph, idx: RelayIndex, now_us: int
     ) -> tuple[list[RingEvent], bool]:  # fmt: skip
         """Recompute one ring's roles and statistics after its members' neighbourhood changed."""
         r = self.rings.get(ring_id)
@@ -162,7 +163,7 @@ class RingRegistry:
         if not alive:
             return [], False
         self._unindex(r)
-        r.members = classify(g, alive, self.cfg, now_us)
+        r.members = classify(g, idx, alive, self.cfg, now_us)
         r.core = frozenset(n for n in r.core if n in alive) | frozenset(
             n for n, role in r.members.items() if role in ("mule", "cash_out")
         )

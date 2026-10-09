@@ -154,8 +154,8 @@ def test_incremental_detection_only_expands_the_touched_region(twin, clock, monk
     sizes = []
     real = rings_mod.expand
 
-    def spy(g, starts, cfg, now_us):
-        out = real(g, starts, cfg, now_us)
+    def spy(g, idx, starts, cfg, now_us):
+        out = real(g, idx, starts, cfg, now_us)
         sizes.append(len(out))
         return out
 

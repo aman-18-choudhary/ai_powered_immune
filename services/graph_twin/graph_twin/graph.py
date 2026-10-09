@@ -14,11 +14,14 @@ Not thread safe: ``GraphTwin`` serialises access.
 """
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 import networkx as nx
+
+from .config import Settings
 
 ACCOUNT, TOKEN, DEVICE = "account", "token", "device"
 RAIL_BIT = {"UPI": 1, "IMPS": 2, "NEFT": 4}
@@ -160,9 +163,73 @@ def device_accounts(g: nx.DiGraph, d: str) -> list[str]:
     return list(g.pred[d])
 
 
+def relay_status(g: nx.DiGraph, n: str, cfg: Settings, now_us: int = 0) -> bool:
+    """Pass-through account: it received at least ``relay_min_inr``, forwarded >=
+    ``passthrough_ratio`` of it, its first and last outflows lie within ``passthrough_max_s`` of
+    its first and last inflows, and it has >= ``relay_min_payers`` distinct payers (an active
+    antibody waives the payer count)."""
+    st = ns(g, n)
+    if st.kind != ACCOUNT or st.in_tot < cfg.relay_min_inr * 100:
+        return False
+    if st.out_tot < cfg.passthrough_ratio * st.in_tot:
+        return False
+    t = cfg.passthrough_max_us
+    if abs(st.out_first - st.in_first) > t or abs(st.out_last - st.in_last) > t:
+        return False
+    return g.in_degree(n) >= cfg.relay_min_payers or (now_us > 0 and is_active_antibody(st, now_us))
+
+
+class RelayIndex:
+    """Incremental index of pass-through accounts: ``relay_of[r]`` = the accounts r forwards to,
+    ``relay_into[s]`` = the relays that forward into s. Updated for the touched nodes of every
+    event (O(out-degree)), so detection never scans a fan-in."""
+
+    def __init__(self) -> None:
+        self.relay_of: dict[str, frozenset[str]] = {}
+        self.relay_into: dict[str, set[str]] = {}
+
+    def _drop(self, r: str) -> None:
+        for s in self.relay_of.pop(r, frozenset()):
+            peers = self.relay_into.get(s)
+            if peers is not None:
+                peers.discard(r)
+                if not peers:
+                    del self.relay_into[s]
+
+    def refresh(self, g: nx.DiGraph, n: str, cfg: Settings, now_us: int) -> None:
+        if n not in g:
+            self._drop(n)
+            return
+        if not relay_status(g, n, cfg, now_us):
+            self._drop(n)
+            return
+        sinks = frozenset(m for m, _ in pay_out(g, n))
+        old = self.relay_of.get(n, frozenset())
+        if sinks == old:
+            return
+        self._drop(n)
+        self.relay_of[n] = sinks
+        for s in sinks:
+            self.relay_into.setdefault(s, set()).add(n)
+
+    def refresh_many(self, g: nx.DiGraph, nodes: Iterable[str], cfg: Settings, now_us: int) -> None:
+        for n in nodes:
+            self.refresh(g, n, cfg, now_us)
+
+    @classmethod
+    def build(cls, g: nx.DiGraph, cfg: Settings, now_us: int) -> "RelayIndex":
+        idx = cls()
+        idx.refresh_many(g, [n for n in g.nodes if ns(g, n).kind == ACCOUNT], cfg, now_us)
+        return idx
+
+    def is_relay(self, n: str) -> bool:
+        return n in self.relay_of
+
+
 class TwinGraph:
     def __init__(self) -> None:
         self.g: nx.DiGraph = nx.DiGraph()
+        self.idx = RelayIndex()
 
     # -------------------------------------------------------------------- nodes
     def ensure_node(self, key: str, kind: str, ts: int) -> NodeState:

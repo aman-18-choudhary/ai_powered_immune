@@ -23,6 +23,7 @@ from .graph import (
     EdgeState,
     NodeState,
     PaymentRec,
+    RelayIndex,
     TwinGraph,
     account_key,
     es,
@@ -106,6 +107,7 @@ class GraphTwin:
                 g.add_edge(r["src"], r["dst"], s=e)
             for n in list(g.nodes):
                 self.tg.recompute_node(n)
+            self.tg.idx = RelayIndex.build(g, self.cfg, to_us(self.clock()))
             for r in data["rings"]:
                 snap = __import__("json").loads(r["body"])
                 ring = Ring.from_snapshot(snap, r["version"], to_us(aware(r["updated_at"])))  # type: ignore[arg-type]
@@ -135,6 +137,7 @@ class GraphTwin:
                         g.remove_node(n)
                 else:
                     g.add_node(n, s=st)
+            self.tg.idx.refresh_many(g, old_nodes, self.cfg, to_us(self.clock()))
 
         return restore
 
@@ -197,6 +200,7 @@ class GraphTwin:
                             level,
                         )  # fmt: skip
                     )
+                    self.tg.idx.refresh_many(self.tg.g, (src, dst), cfg, to_us(now))
                     self._persist(conn, keys, edge_keys)
             except BaseException:
                 restore()
@@ -303,6 +307,7 @@ class GraphTwin:
                         st = ns(self.tg.g, key)
                         st.ab_until = 0
                         self.store.upsert_node(conn, key, st)
+                    self.tg.idx.refresh(self.tg.g, key, self.cfg, to_us(now))
             except BaseException:
                 if restore:
                     restore()
@@ -325,18 +330,19 @@ class GraphTwin:
                 self.counters["detect_runs"] += 1
                 g = self.tg.g
                 now_us = to_us(self.clock())
-                starts, region = region_starts(g, batch, cfg, now_us)
+                idx = self.tg.idx
+                starts, region = region_starts(g, idx, batch, cfg, now_us)
                 touched = self.registry.rings_of(batch | region)
                 for rid in sorted(touched):
                     starts += [n for n in sorted(self.registry.rings[rid].core) if n in g]
                 if starts:
-                    for cand in candidates_from(g, sorted(set(starts)), cfg, now_us):
-                        ev, ch, de = self.registry.reconcile(cand, g, now_us)
+                    for cand in candidates_from(g, idx, sorted(set(starts)), cfg, now_us):
+                        ev, ch, de = self.registry.reconcile(cand, g, idx, now_us)
                         events += ev
                         changed |= ch
                         deleted |= de
                 for rid in sorted(touched - changed - deleted):
-                    ev, did = self.registry.refresh(rid, g, now_us)
+                    ev, did = self.registry.refresh(rid, g, idx, now_us)
                     events += ev
                     if did:
                         changed.add(rid)
@@ -433,9 +439,11 @@ class GraphTwin:
             neigh.update(g.succ[n])
         for n in keys:
             g.remove_node(n)
+            self.tg.idx.refresh(g, n, self.cfg, 0)  # n is gone: drops it from the index
         for n in neigh - set(keys):
             if n in g:
                 self.tg.recompute_node(n)
+        self.tg.idx.refresh_many(g, neigh - set(keys), self.cfg, to_us(self.clock()))
         with self.store.tx() as conn:
             self.store.delete_nodes(conn, keys)
 
@@ -446,7 +454,8 @@ class GraphTwin:
             now = self.clock()
             now_us = to_us(now)
             cutoff_us = now_us - cfg.retention_us
-            self.tg.expire_edges(cutoff_us)
+            touched = self.tg.expire_edges(cutoff_us)
+            self.tg.idx.refresh_many(self.tg.g, touched, cfg, now_us)
             g = self.tg.g
             prot = self._protected(now_us)
             dead = [
