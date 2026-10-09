@@ -1,15 +1,17 @@
 """Consume CallEvents, update per-call sessions, publish CallRisk on threshold crossing."""
 
+import asyncio
 import logging
+import os
 from typing import Any
 
-from scam_contracts.models import CallEvent, CallRisk
+from scam_contracts.models import CallEvent, CallRisk, LedgerEntryIn
 from scam_contracts.topics import Topics
 from svckit.bus import Bus, consume
 from svckit.idempotency import IdempotencyStore
-from svckit.ledger import LedgerPayloadError, call_ref, emit_ledger, utc_ts
+from svckit.ledger import build_or_placeholder, call_ref, utc_ts
 
-from .session import SessionScorer
+from .session import LEDGER_PENDING_PREFIX, SessionScorer
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +36,78 @@ def alert_payload(
     return payload, ref
 
 
+LEDGER_EMIT_TIMEOUT_S = float(os.getenv("LEDGER_EMIT_TIMEOUT_S", "0.5"))
+LEDGER_DRAIN_INTERVAL_S = float(os.getenv("LEDGER_DRAIN_INTERVAL_S", "5"))
+LEDGER_BATCH = 50
+
+
+class LedgerOutbox:
+    """Best-effort, durable delivery of pending ``callrisk.alert`` entries. Entries live in the
+    session store (written atomically with the crossing marker); ``drain`` publishes and then
+    clears them, so delivery is at-least-once and the ledger's full-entry idempotency absorbs
+    repeats. Failures are logged by class and leave the entry pending."""
+
+    def __init__(self, bus: Bus, scorer: SessionScorer) -> None:
+        self.bus, self.scorer = bus, scorer
+        self._inflight: set[str] = set()
+        self._bg: set[asyncio.Task[None]] = set()
+
+    async def _one(self, key: str, raw: str) -> bool:
+        if key in self._inflight:
+            return False
+        self._inflight.add(key)
+        try:
+            entry = LedgerEntryIn.model_validate_json(raw)
+            await self.bus.publish(
+                Topics.LEDGER, entry.case_refs[0] if entry.case_refs else LEDGER_SERVICE, entry
+            )
+            await self.scorer.clear_ledger(key)
+            return True
+        except Exception as e:
+            log.warning("callrisk.alert ledger delivery deferred (%s)", type(e).__name__)
+            return False
+        finally:
+            self._inflight.discard(key)
+
+    async def kick(self, key: str, raw: str) -> None:
+        """Try to deliver now but wait at most LEDGER_EMIT_TIMEOUT_S; never raises, never cancels
+        the delivery (it keeps running in the background if the ledger is slow)."""
+        task = asyncio.ensure_future(self._one(key, raw))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        await asyncio.wait({task}, timeout=LEDGER_EMIT_TIMEOUT_S)
+
+    async def drain(self, limit: int = LEDGER_BATCH) -> int:
+        sent = 0
+        for key, raw in await self.scorer.pending_ledger(limit):
+            sent += await self._one(key, raw)
+        return sent
+
+
+def _outbox(bus: Bus, scorer: SessionScorer) -> LedgerOutbox:
+    ob = getattr(scorer, "ledger_outbox", None)
+    if ob is None or ob.bus is not bus:
+        ob = scorer.ledger_outbox = LedgerOutbox(bus, scorer)  # type: ignore[attr-defined]
+    return ob
+
+
+async def drain_ledger_pending(bus: Bus, scorer: SessionScorer, limit: int = LEDGER_BATCH) -> int:
+    """Publish pending audit entries (the service lifespan calls this every
+    LEDGER_DRAIN_INTERVAL_S). Returns how many were delivered."""
+    return await _outbox(bus, scorer).drain(limit)
+
+
+async def run_ledger_sweeper(
+    bus: Bus, scorer: SessionScorer, interval_s: float = LEDGER_DRAIN_INTERVAL_S
+) -> None:
+    while True:
+        try:
+            await drain_ledger_pending(bus, scorer)
+        except Exception as e:
+            log.warning("ledger sweep failed (%s)", type(e).__name__)
+        await asyncio.sleep(interval_s)
+
+
 async def handle_event(
     event: CallEvent, scorer: SessionScorer, bus: Bus, store: IdempotencyStore
 ) -> None:
@@ -43,13 +117,14 @@ async def handle_event(
     ``published`` marker is advanced only after ``bus.publish`` succeeds, so a failed publish
     is retried by ``consume`` and never lost, and replays after success publish nothing.
 
-    The audit entry (``callrisk.alert`` on the ledger topic) belongs to the same crossing: it is
-    published FIRST (so the ledger sees the alert before anything it triggers), then the CallRisk,
-    then the marker. A failure of either step releases the claim and the whole step is retried;
-    the retry re-publishes byte-identical messages (the ledger absorbs the duplicate entry, the
-    CallRisk consumers dedupe on payload hash), so nothing is lost and nothing is counted twice.
-    A payload the PII guard refuses (a programming error) is logged and skipped: an audit-format
-    bug must never suppress a safety alert.
+    The alert comes FIRST and nothing about the ledger can delay, fail or repeat it. The audit
+    entry (``callrisk.alert``) is built before the publish and stored in the session store in the
+    SAME atomic update that advances the marker; it is then delivered best-effort (bounded wait
+    LEDGER_EMIT_TIMEOUT_S, background retry, periodic sweep) with at-least-once semantics that the
+    ledger's idempotency absorbs. Honest limit: if the process dies after the alert is published
+    but before that update, the alert is re-published on retry (consumers dedupe) and the audit
+    entry is built again, so neither is lost; if the store itself is unavailable the whole step is
+    retried. A payload the PII guard refuses becomes a fixed-shape placeholder entry.
     """
     _, pending = await scorer.update_with_crossing(event)
     if not pending:
@@ -61,24 +136,31 @@ async def handle_event(
     key = f"callrisk:{event.call_id}:x{n}"  # cross-instance guard on (call, crossing)
     if await store.seen(key) or not await store.claim(key):
         return
+    pending_entry = None
     try:
-        try:
-            payload, ref = alert_payload(
-                risk, n, await scorer.crossing_chunks(event.call_id), scorer.threshold
-            )
-            await emit_ledger(
-                bus, LEDGER_SERVICE, LEDGER_ACTOR, ALERT_EVENT, payload,
-                model_version=risk.model_version, case_refs=[ref],
-            )  # fmt: skip
-        except LedgerPayloadError:
-            log.error("callrisk.alert ledger payload refused (alert still published)")
+        payload, ref = alert_payload(
+            risk, n, await scorer.crossing_chunks(event.call_id), scorer.threshold
+        )
+        entry, refused = build_or_placeholder(
+            LEDGER_SERVICE, LEDGER_ACTOR, ALERT_EVENT, payload, model_version=risk.model_version,
+            case_refs=[ref],
+            placeholder={"call_ref": ref.split(":", 1)[1], "crossing": n}, placeholder_refs=[ref],
+        )  # fmt: skip
+        if refused:
+            log.error("callrisk.alert ledger payload refused; placeholder entry stored")
+        pending_entry = (f"{LEDGER_PENDING_PREFIX}{ref}:x{n}", entry.model_dump_json())
+    except Exception as e:  # an audit-format bug must not touch the alert
+        log.error("callrisk.alert ledger entry not built (%s)", type(e).__name__)
+    try:
         await bus.publish(Topics.CALL_RISK, risk.victim_token, risk)  # keyed by payer token
     except BaseException:
         await store.release(key)
         raise
-    await scorer.mark_published(event.call_id, n)
+    await scorer.mark_published(event.call_id, n, pending_entry)  # marker + audit entry, atomic
     await store.mark(key)
     log.info("published call risk call_id=%s score=%.3f", event.call_id, risk.score)
+    if pending_entry is not None:
+        await _outbox(bus, scorer).kick(*pending_entry)
 
 
 async def run_consumer(bus: Bus, scorer: SessionScorer, store: IdempotencyStore) -> None:

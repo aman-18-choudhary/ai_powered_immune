@@ -28,6 +28,8 @@ MIN_CHUNK_SCORE = 0.1
 SOFT_MAX = 0.6  # classifier-only evidence never reaches the 0.7 alert level
 CORROBORATION_MIN = 0.3  # rule evidence needed before soft evidence may add to it
 SESSION_TTL_S = 6 * 3600
+LEDGER_PENDING_TTL_S = 35 * 86400  # audit entries outlive the session that produced them
+LEDGER_PENDING_PREFIX = "ledger_pending:"
 _RELEASE_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 LOCK_TTL_MS = 5000
 LOCK_RETRIES = 200
@@ -121,6 +123,16 @@ class SessionStore(Protocol):
     async def get(self, call_id: str) -> SessionState | None: ...
     async def put(self, call_id: str, state: SessionState) -> None: ...
 
+    async def put_with_pending(
+        self, call_id: str, state: SessionState, pending_key: str, entry_json: str
+    ) -> None:
+        """ONE atomic update: the session state (crossing marker) AND a pending ledger entry."""
+        ...
+
+    async def pending_ledger(self, limit: int) -> list[tuple[str, str]]: ...
+
+    async def clear_ledger(self, pending_key: str) -> None: ...
+
     def lock(self, call_id: str) -> AbstractAsyncContextManager[None]:
         """Mutual exclusion for read-modify-write of one call's state."""
         ...
@@ -130,12 +142,25 @@ class InMemorySessionStore:
     def __init__(self) -> None:
         self._d: dict[str, SessionState] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._pending: dict[str, str] = {}
 
     async def get(self, call_id: str) -> SessionState | None:
         return self._d.get(call_id)
 
     async def put(self, call_id: str, state: SessionState) -> None:
         self._d[call_id] = state
+
+    async def put_with_pending(
+        self, call_id: str, state: SessionState, pending_key: str, entry_json: str
+    ) -> None:
+        self._d[call_id] = state  # no await between the two writes: atomic on the event loop
+        self._pending[pending_key] = entry_json
+
+    async def pending_ledger(self, limit: int) -> list[tuple[str, str]]:
+        return list(self._pending.items())[:limit]
+
+    async def clear_ledger(self, pending_key: str) -> None:
+        self._pending.pop(pending_key, None)
 
     @asynccontextmanager
     async def lock(self, call_id: str) -> AsyncIterator[None]:
@@ -154,6 +179,36 @@ class RedisSessionStore:
 
     async def put(self, call_id: str, state: SessionState) -> None:
         await self._c.set(self._p + call_id, json.dumps(asdict(state)), ex=SESSION_TTL_S)
+
+    async def put_with_pending(
+        self, call_id: str, state: SessionState, pending_key: str, entry_json: str
+    ) -> None:
+        """MULTI/EXEC: session state, the pending entry (35-day TTL) and its index together."""
+        async with self._c.pipeline(transaction=True) as pipe:
+            pipe.set(self._p + call_id, json.dumps(asdict(state)), ex=SESSION_TTL_S)
+            pipe.set(self._p + pending_key, entry_json, ex=LEDGER_PENDING_TTL_S)
+            pipe.sadd(self._p + "ledger_index", pending_key)
+            await pipe.execute()
+
+    async def pending_ledger(self, limit: int) -> list[tuple[str, str]]:
+        keys = sorted(
+            k.decode() if isinstance(k, bytes) else k
+            for k in await self._c.smembers(self._p + "ledger_index")
+        )[:limit]
+        out = []
+        for k in keys:
+            raw = await self._c.get(self._p + k)
+            if raw is None:  # expired: drop the index entry
+                await self._c.srem(self._p + "ledger_index", k)
+                continue
+            out.append((k, raw.decode() if isinstance(raw, bytes) else raw))
+        return out
+
+    async def clear_ledger(self, pending_key: str) -> None:
+        async with self._c.pipeline(transaction=True) as pipe:
+            pipe.delete(self._p + pending_key)
+            pipe.srem(self._p + "ledger_index", pending_key)
+            await pipe.execute()
 
     @asynccontextmanager
     async def lock(self, call_id: str) -> AsyncIterator[None]:
@@ -231,12 +286,26 @@ class SessionScorer:
             ts=datetime.fromtimestamp(state.cross_ts, tz=UTC),
         )
 
-    async def mark_published(self, call_id: str, crossing_no: int) -> None:
+    async def mark_published(
+        self, call_id: str, crossing_no: int, ledger: tuple[str, str] | None = None
+    ) -> None:
+        """Advance the crossing marker; with ``ledger=(key, entry_json)`` the pending audit entry
+        is stored in the SAME atomic update, so the alert's audit entry cannot be lost between
+        the marker and its outbox row."""
         async with self._store.lock(call_id):
             state = await self._store.get(call_id)
             if state is not None and state.published < crossing_no:
                 state.published = crossing_no
-                await self._store.put(call_id, state)
+                if ledger is not None:
+                    await self._store.put_with_pending(call_id, state, *ledger)
+                else:
+                    await self._store.put(call_id, state)
+
+    async def pending_ledger(self, limit: int = 50) -> list[tuple[str, str]]:
+        return await self._store.pending_ledger(limit)
+
+    async def clear_ledger(self, pending_key: str) -> None:
+        await self._store.clear_ledger(pending_key)
 
     async def update(self, event: CallEvent) -> CallRisk:
         return (await self.update_with_crossing(event))[0]

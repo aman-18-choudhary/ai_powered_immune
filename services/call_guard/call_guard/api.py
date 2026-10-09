@@ -14,7 +14,7 @@ from svckit.bus import Bus
 from svckit.health import make_health_router
 from svckit.idempotency import IdempotencyStore, InMemoryIdempotencyStore
 
-from .consumer import run_consumer
+from .consumer import run_consumer, run_ledger_sweeper
 from .model import Scorer, load_classifier
 from .session import InMemorySessionStore, RedisSessionStore, SessionScorer, SessionStore
 
@@ -62,6 +62,7 @@ def create_app(
                     run_consumer(bus, session_scorer, idempotency or InMemoryIdempotencyStore())
                 )
             )
+            tasks.append(asyncio.create_task(run_ledger_sweeper(bus, session_scorer)))
         try:
             yield
         finally:
