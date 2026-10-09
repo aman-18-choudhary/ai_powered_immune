@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -624,6 +625,7 @@ def test_deeply_nested_json_fails_cleanly(pkgdir):
 
     spec = importlib.util.spec_from_file_location("v", pkgdir / "verify.py")
     v = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = v
     spec.loader.exec_module(v)
     with pytest.raises(ValueError, match="nested"):
         v.load_json(b"[" * 100 + b"]" * 100)
@@ -648,6 +650,7 @@ def test_unexpected_exception_is_not_a_traceback(pkgdir, monkeypatch):
 
     spec = importlib.util.spec_from_file_location("v2", pkgdir / "verify.py")
     v = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = v
     spec.loader.exec_module(v)
     for exc in (MemoryError(), RecursionError(), RuntimeError("boom")):
 
@@ -656,3 +659,52 @@ def test_unexpected_exception_is_not_a_traceback(pkgdir, monkeypatch):
 
         monkeypatch.setattr(v, "verify_package", boom)
         assert v.main([str(pkgdir), "--allow-unpinned"]) == 1
+
+
+# ---------------------------------------------------------------- old Pythons (fix round 2, item 2)
+OLD_PYTHONS = [
+    p for p in dict.fromkeys(
+        ["/usr/bin/python3", "/opt/homebrew/bin/python3.10", "/opt/homebrew/bin/python3.11",
+         "/usr/local/bin/python3.11", "/opt/homebrew/bin/python3.13", "/usr/local/bin/python3.13"]
+    ) if Path(p).exists()
+]  # fmt: skip
+
+
+def test_verifier_parses_as_python_3_8():
+    import ast
+
+    from evidence_ledger import verify
+
+    src = Path(verify.__file__).read_text()
+    ast.parse(src, feature_version=(3, 8))
+    import re
+
+    for banned in ("datetime.UTC", "removeprefix", "removesuffix", "bit_count", "import tomllib"):
+        assert banned not in src, banned
+    assert "strict=" not in src  # zip(strict=) is 3.10+
+    assert not re.search(r"^\s*match\s+\S+.*:\s*$", src, re.M)
+    assert not re.search(r"^_\w+ = (tuple|list|dict|set)\[", src, re.M)  # runtime PEP 585
+    assert src.lstrip().startswith("#!") and "from __future__ import annotations" in src
+    assert "needs Python 3.8" in src
+
+
+@pytest.mark.parametrize("py", OLD_PYTHONS)
+def test_verifier_runs_identically_on_every_available_python(py, built, keyring, tmp_path):
+    _, d = built
+
+    def run(*extra, target=d):
+        return subprocess.run(
+            [py, "-S", "-I", str(d / "verify.py"), str(target), *extra],
+            capture_output=True, text=True, env={}, timeout=120,
+        )  # fmt: skip
+
+    pinned = run("--trusted-pubkey", pub_b64(keyring))
+    assert pinned.returncode == 0, (py, pinned.stdout, pinned.stderr)
+    assert "Traceback" not in pinned.stderr
+    unpinned = run()
+    assert unpinned.returncode == 2 and "UNPINNED" in unpinned.stdout, (py, unpinned.stderr)
+    bad = tmp_path / "bad"
+    shutil.copytree(d, bad)
+    (bad / "explanations.md").write_bytes(b"tampered")
+    r = run("--allow-unpinned", target=bad)
+    assert r.returncode == 1 and "Traceback" not in r.stderr and "FAIL:" in r.stdout

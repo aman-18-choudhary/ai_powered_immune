@@ -5,9 +5,13 @@ STANDARD LIBRARY ONLY. This single file is (a) imported by the ledger service fo
 hashing and (b) shipped verbatim inside every evidence package as ``verify.py``. It needs no
 network, no third-party package and no ledger code: read it, it is the whole algorithm.
 
-Usage:  python verify.py [PATH] [--trusted-key-id KEY_ID] [--json]
+Requires Python 3.8 or newer (standard library only; on an older interpreter it prints a clear
+message and exits 1). Tested on 3.9, 3.10, 3.11 and 3.13.
+
+Usage:  python verify.py [PATH] [--trusted-pubkey KEY | --trusted-key-id ID] [--json]
         PATH is an extracted package directory (default: the directory of this file) or the
-        package .zip. Exit status 0 = PASS, 1 = FAIL. Prints the reasons.
+        package .zip. Exit status 0 = integrity OK and signer pinned, 2 = integrity OK but
+        UNPINNED (authenticity not established), 1 = FAIL. Prints the reasons.
 
 Definitions
 * canonical JSON: UTF-8, keys sorted, separators (",", ":"), ensure_ascii=False, no NaN.
@@ -24,9 +28,17 @@ Definitions
   altered entry, the break surfaces at the NEXT entry (prev_hash linkage). A missing entry is
   reported as the missing seq; a checkpoint mismatch is reported as the checkpoint's seq (the
   tamper lies at or before it); tail truncation as last_seen_seq + 1.
-* The public keys inside a package are self-asserted. Pin the signer with --trusted-key-id taken
-  from a source you trust independently of the package.
+* The public keys inside a package are self-asserted. Pin the signer with --trusted-pubkey (full
+  key) taken from a source you trust independently of the package; key_id is a 64-bit label.
 """
+
+from __future__ import annotations
+
+import sys
+
+if sys.version_info < (3, 8):  # pragma: no cover - cannot run on the interpreters we test with
+    print("FAIL: verify.py needs Python 3.8 or newer")
+    sys.exit(1)
 
 import argparse
 import base64
@@ -35,12 +47,11 @@ import hmac
 import json
 import re
 import stat
-import sys
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
 
 GENESIS = "0" * 64
 PACKAGE_FORMAT_VERSION = 2
@@ -91,7 +102,7 @@ def _recover_x(y: int, sign: int) -> int | None:
 _GY = 4 * pow(5, _P - 2, _P) % _P
 _GX = _recover_x(_GY, 0) or 0
 _G = (_GX, _GY, 1, _GX * _GY % _P)
-_Point = tuple[int, int, int, int]
+_Point = Tuple[int, int, int, int]
 
 
 def _add(p: _Point, q: _Point) -> _Point:
@@ -169,16 +180,26 @@ def _bad(seq: int | None, reason: str) -> VerifyResult:
     return VerifyResult(False, seq, reason)
 
 
+_TS_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})?"
+)
+
+
 def ts_str(value: Any) -> str:
     """Receipt time as ``YYYY-MM-DDTHH:MM:SS.ffffffZ`` (UTC). Accepts that string, any ISO-8601
     string, or an aware datetime."""
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
     if isinstance(value, str):
-        value = datetime.fromisoformat(value)
+        m = _TS_RE.fullmatch(value)
+        if m is None or m.group(4) is None:
+            raise ValueError("timestamp must be ISO-8601 with a UTC offset")
+        tz = "+00:00" if m.group(4) == "Z" else m.group(4)
+        frac = (m.group(3) or "").ljust(6, "0")[:6]
+        value = datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{tz}")
     if value.tzinfo is None:
         raise ValueError("naive timestamp")
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 ENTRY_FIELDS = frozenset(
@@ -269,7 +290,7 @@ def verify_chain(
     prev_seq: int | None = None
     prev_hash: str | None = None
     redacted: list[int] = []
-    for e, raw in zip(ents, stored, strict=True):
+    for e, raw in zip(ents, stored):  # noqa: B905  (equal lengths; strict= needs 3.10)
         seq = e["seq"]
         if not isinstance(raw, Mapping) or not set(raw) <= ENTRY_FIELDS:
             return _bad(seq if isinstance(seq, int) else None, f"entry {seq} has an unknown field")
