@@ -53,6 +53,8 @@ class SessionState:
     peak_reasons: dict[str, list] = field(default_factory=dict)
     cross_ts: float = 0.0
     seen: list[str] = field(default_factory=list)  # recent event idempotency keys
+    chunks: int = 0  # distinct events scored so far
+    peak_chunks: int = 0  # ``chunks`` at the latest crossing (audit payload)
 
 
 def accumulate(
@@ -88,11 +90,13 @@ def accumulate(
     if not armed and score < REARM_BELOW and ts - last_cross >= cooldown_s:
         armed = True  # hysteresis: dropped well below the threshold and cooled down
     peak_score, peak_reasons, cross_ts = prev.peak_score, prev.peak_reasons, prev.cross_ts
+    chunks, peak_chunks = prev.chunks + 1, prev.peak_chunks
     if above and armed:
         crossings += 1
         armed = False
         last_cross = ts
         peak_score, peak_reasons, cross_ts = score, {k: list(v) for k, v in merged.items()}, ts
+        peak_chunks = chunks
     return SessionState(
         score=score,
         ts=max(prev.ts, ts),
@@ -108,6 +112,8 @@ def accumulate(
         peak_reasons=peak_reasons,
         cross_ts=cross_ts,
         seen=prev.seen,
+        chunks=chunks,
+        peak_chunks=peak_chunks,
     )
 
 
@@ -252,6 +258,11 @@ class SessionScorer:
     async def crossing_no(self, call_id: str) -> int:
         state = await self._store.get(call_id)
         return state.crossings if state else 0
+
+    async def crossing_chunks(self, call_id: str) -> int:
+        """Events scored when the latest crossing happened (audit payload ``chunk_count``)."""
+        state = await self._store.get(call_id)
+        return state.peak_chunks if state else 0
 
     @property
     def threshold(self) -> float:
