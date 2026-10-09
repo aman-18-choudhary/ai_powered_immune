@@ -162,3 +162,36 @@ def test_legit_numbers_accepted():
     ok = {"decision_seq": 2, "score": 0.91, "amount_inr": 49999, "amount_paise": 99999999,
           "flag": True, "none": None, "k": "ab12cd34", "txn": "txn_3a9f0c12d45b7e68"}  # fmt: skip
     assert not json_has_identifier(ok)
+
+
+# ---- Task 13: ref namespaces, UTC timestamps
+def test_ref_namespace_prefix_accepts_whole_id_only():
+    assert not string_has_identifier("payee_ref:3a9f0c12d45b7e68")
+    assert not string_has_identifier("call_ref:0123456789abcdef")
+    assert string_has_identifier("payee_ref:1234567890123456")  # all digits: never an id
+    assert string_has_identifier("payee_ref:3a9f0c12d45b7e68 9876543210")
+    assert string_has_identifier("acct_ref:3a9f0c12d45b7e68123")  # wrong length
+
+
+def test_ref_namespace_false_reject_rate_is_the_all_digit_floor():
+    import random
+
+    rnd = random.Random(7)
+    n = 100_000
+    refs = ("payee_ref:" + format(rnd.getrandbits(64), "016x") for _ in range(n))
+    assert sum(string_has_identifier(r) for r in refs) / n < 1e-3
+
+
+@pytest.mark.parametrize("ts", ["2026-10-09T12:00:00Z", "1999-01-31T23:59:59Z"])
+def test_utc_timestamps_are_exempt_whole_string(ts):
+    assert not string_has_identifier(ts)
+    assert contains_identifier(ts)  # the raw rule trips on the 14 digits
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2026-10-09T12:00:00Z 9876543210", "x2026-10-09T12:00:00Z", "2026-13-09T12:00:00Z",
+     "9876543210123", "2026-10-09T12:00:00+05:30", "2026-10-09 12:00:00", "20261009120000"],
+)  # fmt: skip
+def test_timestamp_exemption_is_exact(text):
+    assert string_has_identifier(text), text

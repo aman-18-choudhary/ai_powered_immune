@@ -26,7 +26,17 @@ _RULES = [
 # Residual risk (unavoidable for a shape rule at this false-reject rate): a 15-digit number plus
 # one hex letter in a 16-char string is accepted, as are phone-sized digit runs padded with hex
 # letters to an id length.
-_ID_RE = re.compile(r"(?:[a-z]{2,8}_)?([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})")
+# The prefix may also be a case-reference namespace such as "payee_ref:" / "call_ref:".
+_ID_RE = re.compile(
+    r"(?:[a-z]{2,8}_|[a-z]{2,8}_ref:)?([0-9a-f]{16}|[0-9a-f]{24}|[0-9a-f]{32}|[0-9a-f]{64})"
+)
+# A whole-string UTC timestamp "YYYY-MM-DDTHH:MM:SSZ" (valid ranges only) is exempt: it carries 14
+# digits that the 9-digit rule would reject, and the exact shape cannot hold an account or phone
+# number. Anything around it (or other offsets) gets the strict rule.
+_TS_RE = re.compile(
+    r"(?:19|20)\d\d-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?Z"
+)
 _ID_RUN_CAP = {16: 15, 24: 21, 32: 22, 64: 25}
 _DIGITS = re.compile(r"\d+")
 
@@ -66,10 +76,14 @@ def contains_identifier(text: str) -> bool:
     return re.search(r"\d{9,}", alnum) is not None  # digits split only by punctuation/space
 
 
+def is_utc_timestamp(text: str) -> bool:
+    return _TS_RE.fullmatch(text) is not None
+
+
 def string_has_identifier(text: str) -> bool:
-    """For STRUCTURED fields (case refs, payload keys and values): a whole-string opaque id is
-    accepted, anything else gets ``contains_identifier``."""
-    return False if is_opaque_id(text) else contains_identifier(text)
+    """For STRUCTURED fields (case refs, payload keys and values): a whole-string opaque id or
+    UTC timestamp is accepted, anything else gets ``contains_identifier``."""
+    return False if is_opaque_id(text) or is_utc_timestamp(text) else contains_identifier(text)
 
 
 def json_has_identifier(obj: Any) -> bool:

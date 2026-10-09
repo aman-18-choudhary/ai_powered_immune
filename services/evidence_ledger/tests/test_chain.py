@@ -199,3 +199,18 @@ def test_unknown_entry_fields_fail_verification():
     es[2]["note"] = "smuggled"
     r = verify_chain(es)
     assert not r.ok and r.first_bad_seq == 3 and "unknown field" in r.reason
+
+
+def test_emitter_golden_payload_hash():
+    """Same literal as libs/svckit/tests/test_ledger.py: emitters (svckit.ledger) and the ledger
+    agree on payload_hash = sha256(canonical_json(payload))."""
+    from scam_contracts.canonical import payload_hash
+
+    payload = {
+        "txn_id": "txn_3a9f0c12d45b7e68", "decision": "hold_verify", "decision_seq": 2,
+        "score": 0.9731, "reason_codes": ["ANTIBODY_MATCH", "CALL_RISK_ACTIVE"], "rail": "UPI",
+        "amount_bucket": "10k-100k", "deadline_ts": "2026-10-09T12:02:00Z",
+    }  # fmt: skip
+    assert (
+        payload_hash(payload) == "d3527646ec642ef02e3e0ee474e911b46dd8eb0a4d4352615b8a930367552a92"
+    )
