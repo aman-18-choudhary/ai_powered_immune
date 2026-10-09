@@ -177,3 +177,52 @@ def test_txn_decision_seq_defaults_to_1_for_old_payloads():
     d = TxnDecision.model_validate_json(old)
     assert d.decision_seq == 1  # consumers dedupe on (txn_id, decision_seq), take the highest
     assert TxnDecision.model_validate_json(d.model_dump_json()).decision_seq == 1
+
+
+# ---------------------------------------------------------------- ledger additions (Task 12)
+def test_ledger_entry_in_old_payload_still_valid():
+    from scam_contracts.models import LedgerEntry, LedgerEntryIn
+
+    e = LedgerEntryIn.model_validate_json(
+        '{"service":"s","actor":"a","event_type":"e","payload_hash":"h","model_version":null}'
+    )
+    assert e.payload is None and e.case_refs == []
+    old = (
+        '{"seq":1,"ts":"2026-01-01T00:00:00Z","service":"s","actor":"a","event_type":"e",'
+        '"payload_hash":"h","prev_hash":"p","entry_hash":"x"}'
+    )
+    le = LedgerEntry.model_validate_json(old)
+    assert le.payload is None and le.case_refs == [] and le.model_version is None
+
+
+def test_ledger_entry_in_payload_limits_and_refs():
+    from scam_contracts.models import LedgerEntryIn
+
+    base = dict(service="s", actor="a", event_type="e", payload_hash="h")
+    LedgerEntryIn(**base, payload={"k": [1, "x", {"y": None}]}, case_refs=["txn:1", "a.b-c_d"[:7]])
+    with pytest.raises(ValidationError):
+        LedgerEntryIn(**base, payload={"k": "x" * 5000})
+    with pytest.raises(ValidationError):
+        LedgerEntryIn(**base, payload={"k": float("nan")})
+    with pytest.raises(ValidationError):
+        LedgerEntryIn(**base, payload={"k": {"a": {"b": {"c": {"d": {"e": {"f": {"g": 1}}}}}}}})
+    with pytest.raises(ValidationError):
+        LedgerEntryIn(**base, case_refs=["ok"] * 11)
+    for bad in ("", "has space", "x" * 65, "a/b", "a@b"):
+        with pytest.raises(ValidationError):
+            LedgerEntryIn(**base, case_refs=[bad])
+
+
+def test_canonical_json_golden_vectors():
+    from scam_contracts.canonical import canonical_json, payload_hash
+
+    assert canonical_json({"b": 1, "a": [True, None, "x"]}) == b'{"a":[true,null,"x"],"b":1}'
+    assert canonical_json({"k": "é₹"}) == '{"k":"é₹"}'.encode()  # not \u-escaped
+    assert canonical_json({}) == b"{}"
+    assert canonical_json({"z": {"b": 2, "a": 1}}) == b'{"z":{"a":1,"b":2}}'
+    assert payload_hash({}) == "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    assert payload_hash({"a": 1}) == (
+        "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+    )
+    with pytest.raises(ValueError):
+        canonical_json({"x": float("nan")})

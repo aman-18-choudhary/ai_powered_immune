@@ -1,8 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+
+from .canonical import canonical_json
 
 UPI_LIMIT_INR = Decimal("100000")
 IMPS_LIMIT_INR = Decimal("500000")
@@ -91,7 +93,52 @@ class Antibody(_Frozen):
     revoked: bool = False
 
 
+MAX_PAYLOAD_BYTES = 4096
+MAX_CASE_REFS = 10
+MAX_PAYLOAD_DEPTH = 6
+CASE_REF_RE = r"^[A-Za-z0-9._:-]{1,64}$"
+CaseRef = Annotated[str, Field(pattern=CASE_REF_RE)]
+
+
+def _check_json(v: object, depth: int = 0) -> None:
+    if depth > MAX_PAYLOAD_DEPTH:
+        raise ValueError("payload nested too deeply")
+    if isinstance(v, dict):
+        for k, x in v.items():
+            if not isinstance(k, str):
+                raise ValueError("payload keys must be strings")
+            _check_json(x, depth + 1)
+    elif isinstance(v, list):
+        for x in v:
+            _check_json(x, depth + 1)
+    elif isinstance(v, float):
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("payload must not contain NaN or Infinity")
+    elif not (v is None or isinstance(v, str | int | bool)):
+        raise ValueError("payload must be JSON-serialisable")
+
+
+def _check_payload(v: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Canonical-JSON-serialisable (see ``scam_contracts.canonical``) and at most 4 KiB."""
+    if v is None:
+        return v
+    _check_json(v)
+    if len(canonical_json(v)) > MAX_PAYLOAD_BYTES:
+        raise ValueError("payload exceeds 4 KiB when serialised")
+    return v
+
+
+Payload = Annotated[dict[str, Any], AfterValidator(lambda v: _check_payload(v))]
+
+
 class LedgerEntry(_Frozen):
+    """One link of the evidence ledger's hash chain (see ``evidence_ledger``).
+
+    ``ts`` is the ledger's RECEIPT time (UTC), so chain order is receipt order, not event order.
+    ``payload`` is optional PII-free evidence; when present ``payload_hash`` equals
+    ``scam_contracts.canonical.payload_hash(payload)``.
+    """
+
     seq: int
     ts: AwareDatetime
     service: str
@@ -101,11 +148,23 @@ class LedgerEntry(_Frozen):
     prev_hash: str
     entry_hash: str
     model_version: str | None = None
+    payload: dict[str, Any] | None = None
+    case_refs: list[str] = []
 
 
 class LedgerEntryIn(_Frozen):
+    """An audit event as emitted by a service.
+
+    ``payload`` (optional, <= 4 KiB canonical JSON, PII-free) lets the ledger verify
+    ``payload_hash == sha256(canonical_json(payload))`` and render human-readable evidence.
+    ``case_refs`` (<= 10 opaque references such as txn ids, antibody ids, campaign ids) group
+    entries into cases. Both fields are additive: old messages without them stay valid.
+    """
+
     service: str
     actor: str
     event_type: str
     payload_hash: str
     model_version: str | None = None
+    payload: Payload | None = None
+    case_refs: Annotated[list[CaseRef], Field(max_length=MAX_CASE_REFS)] = []
