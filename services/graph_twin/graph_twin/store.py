@@ -31,6 +31,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    bindparam,
     create_engine,
     delete,
     func,
@@ -132,6 +133,25 @@ audit_outbox = Table(
 )  # fmt: skip
 
 
+# Hot-path statements are built once (SQLAlchemy caches their compiled form), which roughly halves
+# the per-event cost compared with rebuilding them on every call.
+_NODE_COLS = ("kind", "bank", "first_ts", "last_ts", "age", "ab_until")
+_UPD_NODE = update(nodes).where(nodes.c.key == bindparam("p_key")).values(
+    **{c: bindparam("v_" + c) for c in _NODE_COLS}
+)  # fmt: skip
+_INS_NODE = insert(nodes)
+_EDGE_COLS = ("kind", "cnt", "total", "first_ts", "last_ts", "rails", "susp")
+_UPD_EDGE = (
+    update(edges)
+    .where(edges.c.src == bindparam("p_src"), edges.c.dst == bindparam("p_dst"))
+    .values(**{c: bindparam("v_" + c) for c in _EDGE_COLS})
+)
+_INS_EDGE = insert(edges)
+_SEL_DECISION = select(decisions).where(decisions.c.txn_id == bindparam("p_id"))
+_SEL_TXN = select(txns).where(txns.c.txn_id == bindparam("p_id"))
+_INS_TXN: dict[str, Any] = {}
+
+
 def aware(dt: datetime | None) -> datetime | None:
     if dt is not None and dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
@@ -195,10 +215,18 @@ class GraphStore:
     # ------------------------------------------------------------------- txns
     def insert_txn(self, conn: Connection, **v: Any) -> bool:
         """True if new, False if the txn id was already accepted (idempotent replay)."""
-        return self._insert_ignore(conn, txns, **v)
+        name = conn.dialect.name
+        stmt = _INS_TXN.get(name)
+        if stmt is None:
+            if name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dins
+            else:
+                from sqlalchemy.dialects.sqlite import insert as dins
+            stmt = _INS_TXN[name] = dins(txns).on_conflict_do_nothing()
+        return conn.execute(stmt, v).rowcount == 1
 
     def get_txn(self, conn: Connection, txn_id: str) -> dict[str, Any] | None:
-        r = conn.execute(select(txns).where(txns.c.txn_id == txn_id)).first()
+        r = conn.execute(_SEL_TXN, {"p_id": txn_id}).first()
         return dict(r._mapping) if r else None
 
     def set_txn_level(self, conn: Connection, txn_id: str, level: int, seq: int) -> None:
@@ -206,7 +234,7 @@ class GraphStore:
 
     # -------------------------------------------------------------- decisions
     def get_decision(self, conn: Connection, txn_id: str) -> dict[str, Any] | None:
-        r = conn.execute(select(decisions).where(decisions.c.txn_id == txn_id)).first()
+        r = conn.execute(_SEL_DECISION, {"p_id": txn_id}).first()
         return dict(r._mapping) if r else None
 
     def put_decision(
@@ -258,19 +286,18 @@ class GraphStore:
             "last_ts": from_us(st.last), "age": st.age,
             "ab_until": from_us(st.ab_until) if st.ab_until else None,
         }  # fmt: skip
-        if conn.execute(update(nodes).where(nodes.c.key == key).values(**vals)).rowcount == 0:
-            conn.execute(insert(nodes).values(key=key, **vals))
+        params = {"v_" + k: v for k, v in vals.items()}
+        if conn.execute(_UPD_NODE, {"p_key": key, **params}).rowcount == 0:
+            conn.execute(_INS_NODE, {"key": key, **vals})
 
     def upsert_edge(self, conn: Connection, a: str, b: str, e: EdgeState) -> None:
         vals = {
             "kind": e.kind, "cnt": e.count, "total": e.total, "first_ts": from_us(e.first),
             "last_ts": from_us(e.last), "rails": e.rails, "susp": e.susp,
         }  # fmt: skip
-        n = conn.execute(
-            update(edges).where(edges.c.src == a, edges.c.dst == b).values(**vals)
-        ).rowcount
-        if n == 0:
-            conn.execute(insert(edges).values(src=a, dst=b, **vals))
+        params = {"v_" + k: v for k, v in vals.items()}
+        if conn.execute(_UPD_EDGE, {"p_src": a, "p_dst": b, **params}).rowcount == 0:
+            conn.execute(_INS_EDGE, {"src": a, "dst": b, **vals})
 
     def delete_edges_before(self, conn: Connection, cutoff: datetime) -> int:
         return conn.execute(delete(edges).where(edges.c.last_ts < cutoff)).rowcount

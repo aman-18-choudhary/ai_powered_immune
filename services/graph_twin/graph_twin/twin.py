@@ -213,7 +213,7 @@ class GraphTwin:
             self.counters["txns_applied"] += 1
             self._mark_dirty(dst, src)
             if self.tg.node_count > cfg.max_nodes:
-                self.evict()
+                self.evict(frozenset(k for k in (src, dst, dev) if k))
             return True
 
     def _persist(self, conn, keys: list[str], edge_keys: list[tuple[str, str]]) -> None:  # type: ignore[no-untyped-def]
@@ -431,7 +431,7 @@ class GraphTwin:
                     prot.add(n)
         return prot
 
-    def evict(self) -> int:
+    def evict(self, exclude: frozenset[str] = frozenset()) -> int:
         """Bring the node count to 95% of ``GRAPH_MAX_NODES``: oldest-last-seen first, never a
         ring member or its neighbours, a node with a signal, or the payer of a flagged payment."""
         cfg = self.cfg
@@ -469,41 +469,13 @@ class GraphTwin:
             self.store.delete_nodes(conn, keys)
 
     def sweep(self) -> dict[str, int]:
-        """Retention + compaction + ring lifecycle. Bounded work, safe to run off-loop."""
+        """Retention + compaction + ring lifecycle (rings first, so an expired ring's nodes are no
+        longer protected). Holds the twin lock for O(nodes) work, off the event loop."""
         cfg = self.cfg
         with self.lock:
             now = self.clock()
             now_us = to_us(now)
             cutoff_us = now_us - cfg.retention_us
-            touched = self.tg.expire_edges(cutoff_us)
-            self.tg.idx.refresh_many(self.tg.g, touched, cfg, now_us)
-            g = self.tg.g
-            prot = self._protected(now_us)
-            dead = [
-                n for n in sorted(g.nodes)
-                if g.degree(n) == 0 and ns(g, n).last < cutoff_us and n not in prot
-            ]  # fmt: skip
-            # a node whose antibody lapsed and that has no edges is dead as well
-            dead += [
-                n for n in sorted(g.nodes)
-                if g.degree(n) == 0 and n not in prot and n not in dead
-                and ns(g, n).kind != DEVICE and ns(g, n).ab_until
-                and ns(g, n).ab_until <= now_us
-            ]  # fmt: skip
-            orphan_devices = [
-                n for n in sorted(g.nodes) if ns(g, n).kind == DEVICE and g.degree(n) == 0
-            ]
-            dead += [n for n in orphan_devices if n not in dead]
-            if dead:
-                self._remove_nodes(dead)
-            with self.store.tx() as conn:
-                cut = from_us(cutoff_us)
-                self.store.delete_edges_before(conn, cut)
-                purged = self.store.purge_old(conn, cut, now - timedelta(seconds=cfg.pending_ttl_s))
-                self.store.purge_antibodies(conn, now - timedelta(days=1))
-                self.store.purge_audit(conn, now - timedelta(days=cfg.audit_retention_days))
-                self.pending_decisions = self.store.count_pending(conn)
-            evicted = self.evict() if g.number_of_nodes() > cfg.max_nodes else 0
             events, changed, deleted = self.registry.tick(now_us)
             ce, cc, cd = self._carry
             events, changed, deleted = events + ce, changed | cc, deleted | cd
@@ -516,6 +488,31 @@ class GraphTwin:
                 except BaseException:
                     self._carry = (events, changed, deleted)
                     raise
+            touched = self.tg.expire_edges(cutoff_us)
+            self.tg.idx.refresh_many(self.tg.g, touched, cfg, now_us)
+            g = self.tg.g
+            prot = self._protected(now_us)
+            dead: set[str] = set()
+            for n in g.nodes:
+                if g.degree(n) != 0 or n in prot:
+                    continue
+                st = ns(g, n)
+                if (
+                    st.kind == DEVICE
+                    or st.last < cutoff_us
+                    or (st.ab_until and st.ab_until <= now_us)
+                ):
+                    dead.add(n)
+            if dead:
+                self._remove_nodes(sorted(dead))
+            with self.store.tx() as conn:
+                cut = from_us(cutoff_us)
+                self.store.delete_edges_before(conn, cut)
+                purged = self.store.purge_old(conn, cut, now - timedelta(seconds=cfg.pending_ttl_s))
+                self.store.purge_antibodies(conn, now - timedelta(days=1))
+                self.store.purge_audit(conn, now - timedelta(days=cfg.audit_retention_days))
+                self.pending_decisions = self.store.count_pending(conn)
+            evicted = self.evict() if g.number_of_nodes() > cfg.max_nodes else 0
             for r in self.registry.rings.values():  # anchor refresh for rings (dirty overflow)
                 self._mark_dirty(*[n for n in r.core if n in g])
             self.pending_audit_rows = audit_rows
