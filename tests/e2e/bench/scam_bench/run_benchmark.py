@@ -85,7 +85,13 @@ ABLATIONS: dict[str, Callable[[], Ablation]] = {
     "degraded_call_signal": _degraded_call_signal,
     "no_antibody": _no_antibody,
 }
-SENSITIVITY_DELAYS_S = (0.0, 60.0, 300.0, 900.0)
+SENSITIVITY_DELAYS_S = (0.0, 60.0, 300.0, 900.0, 3600.0, 21600.0, 86400.0)  # 0 s .. 24 h
+
+
+def _fmt_delay(d: float) -> str:
+    return f"{int(d)} s" if d < 3600 else f"{d / 3600:g} h"
+
+
 DEFAULT_ABLATIONS = ["no_call_signal", "degraded_call_signal", "no_antibody"]
 
 
@@ -458,7 +464,7 @@ def run_benchmark(
         for d in SENSITIVITY_DELAYS_S:
             if d != DEFAULT_CONFIRM_DELAY_S:
                 variants[f"__delay_{int(d)}"] = Ablation(antibody_delay_s=d)
-                hidden[f"__delay_{int(d)}"] = f"label-gated, {int(d)} s"
+                hidden[f"__delay_{int(d)}"] = f"label-gated, {_fmt_delay(d)}"
         variants["__hold_gate"] = Ablation(antibody_gate="hold")
         hidden["__hold_gate"] = f"hold-gated (no labels), {int(DEFAULT_CONFIRM_DELAY_S)} s"
     degraded = (
@@ -961,6 +967,17 @@ def _hero_section(result: dict[str, Any]) -> list[str]:
         "after A's last transfer pays the SAME mule. Nothing local flags B; only the shared threat "
         "memory can. Single-channel detection missing a novel script is the point.",
         "",
+        "How much is by construction: (1) A is held in every seed because the scenario sends A's "
+        "largest transfer FIRST, so the system's hold lands inside the 15-minute call-risk "
+        "window (a later transfer would fall outside it and not be held). (2) B's call is ONE "
+        "fixed hand-written script (`evasive_scam_chunks()`, no RNG), authored to evade this "
+        "call-guard, so 'undetected' is by construction; the 40 seeds vary only mule age, amounts "
+        "and timing, they are not 40 independent evasions. (3) The model-only miss on B is a "
+        "genuine blind spot, not noise: B's amount z-score is 9.1-10 (clipped at 10), about "
+        "24-107x B's typical transfer, yet the score is 0.0 in 39 seeds (0.5, step_up, in 1) "
+        "because only 'new payee' fires and no young-payee or call signal does. B's history is "
+        "the hand-built warm-up fixture (40 small UPI payments), not simulated behaviour.",
+        "",
         f"* Hero seeds run: {n}. Call-guard alerts on B's call: {c['b_alerts']} (undetected in "
         f"every seed); on A's call: alert in {c['a_alerts']} of {n}. A's transfer to the shared mule "
         f"held by the system (no label): {c['shared_held']} of {n}; antibody due (A's first hold "
@@ -980,6 +997,29 @@ def _hero_section(result: dict[str, Any]) -> list[str]:
         "limit 5 s).",
         "",
     ]
+
+
+def _delay_verdict(result: dict[str, Any], base: Any, off: Any, by_delay: dict[int, str]) -> str:
+    def rec(v: Any) -> float | None:
+        r = v["metrics"].by_role.get("victim_transfer")
+        return r.recall if r else None
+
+    sens = result["sensitivity"]
+    off_r, base_r = rec(off), rec(base)
+    pts = [(d, rec(base) if d == DEFAULT_CONFIRM_DELAY_S else rec(sens[by_delay[int(d)]]))
+           for d in SENSITIVITY_DELAYS_S]  # fmt: skip
+    worse = [d for d, r in pts if r is not None and base_r is not None and r < base_r - 1e-9]
+    last = pts[-1][1]
+    return (
+        f"Result: victim-transfer recall is {_pct(off_r, None, 1)} without antibodies and "
+        f"{_pct(pts[0][1], None, 1)} with a 0 s confirmation; at "
+        f"{_fmt_delay(SENSITIVITY_DELAYS_S[-1])} it is {_pct(last, None, 1)}"
+        + (
+            f"; it starts to fall below the 60 s value at {_fmt_delay(min(worse))}."
+            if worse
+            else " (no delay tried reduces it below the 60 s value)."
+        )
+    )
 
 
 def _sensitivity_rows(result: dict[str, Any]) -> list[str]:
@@ -1022,9 +1062,11 @@ def _sensitivity_rows(result: dict[str, Any]) -> list[str]:
         "|---|---|---|---|",
         *rows,
         "",
-        "In this simulator the delay barely matters because victims of a campaign are minutes to "
-        "hours apart, far longer than the delays tried; a slower real confirmation process, "
-        "tighter victim spacing or a mule used by few victims would shrink the benefit.",
+        _delay_verdict(result, base, off, by_delay),
+        "",
+        "Victims of a campaign are minutes to hours apart in this simulator (mean lead time "
+        "before the 10th victim is hours), so short delays cost nothing; the longer delays show "
+        "where the antibody stops helping. Deterministic for a given seed.",
         "",
     ]
 

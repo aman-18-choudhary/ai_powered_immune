@@ -274,8 +274,22 @@ call-guard, not a zeroed call risk) and pays the SAME mule 90 s after A's last t
 seeds 1..40 the model plus policy alone does not hold B's first transfer (39 allow, 1 step_up, 0
 hold_verify); with A's hold confirmed 60 s later and the antibody applied across two instances (a
 few ms, limit 5 s) it is `hold_verify` with `ANTIBODY_MATCH` in 40/40, with the antibody due before
-B's transfer in 40/40. It proves the mechanism and its latency on a constructed case. It does NOT
+B's transfer in 40/40. Why this is partly by construction: A is held in 40/40 seeds because the scenario sends A's
+largest transfer FIRST, so the system's hold lands inside the 15-minute call-risk window; B's call
+is ONE fixed hand-written script (`evasive_scam_chunks()`, no RNG) authored to evade this
+call-guard, so 'undetected' is by construction and the 40 seeds vary only mule age, amounts and
+timing (not 40 independent evasions); B's model-only miss is a genuine blind spot (amount z-score
+9.1-10, ~24-107x typical, score 0.0 in 39 seeds because only 'new payee' fires and no young-payee
+or call signal does) measured on a hand-built `_warm` history fixture. It proves the mechanism
+and its latency on a constructed case. It does NOT
 prove how common seasoned mules or evaded calls are, how fast real analysts confirm, or anything
 about prevalence; the young mules used by the other victims of the same campaign are still caught
-by the local model. `python -m scam_bench.run_benchmark` takes a few minutes
-with the sensitivity runs and 40 hero seeds; `--no-sensitivity` and `--hero-seeds 0` skip them.
+by the local model. The sensitivity table also covers confirmation delays of 1 h, 6 h and 24 h (deterministic, same
+seed): at seed 42 victim-transfer recall is 100.0% for delays up to 1 h, 99.2% at 6 h and 94.5% (= no
+antibody) at 24 h, so the benefit disappears once confirmation is slower than the victims'
+spacing. A known limit: when one
+antibody event arrives for a hot payee, transactions beyond the newest 500 in the 15-minute window
+are not upgraded by the late scan (paging would close it).
+`python -m scam_bench.run_benchmark` takes about 2m45s at seed 42 on the
+development machine (7 delay variants, hold-gated variant and 40 hero seeds; about 25 s with
+`--no-sensitivity --hero-seeds 0`); `--no-sensitivity` and `--hero-seeds 0` skip them.

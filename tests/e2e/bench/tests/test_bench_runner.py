@@ -200,16 +200,21 @@ def test_mule_history_is_public():
 def test_antibody_sensitivity_table_and_honest_limitations():
     res = run_benchmark(7, ["no_antibody"], config=TINY, out="", sensitivity=True)
     sens = res["sensitivity"]
-    assert set(sens) == {"__delay_0", "__delay_300", "__delay_900", "__hold_gate"}
+    assert set(sens) == {
+        "__delay_0", "__delay_300", "__delay_900", "__delay_3600", "__delay_21600",
+        "__delay_86400", "__hold_gate",
+    }  # fmt: skip
 
     def rec(v):
         return v["metrics"].by_role["victim_transfer"].recall
 
     assert rec(sens["__delay_0"]) >= rec(res["variants"]["baseline"]) >= rec(sens["__delay_900"])
+    assert rec(sens["__delay_900"]) >= rec(sens["__delay_86400"])
     text = render_report(res, include_volatile=False)
     for needle in (
         "Sensitivity of the confirmation model", "label-gated, 0 s", "label-gated, 300 s",
-        "label-gated, 900 s", "hold-gated (no labels)", "tautology", "3-6 mule accounts",
+        "label-gated, 900 s", "label-gated, 1 h", "label-gated, 6 h", "label-gated, 24 h",
+        "Result: victim-transfer recall", "hold-gated (no labels)", "tautology", "3-6 mule accounts",
         "poisoning",
     ):  # fmt: skip
         assert needle in text, needle
@@ -237,6 +242,8 @@ def test_hero_hard_case_section():
         "## Hero scenario (hard case: seasoned mule, call undetected)",
         "NOT a prevalence estimate", "off-template", "model + policy only (no antibody)",
         "with the cross-bank antibody",
+        "sends A's largest transfer FIRST", "ONE fixed hand-written script", "not 40 independent",
+        "genuine blind spot", "hand-built warm-up fixture",
     ):  # fmt: skip
         assert needle in text, needle
     assert run_benchmark(7, [], config=TINY, out="")["hero"] is None
