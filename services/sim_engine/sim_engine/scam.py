@@ -118,11 +118,11 @@ def gen_scam_campaign(
     after the first victim's last transfer (their calls shift with it). With
     ``shared_first_mule`` the second victim's FIRST transfer goes to a mule that the first victim
     already paid (no extra random draws, so every other value is unchanged); that shared mule is
-    the payee of the first victim's FIRST (and largest) transfer. ``seasoned_shared_mule`` makes it
-    an aged account (60-400 days, a purchased/rented account) so young-payee signals do not fire for
-    the second victim. ``evasive_second_victim_call`` gives the second victim a real but off-template
-    scam call (a relative-in-an-emergency deposit script) that the shipped call-guard does not
-    alert on."""
+    the payee of the first victim's FIRST (and largest) transfer. ``seasoned_shared_mule`` makes
+    it an aged account (60-400 days, a purchased/rented account) so young-payee signals do not
+    fire for the second victim. ``evasive_second_victim_call`` gives the second victim a real but
+    off-template scam call (a relative-in-an-emergency deposit script) that the shipped
+    call-guard does not alert on."""
     rng = np.random.default_rng([seed, zlib.crc32(campaign_id.encode()), 4])
     camp = Campaign(campaign_id)
     t0 = start_ts or (world.start + timedelta(days=1, hours=float(rng.uniform(9, 17))))
