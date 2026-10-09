@@ -240,7 +240,9 @@ def build(
     max_span: int = DEFAULT_MAX_SPAN,
 ) -> Package:
     try:
-        selected = store.select_seqs(list(case_refs), list(seqs), limit=max_span)
+        selected = store.select_seqs(
+            list(case_refs), list(seqs), limit=max_span, exclude_event=AUDIT_EVENT
+        )
     except LookupError:
         raise EmptyCase(case_id) from None
     if not selected:

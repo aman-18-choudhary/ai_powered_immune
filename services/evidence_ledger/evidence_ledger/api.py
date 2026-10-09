@@ -101,6 +101,69 @@ def need(p: Principal, roles: set[str]) -> None:
         raise HTTPException(403, "role not permitted")
 
 
+class BodyLimit:
+    """Pure-ASGI request body cap: Content-Length is checked up front, and the received bytes
+    are counted as they stream (chunked bodies have no Content-Length). Over the cap -> 413."""
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app, self.max = app, max_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope["headers"])
+        try:
+            declared = int(headers.get(b"content-length", b"0") or 0)
+        except ValueError:
+            declared = 0
+        if declared > self.max:
+            await self._reject(send)
+            return
+        seen = 0
+        started = rejected = False
+
+        async def counting_receive() -> Any:
+            nonlocal seen, rejected
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > self.max and not rejected:
+                    rejected = True  # answer 413 now; whatever the app sends next is dropped
+                    await self._reject(send)
+                    raise _TooLarge
+            return msg
+
+        async def tracking_send(msg: Any) -> None:
+            nonlocal started
+            if rejected:
+                return
+            started = started or msg["type"] == "http.response.start"
+            await send(msg)
+
+        try:
+            await self.app(scope, counting_receive, tracking_send)
+        except _TooLarge:
+            pass
+        except Exception:
+            if not rejected:
+                raise
+
+    @staticmethod
+    async def _reject(send: Any) -> None:
+        body = b'{"detail":"request body too large"}'
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        await send({"type": "http.response.start", "status": 413, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+
+class _TooLarge(Exception):
+    pass
+
+
 def create_app(
     database_url: str | None = None,
     bus: Bus | None = None,
@@ -113,6 +176,7 @@ def create_app(
     closers: list[Callable[[], Awaitable[None]]] | None = None,
     max_package_span: int | None = None,
     max_verify_span: int | None = None,
+    max_body_bytes: int | None = None,
 ) -> FastAPI:
     if keyring is None:
         keyring = load_keyring()  # raises with a clear message when no key is configured
@@ -160,6 +224,10 @@ def create_app(
         return await asyncio.to_thread(store.ping)
 
     app = FastAPI(title="evidence-ledger", lifespan=lifespan)
+    app.add_middleware(
+        BodyLimit,
+        max_bytes=max_body_bytes or int(os.getenv("LEDGER_MAX_BODY_BYTES", str(64 * 1024))),
+    )
     app.state.store = store
     app.state.keyring = keyring
     access_log = logging.getLogger("evidence_ledger.access")
@@ -348,6 +416,19 @@ def create_app(
             raise HTTPException(404, "case not found")
         return rec
 
+    @app.get("/cases/{case_id}/exports")
+    async def case_exports(
+        case_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9._:-]{1,64}$")],
+        p: Annotated[Principal, Depends(principal)],
+        limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    ) -> dict[str, Any]:
+        """The case's own export history: `package.exported` ledger entries tagged with it."""
+        need(p, OFFICERS)
+        if await asyncio.to_thread(store.get_case, case_id) is None:
+            raise HTTPException(404, "case not found")
+        rows = await asyncio.to_thread(store.refs_page, case_id, pkg.AUDIT_EVENT, limit)
+        return {"items": [to_dict(e) for e in rows]}
+
     @app.get("/packages/{case_id}")
     async def get_package(
         case_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9._:-]{1,64}$")],
@@ -381,7 +462,7 @@ def create_app(
         }  # fmt: skip
         audit = LedgerEntryIn(
             service=EXPORT_SERVICE, actor=p.sub, event_type=pkg.AUDIT_EVENT,
-            payload_hash=payload_hash(payload), payload=payload,
+            payload_hash=payload_hash(payload), payload=payload, case_refs=[case_id],
         )  # fmt: skip
         try:
             await asyncio.to_thread(store.append, audit)  # fail closed: no audit, no package

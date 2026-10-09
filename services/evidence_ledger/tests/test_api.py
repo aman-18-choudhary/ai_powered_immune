@@ -307,3 +307,43 @@ async def test_verify_detects_tail_truncation_via_retained_checkpoints(client):
         c.execute(text("delete from ledger_entries where seq > 8"))
     r = (await client.get("/verify", headers=OFFICER)).json()
     assert not r["ok"] and r["first_bad_seq"] == 9 and "truncat" in r["reason"]
+
+
+async def test_export_audit_carries_case_ref_and_history_endpoint(client):
+    store = seed(client)
+    await client.post(
+        "/cases",
+        json={"case_id": "case-1", "title": "Hero", "case_refs": ["case-1"]},
+        headers=OFFICER,
+    )
+    r1 = await client.get("/packages/case-1", headers=OFFICER)
+    audit = store.get(13)
+    assert audit.case_refs == ["case-1"]
+    # the export entry carries the case id as a ref but is NOT pulled into the case's own package
+    r2 = await client.get("/packages/case-1", headers=hdr("officer", "officer-2"))
+    assert r2.status_code == 200
+    again = await client.get("/packages/case-1", headers=OFFICER)
+    assert again.content == r1.content
+    hist = (await client.get("/cases/case-1/exports", headers=OFFICER)).json()
+    assert [e["actor"] for e in hist["items"]] == ["officer-1", "officer-2"]
+    assert (await client.get("/cases/case-1/exports", headers=ANALYST)).status_code == 403
+    assert (await client.get("/cases/nope/exports", headers=OFFICER)).status_code == 404
+
+
+async def test_request_body_limit(client):
+    big = {"case_id": "c", "title": "t", "case_refs": ["r"], "pad": "x" * 100_000}
+    r = await client.post("/cases", json=big, headers=OFFICER)
+    assert r.status_code == 413 and "x" * 20 not in r.text
+
+    async def chunks():
+        for _ in range(40):
+            yield b"x" * 4096
+
+    r = await client.post(
+        "/cases", content=chunks(), headers=OFFICER | {"content-type": "application/json"}
+    )
+    assert r.status_code == 413  # no Content-Length: the streaming guard catches it
+    ok = await client.post(
+        "/cases", json={"case_id": "c", "title": "t", "case_refs": ["r"]}, headers=OFFICER
+    )
+    assert ok.status_code == 201

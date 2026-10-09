@@ -112,6 +112,7 @@ class Head:
     seq: int
     entry_hash: str
     count: int
+    ts: str | None = None
 
 
 class Counters:
@@ -149,6 +150,14 @@ def _cp(r: Any) -> dict[str, Any]:
     }  # fmt: skip
 
 
+_REPLACE_GUARDS = {
+    "ledger_entries": "seq = NEW.seq OR entry_hash = NEW.entry_hash OR idem_key = NEW.idem_key",
+    "checkpoints": "checkpoint_id = NEW.checkpoint_id OR seq = NEW.seq",
+    "entry_refs": "seq = NEW.seq AND ref = NEW.ref",
+    "cases": "case_id = NEW.case_id",
+}
+
+
 def _trigger_ddl(dialect: str) -> list[str]:
     stmts: list[str] = []
     if dialect == "postgresql":
@@ -173,6 +182,14 @@ def _trigger_ddl(dialect: str) -> list[str]:
                     f"CREATE TRIGGER IF NOT EXISTS trg_{t}_no_{op} BEFORE {op.upper()} ON {t} "
                     "BEGIN SELECT RAISE(ABORT, 'ledger tables are append-only'); END"
                 )
+        # INSERT OR REPLACE / REPLACE INTO would otherwise delete-and-reinsert without firing the
+        # DELETE trigger: refuse any insert that collides with an existing key.
+        for t, cond in _REPLACE_GUARDS.items():
+            stmts.append(
+                f"CREATE TRIGGER IF NOT EXISTS trg_{t}_no_replace BEFORE INSERT ON {t} "
+                f"WHEN EXISTS (SELECT 1 FROM {t} WHERE {cond}) "
+                "BEGIN SELECT RAISE(ABORT, 'ledger tables are append-only'); END"
+            )
     return stmts
 
 
@@ -239,10 +256,10 @@ class LedgerStore:
     # ------------------------------------------------------------------ append
     def _head(self, conn: Connection) -> Head:
         r = conn.execute(
-            select(ledger_entries.c.seq, ledger_entries.c.entry_hash)
+            select(ledger_entries.c.seq, ledger_entries.c.entry_hash, ledger_entries.c.ts)
             .order_by(ledger_entries.c.seq.desc()).limit(1)
         ).first()  # fmt: skip
-        return Head(0, GENESIS, 0) if r is None else Head(r.seq, r.entry_hash, r.seq)
+        return Head(0, GENESIS, 0) if r is None else Head(r.seq, r.entry_hash, r.seq, r.ts)
 
     def append(self, entry_in: LedgerEntryIn) -> AppendResult:
         """Idempotent on the exact entry (``chain.idempotency_key``): a repeat returns the
@@ -261,7 +278,10 @@ class LedgerStore:
                 self.counters.inc("duplicates")
                 return AppendResult(_row_to_entry(existing), False)
             head = self._head(conn)
-            d = build_entry(entry_in, head.seq + 1, self._now(), head.entry_hash)
+            now = self._now()
+            if head.ts is not None:  # the receipt timeline never runs backwards
+                now = max(now, datetime.fromisoformat(head.ts))
+            d = build_entry(entry_in, head.seq + 1, now, head.entry_hash)
             conn.execute(
                 ledger_entries.insert().values(
                     seq=d["seq"],
@@ -297,12 +317,12 @@ class LedgerStore:
             "count": head.count, "ts": ts_str(self._now()), "key_id": self.signer.key_id,
         }  # fmt: skip
         cp["signature_b64"] = base64.b64encode(self.signer.sign(checkpoint_message(cp))).decode()
-        res = conn.execute(self._insert_ignore(conn, checkpoints, cp))
-        if res.rowcount == 1:
-            self.counters.inc("checkpoints")
-            return cp
         row = conn.execute(select(checkpoints).where(checkpoints.c.seq == head.seq)).first()
-        return _cp(row) if row is not None else None
+        if row is not None:  # callers hold the append lock; the insert trigger forbids replaces
+            return _cp(row)
+        conn.execute(checkpoints.insert().values(**cp))
+        self.counters.inc("checkpoints")
+        return cp
 
     @staticmethod
     def _insert_ignore(conn: Connection, table: Table, values: dict[str, Any]) -> Any:
@@ -407,7 +427,21 @@ class LedgerStore:
             cur = chunk[-1].seq + 1
         return out
 
-    def select_seqs(self, refs: list[str], seqs: list[int], *, limit: int) -> list[int]:
+    def refs_page(self, ref: str, event_type: str, limit: int) -> list[LedgerEntry]:
+        """Entries carrying ``ref`` with the given event type (e.g. a case's export history)."""
+        limit = max(1, min(limit, MAX_PAGE))
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(ledger_entries)
+                .join(entry_refs, entry_refs.c.seq == ledger_entries.c.seq)
+                .where((entry_refs.c.ref == ref) & (ledger_entries.c.event_type == event_type))
+                .order_by(ledger_entries.c.seq).limit(limit)
+            ).all()  # fmt: skip
+        return [_row_to_entry(r) for r in rows]
+
+    def select_seqs(
+        self, refs: list[str], seqs: list[int], *, limit: int, exclude_event: str | None = None
+    ) -> list[int]:
         """Sorted seqs of entries carrying any of ``refs`` plus the explicit ``seqs``. At most
         ``limit + 1`` are returned (more than ``limit`` means "too many"). Unknown explicit seqs
         raise LookupError."""
@@ -423,10 +457,12 @@ class LedgerStore:
                     raise LookupError("unknown seq")
                 found |= have
             if refs:
-                rows = conn.execute(
-                    select(entry_refs.c.seq).where(entry_refs.c.ref.in_(refs))
-                    .distinct().order_by(entry_refs.c.seq).limit(limit + 1)
-                )  # fmt: skip
+                q = select(entry_refs.c.seq).where(entry_refs.c.ref.in_(refs))
+                if exclude_event is not None:
+                    q = q.join(ledger_entries, ledger_entries.c.seq == entry_refs.c.seq).where(
+                        ledger_entries.c.event_type != exclude_event
+                    )
+                rows = conn.execute(q.distinct().order_by(entry_refs.c.seq).limit(limit + 1))
                 found |= {r.seq for r in rows}
         return sorted(found)[: limit + 1]
 
@@ -443,14 +479,15 @@ class LedgerStore:
                 "created_at": ts_str(self._now()), "refs": json.dumps(refs),
                 "seqs": json.dumps(seqs),
             }  # fmt: skip
-            res = conn.execute(self._insert_ignore(conn, cases, vals))
-            row = conn.execute(select(cases).where(cases.c.case_id == case_id)).one()
+            row = conn.execute(select(cases).where(cases.c.case_id == case_id)).first()
+            if row is None:  # serialised by the process lock / advisory lock above
+                conn.execute(cases.insert().values(**vals))
+                row = conn.execute(select(cases).where(cases.c.case_id == case_id)).one()
+                return self._case(row), True
             rec = self._case(row)
-            if res.rowcount != 1 and (
-                rec["title"] != title or rec["case_refs"] != refs or rec["seqs"] != seqs
-            ):
+            if rec["title"] != title or rec["case_refs"] != refs or rec["seqs"] != seqs:
                 raise CaseConflict(case_id)
-            return rec, res.rowcount == 1
+            return rec, False
 
     @staticmethod
     def _case(r: Any) -> dict[str, Any]:

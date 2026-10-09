@@ -14,6 +14,9 @@ optional small PII-free `payload`.
   (`payload` <= 4 KiB, `case_refs` <= 10 opaque refs `^[A-Za-z0-9._:-]{1,64}$`).
 * When `payload` is present the ledger checks `sha256(canonical_json(payload)) == payload_hash`
   and rejects mismatches. Without a payload only the hash is kept ("no payload retained").
+  Payload numbers (and numeric keys) with a run of 9 or more digits are rejected by design (see
+  the PII guard); amounts of 9+ digits (for example Rs 10 crore in rupees) must be omitted or sent
+  in a different shape.
 * Canonical JSON (`scam_contracts.canonical`, copied byte-for-byte into `verify.py` and pinned by a
   parity test): UTF-8, keys sorted, separators `(",", ":")`, `ensure_ascii=False`, no NaN/Infinity.
   Floats are Python-`repr` canonical only; prefer strings or scaled integers for cross-language use.
@@ -21,26 +24,44 @@ optional small PII-free `payload`.
 ## The chain
 
 ```
-entry_hash = sha256( prev_hash_ascii || canonical_json(entry without entry_hash) )   (hex)
+chain format 2:
+entry_hash = sha256( prev_hash_ascii || canonical_json({seq, ts, service, actor, event_type,
+                     payload_hash, payload_present, model_version, case_refs}) )   (hex)
 prev_hash of seq 1 = "0" * 64        seq starts at 1, no gaps
 ```
 
-The hashed entry is `seq, ts, service, actor, event_type, payload_hash, prev_hash, model_version,
-payload, case_refs`. `ts` is the ledger's **receipt** time (UTC, `YYYY-MM-DDTHH:MM:SS.ffffffZ`).
+The payload BODY is not part of the hash: `payload_hash` and the `payload_present` flag are. When
+a payload body is present, `sha256(canonical_json(payload))` must equal `payload_hash` (checked
+by `verify_chain` and `verify.py`). That is what lets an export **withhold** a payload (redaction)
+and still verify: a redacted entry has `payload` null, `payload_present` true and its original
+`payload_hash`. Redaction proves nothing about the withheld content except its hash: an expert can
+ask for the withheld payloads and check each against `payload_hash`; nobody can substitute
+different content without breaking the hash. `chain_format_version` and `package_format_version`
+are both 2; the verifier refuses other versions.
+
+`ts` is the ledger's **receipt** time (UTC, `YYYY-MM-DDTHH:MM:SS.ffffffZ`), clamped to
+`max(previous ts, now)` so the receipt timeline never runs backwards even if the clock does.
 **Chain order is receipt order, not event order**: the topic is unordered across replicas and
 emitters are at-least-once, so an event can be recorded after a later event that was emitted
-afterwards. Event times, where they matter, belong inside the payload.
+afterwards. Event times, where they matter, belong inside the payload. The clock itself is not
+authenticated (see the threat model).
 
-`append` is idempotent on `(service, event_type, payload_hash)`: a repeat returns the existing
-entry and writes nothing (counted as a duplicate). Appends are serialised (process lock on
-SQLite, `pg_advisory_xact_lock` on Postgres); the idempotency lookup, chain insert, case-ref rows
-and any checkpoint are ONE transaction, so `seq` is gap-free under concurrency and two replicas
-racing the same event produce exactly one row (the unique constraint is the backstop).
+`append` is idempotent on the EXACT entry: `idem_key = sha256(canonical_json({service, event_type,
+payload_hash, actor, model_version, sorted case_refs, payload_present}))` is unique. Replaying the
+identical entry any number of times writes one row; an entry that differs in actor, model version,
+case refs or payload presence is a distinct entry (a hash-only entry followed by the same entry
+carrying its payload gives two records). Appends are serialised (process lock on SQLite,
+`pg_advisory_xact_lock` on Postgres); the idempotency lookup, chain insert, case-ref rows and any
+checkpoint are ONE transaction, so `seq` is gap-free under concurrency and two replicas racing the
+same entry produce exactly one row (the unique key is the backstop).
 
 ### Immutability and what it does not give you
 
 `ledger_entries`, `entry_refs`, `checkpoints` and `cases` have triggers that RAISE on UPDATE and
-DELETE (and TRUNCATE on Postgres); tests prove it for both dialects. The service's DB role should
+DELETE (and TRUNCATE on Postgres); tests prove it for both dialects. SQLite also has BEFORE INSERT triggers that refuse
+any insert colliding with an existing key (so `INSERT OR REPLACE` cannot overwrite a row);
+Postgres relies on the unique constraints plus the UPDATE trigger (which also fires for
+`ON CONFLICT DO UPDATE`), all tested. The service's DB role should
 be `INSERT, SELECT` only (create the schema with `python -m evidence_ledger.migrate` as a separate
 owner role and run replicas with `LEDGER_CREATE_SCHEMA=0`).
 **A database superuser can drop the triggers and edit rows.** That is not prevented, it is made
@@ -67,6 +88,7 @@ A package export also signs a checkpoint at the head if none covers the case yet
 | Rewrite the whole chain from some point and re-hash | Yes if a signed checkpoint at or after that point survives elsewhere: it cannot be reproduced without the signing key |
 | Rewrite the whole chain AND hold the signing key (or delete all checkpoints and have no external copy) | **No.** Whoever has the key and DB write access can rebuild a consistent history. Keep the key off the database host, ship checkpoints/head hashes to an external append-only store, and keep exported packages |
 | Append a well-formed forged entry after the last checkpoint | **No** until the next checkpoint is signed; the receipt-order chain cannot say who inserted a valid-looking entry (access control and the DB role do) |
+| Redacted context entries in a package | Their content is not shown, only bound by `payload_hash`; withheld payloads can be requested and checked against it |
 | Dishonest or wrong clock | **No.** `ts` is the ledger host's clock; the chain proves order of receipt, not when things happened. Use NTP and treat `ts` as receipt time |
 | A compromised emitting service | **No.** The ledger records what it was told |
 | Entry content that was false when recorded | **No.** Integrity is not truthfulness |
@@ -109,6 +131,7 @@ and matches `X-Gateway-Secret` (constant-time bytes compare; non-ASCII -> 401) o
 | `GET /keys` | readers | current + retired public keys |
 | `POST /cases` | officer, admin | `{case_id, title (<=120, PII-guarded), case_refs[<=20], seqs[<=500]}`; 201 new, 200 identical repeat, 409 different content (cases are immutable) |
 | `GET /cases/{id}` | officer, admin | |
+| `GET /cases/{id}/exports` | officer, admin | the case's `package.exported` history |
 | `GET /packages/{case_id}` | officer, admin | the zip; `Content-Disposition`, `ETag` = sha256; 413 if the span exceeds `LEDGER_MAX_PACKAGE_SPAN` (5000): narrow the case |
 | `/healthz`, `/readyz`, `/metrics` | metrics: `LEDGER_METRICS_TOKEN` or staff role | counters `appended, duplicates, rejected, dlq, checkpoints`, gauge `head_seq` |
 
@@ -128,13 +151,19 @@ of its own (the store is idempotent). The consumer task is restarted if the bus 
 
 ### PII guard
 
-Payload strings and keys, `case_refs`, `service`/`actor`/`event_type` and case titles go through
-`svckit.pii` (NFKC, separators collapsed, 9+ digits, e-mail/UPI `@`, `+`/`0091`, PAN, IFSC).
-Platform-minted lowercase hex ids of 16+ characters containing a letter (sha256 digests,
-`txn_<16 hex>`) are exempt. **Known limits:** spelled-out numbers, encoded values, fragments of 8
-digits or fewer, and identifiers glued into a long hex-looking token are not detected. The guard
-is a safety net; emitters must not put identifiers in payloads. A raw identifier that does reach
-a stored payload is immutable and ends up in every package that includes the entry.
+Payload strings, keys and numbers, `case_refs`, `service`/`actor`/`event_type` and case titles go
+through `svckit.pii` (NFKC, separators collapsed, 9+ digits, e-mail/UPI `@`, `+`/`0091`, PAN,
+IFSC). Platform-minted ids are exempt: a lowercase hex token of 16..64 chars (8..64 after a
+`prefix_`) containing a letter, **only if** its longest digit run is shorter than 9 (12 for a
+64-char sha256 digest, where 9-11 digit runs occur by chance in about 1% of real digests). So
+`a1234567890123456` and `acct_123456789012` are rejected. Consequence: about 1% of random
+16-hex ids contain a 9-digit run and are rejected as identifier-looking; emitters should be
+prepared for that (DLQ + count). JSON numbers with a 9+ digit run are rejected (amounts of 9+
+digits, e.g. Rs 10 crore, must be omitted or sent differently); decision sequence numbers, scores
+and rupee amounts below 9 digits are fine. **Known limits:** spelled-out numbers, encoded
+values and fragments of 8 digits or fewer are not detected. The guard is a safety net; emitters
+must not put identifiers in payloads. A raw identifier that does reach a stored payload is
+immutable and ends up in every package that selects the entry.
 
 ## Evidence packages
 
@@ -144,27 +173,31 @@ timestamps, sorted JSON, no randomness. Members:
 
 | Member | Content |
 |---|---|
-| `entries.json` | the case and the contiguous chain **segment** from the first selected seq to the covering checkpoint's seq, every entry in full, plus `selected_seqs` (the case's entries; the rest is proof material) |
+| `entries.json` | the case and the contiguous chain **segment** from the first selected seq to the covering checkpoint's seq, plus `selected_seqs`. Selected entries carry their full payload; every other entry in the segment is **redacted** (payload omitted, `payload_present` true, `payload_hash` kept) and exists only for chain continuity |
 | `chain_proof.json` | segment bounds, anchor (`prev_hash` of the first entry = the preceding entry's `entry_hash`), the signed checkpoint(s) at the end of the segment, all public keys |
-| `explanations.md` | timeline of the selected entries rendered ONLY from stored fields: event type, actor, decision, reason codes with a one-line meaning from a static dictionary, model version, receipt time; entries without payload say "No payload retained (hash only)"; other entries listed in a context table |
-| `manifest.json` | `case_id`, `generated_from_head_seq`, selected `{seq, entry_hash}`, `sha256` of every other member, `key_id`, Ed25519 `signature_b64` over `canonical_json(manifest without signature)` |
+| `explanations.md` | timeline of the selected entries rendered ONLY from stored fields: event type, actor, decision, reason codes with a one-line meaning from a static dictionary, model version, receipt time; entries without payload say "No payload retained (hash only)"; redacted context entries are listed in a table |
+| `manifest.json` | `case_id`, `generated_from_head_seq`, format versions, selected `{seq, entry_hash}`, `redacted_seqs`, `sha256` of every other member, `key_id`, Ed25519 `signature_b64` over `canonical_json(manifest without signature)` |
 | `certificate_section63_template.md` | template for counsel (below) |
 | `verify.py` | the standalone verifier (stdlib only) |
 
 Why a segment: selected seqs may be non-contiguous. Including every entry from the first selected
 seq to a signed checkpoint lets the whole segment be recomputed, and the checkpoint signature then
-authenticates all of it (a change to any entry changes every later hash). Consequences: (1) a case
-spanning more than `LEDGER_MAX_PACKAGE_SPAN` entries is refused with 413; (2) **the package
-contains every entry in the span, including entries of other cases** (PII-free by design, but not
-confidential from the recipient). Narrow cases, or use a future "redacted proof" format.
+authenticates all of it. A case spanning more than `LEDGER_MAX_PACKAGE_SPAN` entries is refused
+with 413. **Other cases' payloads are not in the package** (they are redacted), but their
+envelope fields are: seq, receipt time, service, actor, event type, model version, `case_refs`
+and `payload_hash`. Tests scan the zip bytes for sentinel text placed in other cases' payloads.
 
-`generated_from_head_seq` is the highest seq that is not a `package.exported` entry; counting the
-export audit entries themselves would change the bytes of every repeat export.
+`generated_from_head_seq` is the highest seq that is not a `package.exported` entry at build time.
+Package bytes are a function of the ledger state, so they change after unrelated new traffic
+whenever the case's covering checkpoint or that value changes, and then stabilise: repeated
+exports with no new non-audit traffic are byte-identical (counting the export audit entries
+themselves would change the bytes of every repeat export).
 
-Each export appends `package.exported` (`actor` = principal, payload `{case_id, package_sha256,
-from_seq, to_seq, exported_by}`) to the ledger itself, before the package is returned. It is
-idempotent: re-exporting the identical package by the same principal writes nothing; a different
-principal's first export of it is recorded.
+Each export appends `package.exported` (`actor` = principal, `case_refs=[case_id]`, payload
+`{case_id, package_sha256, from_seq, to_seq, exported_by}`) to the ledger itself, before the
+package is returned. It is idempotent: re-exporting the identical package by the same principal
+writes nothing; a different principal's first export of it is recorded. Export entries are never
+selected into the case's own package; `GET /cases/{id}/exports` lists the case's export history.
 
 ### Section 63 template: honest scope
 
@@ -177,15 +210,27 @@ retention, who certifies). This service supplies integrity evidence, not complia
 ### Verifying a package (for a court expert)
 
 1. Obtain `verify.py` from a source you trust (it is also in the package and hashed in the
-   manifest; if the package is hostile, its own copy is not evidence of anything). It is ~400 lines,
-   stdlib only, readable end to end.
-2. Obtain the operator's signing `key_id` independently of the package.
-3. `python -S -I verify.py <extracted dir or .zip> --trusted-key-id <key_id>`; no network, no
-   packages needed. Exit 0 = PASS, 1 = FAIL with a reason. `--json` for machine output.
-4. It refuses on: unexpected/missing members, any member hash differing from the manifest,
-   invalid manifest signature, key not the pinned one, broken chain segment, invalid or
-   non-matching checkpoint, no signed checkpoint at the end of the segment, or a manifest entry
-   list that differs from the verified chain.
+   manifest; if the package is hostile its own copy is no evidence). It is ~600 lines, stdlib
+   only, readable end to end.
+2. Obtain the agency's Ed25519 **public key** independently of the package (published by the
+   operator, notarised, referenced in the certificate). `key_id` is only a 64-bit label, not a
+   security pin: pin the full key.
+3. `python -S -I verify.py <extracted dir or .zip> --trusted-pubkey <hex | base64 | PEM | file>`
+   (repeat the flag for a rotated-out key that signed older checkpoints; `--trusted-key-id` pins by
+   label only). No network, no packages.
+4. Exit codes: **0** = integrity OK and the signer (and every checkpoint signer) is pinned;
+   **2** = integrity OK but UNPINNED, final line `INTEGRITY OK - UNPINNED: AUTHENTICITY NOT
+   ESTABLISHED; ...` (anyone can build a self-consistent package with their own key); **1** =
+   failure with a `FAIL:` reason. `--allow-unpinned` turns 2 into 0 for demos/tests but still
+   prints the UNPINNED line. `--json` for machine output.
+5. It refuses on: unexpected, duplicate, nested, non-regular or oversized members (64 MiB each,
+   256 MiB total, compression ratio 100, JSON nesting 64), any member hash differing from the
+   manifest, invalid manifest signature, signer or checkpoint key not pinned, broken chain
+   segment, unknown entry fields, invalid or non-matching checkpoint, no signed checkpoint at the
+   end of the segment, a selected entry with its payload withheld, a `redacted_seqs` list that
+   differs from the entries, unsupported format versions, small-order keys, non-canonical
+   encodings. Hostile input yields a `FAIL:` line, never a traceback. The redacted entries it
+   found are listed in the output.
 
 `verify.py` implements Ed25519 verification (RFC 8032, pure Python, cofactorless, canonical-S
 check) and is tested against the RFC 8032 vectors and against the `cryptography` library.
@@ -195,8 +240,11 @@ check) and is tested against the RFC 8032 vectors and against the `cryptography`
 Env: `LEDGER_DATABASE_URL`, `LEDGER_SIGNING_KEY_FILE`, `KAFKA_BOOTSTRAP`, `LEDGER_GATEWAY_SECRET`,
 `LEDGER_METRICS_TOKEN`, `LEDGER_CHECKPOINT_EVERY`, `LEDGER_CHECKPOINT_INTERVAL_S`,
 `LEDGER_MAINTENANCE_INTERVAL_S` (10), `LEDGER_MAX_PACKAGE_SPAN`, `LEDGER_MAX_VERIFY_SPAN`,
-`LEDGER_CREATE_SCHEMA` (1). `python -m evidence_ledger.migrate` creates tables and triggers (safe
-to run twice; advisory-locked on Postgres). SQLite is for tests and single-process dev only.
+`LEDGER_CREATE_SCHEMA` (1), `LEDGER_MAX_BODY_BYTES` (65536; POST bodies over it get 413, also
+when streamed without Content-Length). `python -m evidence_ledger.migrate` creates tables and triggers (safe
+to run twice; advisory-locked on Postgres). **Postgres is the supported production database.** SQLite is for tests and single-process dev
+only: its serialisation is a process lock, so several processes sharing one file get IntegrityError
+noise on seq races.
 
 Throughput (single machine, this repo's tests, small entries with payloads; not a benchmark):
 about 1,000 appends/s on SQLite (file DB, 1 or 8 threads) and about 1,500 appends/s on Postgres 14
@@ -212,5 +260,6 @@ writer's speed, not with replicas.
 * The ledger grows without bound (retention/archival of an immutable chain is an operations
   decision not implemented here). The consumer DLQ is not replayed automatically.
 * Cases are immutable once created; add refs via a new case id.
+* About 1% of random 16-hex ids are rejected by the PII guard (9-digit run); see above.
 * The standalone verifier duplicates `canonical_json` (3 lines) on purpose; a parity test pins it
   to `scam_contracts.canonical`.

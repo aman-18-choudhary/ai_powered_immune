@@ -233,3 +233,61 @@ def test_case_selection_by_refs_and_seqs(store):
     with pytest.raises(LookupError):
         store.select_seqs([], [99], limit=10)
     assert len(store.select_seqs(["case-a"], [], limit=1)) == 2  # limit+1 means "too many"
+
+
+# ---------------------------------------------------------------- fix round 1 minors
+def test_receipt_timestamps_never_run_backwards(signer, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from evidence_ledger.store import LedgerStore
+
+    times = iter(
+        [
+            datetime(2026, 3, 10, 12, 0, tzinfo=UTC) + timedelta(seconds=s)
+            for s in (10, 5, 20, 1, 30)
+        ]
+    )
+    s = LedgerStore(f"sqlite:///{tmp_path}/c.db", signer=signer, clock=lambda: next(times))
+    for i in range(1, 5):
+        s.append(entry_in(i))
+    ts = [e.ts for e in s.page(1, 10)]
+    assert ts == sorted(ts) and ts[1] == ts[0]  # clamped to the previous receipt time
+    s.close()
+
+
+def test_sqlite_insert_or_replace_cannot_overwrite_rows(store):
+    from sqlalchemy.exc import DBAPIError
+
+    for i in range(1, 6):
+        store.append(entry_in(i))
+    before = [e.entry_hash for e in store.page(1, 10)]
+    row = store.get(2)
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(
+            text(
+                "INSERT OR REPLACE INTO ledger_entries (seq, ts, service, actor, event_type, "
+                "payload_hash, prev_hash, entry_hash, case_refs, idem_key) VALUES "
+                "(2, :ts, 's', 'a', 'e', :h, :h, :h, '[]', 'x')"
+            ),
+            {"ts": row.ts.isoformat(), "h": "f" * 64},
+        )
+    cp = store.latest_checkpoint()
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(
+            text(
+                "REPLACE INTO checkpoints (checkpoint_id, seq, entry_hash, count, ts, key_id, "
+                "signature_b64) VALUES (:i, :s, :h, 1, 't', 'k', 'sig')"
+            ),
+            {"i": cp["checkpoint_id"], "s": cp["seq"], "h": "f" * 64},
+        )
+    assert [e.entry_hash for e in store.page(1, 10)] == before
+    assert store.latest_checkpoint() == cp
+
+
+def test_export_history_is_queryable_but_not_part_of_the_case(store):
+    store.append(entry_in(1, refs=["case-x"]))
+    audit = entry_in(2, event_type="package.exported", refs=["case-x"])
+    store.append(audit)
+    assert store.select_seqs(["case-x"], [], limit=10, exclude_event="package.exported") == [1]
+    assert store.select_seqs(["case-x"], [], limit=10) == [1, 2]
+    assert [e.seq for e in store.refs_page("case-x", "package.exported", 10)] == [2]

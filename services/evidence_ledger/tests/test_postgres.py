@@ -130,3 +130,26 @@ def test_package_on_postgres(store, tmp_path):
     from evidence_ledger.verify import verify_package
 
     assert verify_package(z)[0].ok
+
+
+def test_on_conflict_do_update_cannot_rewrite_rows(store):
+    store.append(entry_in(1))
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(
+            text(
+                "INSERT INTO ledger_entries (seq, ts, service, actor, event_type, payload_hash, "
+                "prev_hash, entry_hash, case_refs, idem_key) VALUES (1, 't', 's', 'evil', 'e', "
+                ":h, :h, :h2, '[]', :h3) ON CONFLICT (seq) DO UPDATE SET actor = 'evil'"
+            ),
+            {"h": "f" * 64, "h2": "e" * 64, "h3": "d" * 64},
+        )
+    assert store.get(1).actor != "evil"
+    with pytest.raises(DBAPIError), store.engine.begin() as c:  # duplicate seq without ON CONFLICT
+        c.execute(
+            text(
+                "INSERT INTO ledger_entries (seq, ts, service, actor, event_type, payload_hash, "
+                "prev_hash, entry_hash, case_refs, idem_key) VALUES (1, 't', 's', 'evil', 'e', "
+                ":h, :h, :h2, '[]', :h3)"
+            ),
+            {"h": "f" * 64, "h2": "c" * 64, "h3": "b" * 64},
+        )
