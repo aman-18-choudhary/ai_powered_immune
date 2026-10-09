@@ -49,8 +49,10 @@ per state change, none quarantined, package about 50 KB.
 * **call-guard:** the alert is published first and the consumer never awaits the ledger. Alerts
   and audit entries are both at-least-once; the audit entry is stored atomically with the
   crossing marker and delivered from a background outbox (concurrency cap, per-entry timeout,
-  circuit breaker, periodic sweeper). A ledger outage only defers audit entries; the only way to
-  lose one is to lose the session store.
+  circuit breaker, periodic sweeper). A ledger outage only defers audit entries. An entry can be
+  lost only by losing the session store, or by a simultaneous session-store and idempotency-store
+  failure followed by process death before the in-memory fallback buffer drains (that case is
+  logged at ERROR and counted on /metrics, as is a placeholder entry).
 * **txn-guard:** a hold change only schedules its audit drain; the decision path never waits for
   the ledger (same cap, timeout and breaker; the sweeper retries in bounded batches).
 * **antibody-hub:** the audit entry is written in the same transaction as the change, built so

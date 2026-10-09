@@ -13,21 +13,27 @@ and `call_guard/rules.py` docstrings for exactly how it is produced.
 ## Ledger entry per alert (Task 13)
 
 **Exact guarantee.** The consumer path contains no await on the ledger: the CallRisk alert is
-published first and never waits for the ledger, however many crossings arrive at once.
-Alerts are at-least-once (a duplicate is byte-identical; consumers dedupe on it); audit entries
-are at-least-once and durable: the `callrisk.alert` entry is built before the publish and stored
-in the session store in the *same atomic update* that advances the crossing marker (Redis MULTI,
-35-day TTL; in-memory: one step). If storing that update fails after the alert went out, the claim
-is released and the retry re-publishes the alert and stores the entry. The only way to lose an
-audit entry is to lose the session store itself. Delivery is a background task per entry
+published first and never waits for the ledger, however many crossings arrive at once. Alerts are
+at-least-once (a duplicate is byte-identical; consumers dedupe on it). Audit entries are
+at-least-once and durable through the session store: the `callrisk.alert` entry is built before
+the publish and stored in the *same atomic update* that advances the crossing marker (Redis
+MULTI, 35-day TTL; in-memory: one step). If that update fails after the alert went out, the claim
+is released and the retry re-publishes the alert and stores the entry. An audit entry can be lost
+only by (a) loss of the session store, or (b) a simultaneous failure of the session store AND the
+idempotency store (the claim cannot be released, so the retry no-ops) followed by process death
+before the in-memory fallback buffer drains. In case (b) the entry is parked in a bounded
+in-process buffer (`LEDGER_FALLBACK_MAX`, default 10,000; overflow drops the oldest), logged at
+ERROR with `call_ref` and crossing number, counted in `call_guard_audit_fallback_total` (depth in
+`call_guard_audit_fallback_depth`, drops in `call_guard_audit_lost_total`), and delivered by the
+sweeper. If building the entry itself fails, a fixed-shape placeholder entry (`call_ref`,
+`crossing`, `audit: payload_refused`) is stored instead, logged at ERROR and counted in
+`call_guard_audit_placeholder_total`. Delivery is a background task per entry
 (`svckit.drain.Drainer`): at most `LEDGER_DRAIN_CONCURRENCY` (8) at once, one per entry, each with
 a `LEDGER_EMIT_TIMEOUT_S` (0.5 s) timeout, and a circuit breaker (5 consecutive failures, then
-nothing is scheduled for `LEDGER_BREAKER_COOLDOWN_S`, default 10 s). The service lifespan sweeper
-(`LEDGER_DRAIN_INTERVAL_S`, default 5 s; batches of 50, so one sweep is O(batch), a backlog drains
-over several cycles; while the breaker is open it probes with one attempt) retries the rest.
-Shutdown cancels the background tasks; pending entries stay in the store. A ledger outage
-therefore only defers audit entries. An entry the PII guard refuses becomes a fixed-shape
-placeholder (`call_ref`, `crossing`, `audit: payload_refused`).
+nothing is scheduled for `LEDGER_BREAKER_COOLDOWN_S`, default 10 s). The lifespan sweeper
+(`LEDGER_DRAIN_INTERVAL_S`, default 5 s; batches of 50, so one sweep is O(batch); while the
+breaker is open it probes with one attempt) retries the rest. Shutdown cancels the background
+tasks; pending entries stay in the store. A ledger outage therefore only defers audit entries.
 
 Payload: `call_ref` (first 16 hex of `sha256(call_id)`; the call id is never emitted), `crossing`,
 `score` (4 dp, the peak at the crossing), `reason_codes` (sorted codes, no free text),

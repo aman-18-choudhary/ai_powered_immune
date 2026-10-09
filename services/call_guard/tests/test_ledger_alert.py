@@ -135,4 +135,5 @@ async def test_payload_refusal_never_suppresses_the_alert(make_event, monkeypatc
     monkeypatch.setattr(consumer, "alert_payload", boom)
     bus = OrderBus()
     await _drain(bus, evs(make_event, 2))
-    assert len(bus.messages(Topics.CALL_RISK)) == 1 and ledger(bus) == []
+    assert len(bus.messages(Topics.CALL_RISK)) == 1
+    assert [e.payload["audit"] for e in ledger(bus)] == ["payload_refused"]  # placeholder

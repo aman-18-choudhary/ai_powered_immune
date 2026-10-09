@@ -14,7 +14,7 @@ from svckit.bus import Bus
 from svckit.health import make_health_router
 from svckit.idempotency import IdempotencyStore, InMemoryIdempotencyStore
 
-from .consumer import run_consumer, run_ledger_sweeper
+from .consumer import AUDIT, run_consumer, run_ledger_sweeper
 from .model import Scorer, load_classifier
 from .session import InMemorySessionStore, RedisSessionStore, SessionScorer, SessionStore
 
@@ -89,6 +89,10 @@ def create_app(
         )
     )
 
+    def _fallback_depth() -> int:
+        ob = getattr(session_scorer, "ledger_outbox", None)
+        return len(ob.fallback) if ob is not None else 0
+
     @app.get("/metrics")
     async def metrics() -> Response:
         body = (
@@ -96,6 +100,14 @@ def create_app(
             f"call_guard_fallback_mode {int(scorer.fallback_mode)}\n"
             "# TYPE call_guard_classifier_errors_total counter\n"
             f"call_guard_classifier_errors_total {scorer.clf_errors}\n"
+            "# TYPE call_guard_audit_fallback_total counter\n"
+            f"call_guard_audit_fallback_total {AUDIT['fallback_total']}\n"
+            "# TYPE call_guard_audit_placeholder_total counter\n"
+            f"call_guard_audit_placeholder_total {AUDIT['placeholder_total']}\n"
+            "# TYPE call_guard_audit_lost_total counter\n"
+            f"call_guard_audit_lost_total {AUDIT['lost_total']}\n"
+            "# TYPE call_guard_audit_fallback_depth gauge\n"
+            f"call_guard_audit_fallback_depth {_fallback_depth()}\n"
         )
         return Response(body, media_type="text/plain; version=0.0.4")
 

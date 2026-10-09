@@ -213,3 +213,98 @@ async def test_mark_published_failure_is_retried_alert_at_least_once_entry_once(
     state = await sc._store.get("c1")
     assert state.published == state.crossings == 1
     assert bus.messages(Topics.CALL_EVENTS + Topics.DLQ_SUFFIX) == []
+
+
+# ---------------------------------------------------------------- fix round 3
+class StickyClaims(InMemoryIdempotencyStore):
+    """release() fails (same Redis blip that failed the marker write): the claim stays held."""
+
+    def __init__(self):
+        super().__init__()
+        self.release_fails = True
+
+    async def release(self, key):
+        if self.release_fails:
+            raise ConnectionError("redis blip")
+        await super().release(key)
+
+
+class BlipStore(InMemorySessionStore):
+    fail = 1
+
+    async def put_with_pending(self, *a):
+        if self.fail:
+            self.fail -= 1
+            raise ConnectionError("redis blip")
+        await super().put_with_pending(*a)
+
+
+async def test_double_fault_leaves_a_fallback_entry_that_the_sweeper_delivers_once(
+    make_event, caplog
+):
+    from call_guard import consumer
+
+    consumer.AUDIT.clear()
+    bus = LedgerBus()
+    sc = SessionScorer(BlipStore())
+    await run(bus, sc, evs(make_event), store=StickyClaims())
+    assert len(bus.messages(Topics.CALL_RISK)) == 1  # alert out; the retry no-ops on the claim
+    assert await sc.pending_ledger(10) == [] and ledger(bus) == []  # the silent hole...
+    ob = sc.ledger_outbox
+    assert len(ob.fallback) == 1  # ...is now a durable-in-process trace
+    assert consumer.AUDIT["fallback_total"] == 1 and consumer.AUDIT["lost_total"] == 0
+    assert "call_ref" in caplog.text and "ERROR" in caplog.text
+    assert await drain_ledger_pending(bus, sc) == 1
+    assert await drain_ledger_pending(bus, sc) == 0
+    assert len(ledger(bus)) == 1 and len(ob.fallback) == 0
+
+
+async def test_fallback_survives_a_ledger_outage_and_is_bounded(make_event):
+    from call_guard.consumer import LedgerOutbox
+
+    bus = LedgerBus()
+    sc = SessionScorer(InMemorySessionStore())
+    ob = LedgerOutbox(bus, sc, fallback_max=2)
+    for i in range(3):
+        ob.add_fallback(f"k{i}", "{}")
+    assert len(ob.fallback) == 2  # oldest dropped...
+    from call_guard import consumer
+
+    assert consumer.AUDIT["lost_total"] >= 1  # ...and counted
+    bus.down = True
+    assert await ob.drain() == 0 and len(ob.fallback) == 2  # kept while the ledger is down
+
+
+async def test_entry_not_built_writes_a_placeholder_and_counts_it(make_event, monkeypatch):
+    from call_guard import consumer
+
+    consumer.AUDIT.clear()
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(consumer, "alert_payload", boom)
+    bus = LedgerBus()
+    sc = SessionScorer(InMemorySessionStore())
+    await run(bus, sc, evs(make_event))
+    await drain_ledger_pending(bus, sc)
+    assert len(bus.messages(Topics.CALL_RISK)) == 1
+    (e,) = ledger(bus)
+    assert e.payload["audit"] == "payload_refused" and e.payload["crossing"] == 1
+    assert consumer.AUDIT["placeholder_total"] == 1
+
+
+async def test_counters_are_exposed_on_metrics():
+    import httpx
+
+    from call_guard import consumer
+    from call_guard.api import create_app
+
+    consumer.AUDIT.clear()
+    consumer.AUDIT["fallback_total"] = 3
+    app = create_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        text = (await c.get("/metrics")).text
+    for name in ("call_guard_audit_fallback_total 3", "call_guard_audit_lost_total 0",
+                 "call_guard_audit_placeholder_total 0", "call_guard_audit_fallback_depth 0"):  # fmt: skip
+        assert name in text, text
