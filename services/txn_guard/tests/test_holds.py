@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import fakeredis.aioredis
 import httpx
 import pytest
+from scam_contracts.canonical import payload_hash
 from scam_contracts.models import LedgerEntryIn, Reason
 from scam_contracts.topics import Topics
 from svckit.bus import InMemoryBus
@@ -123,8 +124,12 @@ async def test_audit_payloads_have_no_raw_pii(make_store):
     await store.resolve("t1", "release", "analyst-7")
     blob = json.dumps(audit.events)
     assert "payer_secret_tok" not in blob and "First payment" not in blob
-    assert all(set(e) <= {"event_type", "txn_id", "decision", "decision_seq", "score", "actor",
-                          "model_version", "reason_codes", "payload_hash"} for e in audit.events)  # fmt: skip
+    assert all(
+        set(e) <= {"event_type", "txn_id", "decision", "decision_seq", "score", "actor",
+                   "model_version", "reason_codes", "payload_hash", "payload", "case_refs"}
+        for e in audit.events
+    )  # fmt: skip
+    assert all(e["payload_hash"] == payload_hash(e["payload"]) for e in audit.events)
 
 
 async def test_bus_audit_sink_publishes_ledger_entry_in():
@@ -137,6 +142,8 @@ async def test_bus_audit_sink_publishes_ledger_entry_in():
     assert [e.event_type for e in entries] == ["hold.created", "hold.resolved"]
     assert all(e.service == "txn-guard" and len(e.payload_hash) == 64 for e in entries)
     assert entries[1].actor == "analyst-7" and entries[0].model_version == "gbm-v1"
+    assert all(e.payload is not None and e.case_refs == ["t1"] for e in entries)
+    assert entries[1].payload["resolver_role"] == "unspecified"
 
 
 # ------------------------------------------------------------------------------------- API

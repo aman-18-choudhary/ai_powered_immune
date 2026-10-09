@@ -247,7 +247,9 @@ def create_app(
     ) -> dict[str, Any]:
         need(p, STAFF_RESOLVE)
         h = await call(
-            holds.resolve(txn_id, body.action, p.sub, expect_seq=body.decision_seq)  # type: ignore[union-attr]
+            holds.resolve(  # type: ignore[union-attr]
+                txn_id, body.action, p.sub, expect_seq=body.decision_seq, role=p.role
+            )
         )
         return view(h)
 
@@ -266,7 +268,12 @@ def create_app(
         # we read it, the release is refused (409) instead of releasing a hold_verify
         done = await call(
             holds.resolve(  # type: ignore[union-attr]
-                txn_id, "release", p.sub, expect_decision="step_up", expect_seq=h.decision_seq
+                txn_id,
+                "release",
+                p.sub,
+                expect_decision="step_up",
+                expect_seq=h.decision_seq,
+                role="citizen",
             )
         )
         return view(done)

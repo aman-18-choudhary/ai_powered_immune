@@ -120,10 +120,9 @@ class RedisHistoryStore:
             (_dt(sc), _num(_s(m).split("|")[1]))
             for m, sc in self._r.zrange(self._k(payer, "recent"), 0, -1, withscores=True)
         )
-        risks = tuple(
-            (_dt(sc), _num(_s(m).split("|")[1]))
-            for m, sc in self._r.zrange(self._k(payer, "risk"), 0, -1, withscores=True)
-        )
+        raw_risks = self._r.zrange(self._k(payer, "risk"), 0, -1, withscores=True)
+        risks = tuple((_dt(sc), _num(_s(m).split("|")[1])) for m, sc in raw_risks)
+        call_ids = tuple(_s(m).split("|")[0] for m, _ in raw_risks)
         return Context(
             now=now or datetime.now(UTC),
             payer_n=n,
@@ -141,4 +140,5 @@ class RedisHistoryStore:
                 )
             ),
             call_risks=risks,
+            call_ids=call_ids,
         )

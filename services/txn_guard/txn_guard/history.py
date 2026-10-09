@@ -44,6 +44,7 @@ class Context:
     payee_max_amount: float = 0.0
     payee_recent: tuple[tuple[datetime, float], ...] = ()
     call_risks: tuple[tuple[datetime, float], ...] = ()
+    call_ids: tuple[str, ...] = ()  # parallel to ``call_risks`` (audit linking only)
 
 
 class HistoryStore(Protocol):
@@ -80,7 +81,7 @@ class InMemoryHistoryStore:
         self._pair_stats: dict[tuple[str, str], tuple[int, float]] = {}
         self._pair: dict[tuple[str, str], deque[tuple[datetime, float]]] = {}
         self._devices: dict[str, set[str]] = {}
-        self._risks: dict[str, deque[tuple[datetime, float]]] = {}
+        self._risks: dict[str, deque[tuple[datetime, float, str]]] = {}
 
     def record_txn(self, txn: Transaction) -> None:
         if txn.txn_id in self._seen:
@@ -104,8 +105,8 @@ class InMemoryHistoryStore:
 
     def record_call_risk(self, risk: CallRisk) -> None:
         q = self._risks.setdefault(risk.victim_token, deque())
-        q.append((risk.ts, risk.score))
-        newest = max(ts for ts, _ in q)
+        q.append((risk.ts, risk.score, risk.call_id))
+        newest = max(ts for ts, _, _ in q)
         while q and q[0][0] < newest - 2 * CALL_RISK_WINDOW:
             q.popleft()
 
@@ -123,5 +124,6 @@ class InMemoryHistoryStore:
             payee_n=self._pair_stats.get((p, txn.payee_hash), (0, 0.0))[0],
             payee_max_amount=self._pair_stats.get((p, txn.payee_hash), (0, 0.0))[1],
             payee_recent=tuple(self._pair.get((p, txn.payee_hash), ())),
-            call_risks=tuple(self._risks.get(p, ())),
+            call_risks=tuple((ts, sc) for ts, sc, _ in self._risks.get(p, ())),
+            call_ids=tuple(cid for _, _, cid in self._risks.get(p, ())),
         )

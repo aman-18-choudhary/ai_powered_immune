@@ -31,6 +31,9 @@ class PendingEntry(BaseModel):
     first_json: str = ""  # exact bytes of the first published TxnDecision (seq 1)
     payee_hash: str = ""
     antibody_ids: list[str] = []  # antibodies already applied to this entry (one upgrade each)
+    rail: str = ""  # audit context (never the amount): rail and coarse amount bucket
+    amount_bucket: str = ""
+    call_ref: str = ""  # "call_ref:<16 hex>" of the call risk that influenced the verdict
 
 
 class PendingStore(Protocol):

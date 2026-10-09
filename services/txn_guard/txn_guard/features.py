@@ -8,7 +8,7 @@ hour-of-day. Amount validity (>0, rail limits) is enforced by the ``Transaction`
 """
 
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from scam_contracts.models import Transaction
@@ -84,6 +84,25 @@ def _finite(x: float, default: float = 0.0, lo: float = -1e9, hi: float = 1e9) -
     if not math.isfinite(x):
         return default
     return min(hi, max(lo, x))
+
+
+def active_call_id(txn: Transaction, ctx: Context) -> str | None:
+    """The call id of the in-window CallRisk that sets ``active_call_risk`` (highest score; ties
+    broken by earlier ts then smaller id, so every history store agrees). Audit linking only: it
+    never influences a decision."""
+    if len(ctx.call_ids) != len(ctx.call_risks):
+        return None
+    best: tuple[float, datetime, str] | None = None
+    for (rts, score), cid in zip(ctx.call_risks, ctx.call_ids, strict=True):
+        if abs(txn.ts - rts) > CALL_RISK_WINDOW:
+            continue
+        sc = _finite(score, 0.0, 0.0, 1.0)
+        if sc <= 0.0:
+            continue
+        key = (-sc, rts, cid)
+        if best is None or key < best:
+            best = key
+    return best[2] if best else None
 
 
 def extract_features(txn: Transaction, ctx: Context) -> dict[str, float]:

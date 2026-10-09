@@ -36,12 +36,14 @@ from scam_contracts.models import Antibody, CallRisk, Reason, Transaction, TxnDe
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
 from svckit.idempotency import IdempotencyStore
+from svckit.ledger import call_ref as make_call_ref
+from svckit.ledger import payee_ref as make_payee_ref
 
 from .antibody_cache import AntibodyLookup, CachedAntibody
 from .decision import make_decision
-from .features import extract_features
+from .features import active_call_id, extract_features
 from .history import CALL_RISK_WINDOW, HistoryStore
-from .holds import RANK, HoldStore
+from .holds import RANK, HoldStore, amount_bucket
 from .model import Scorer
 from .pending import MAX_PENDING_SCAN, InMemoryPendingStore, PendingEntry, PendingStore
 
@@ -51,6 +53,19 @@ DEFAULT_HOLD_DEADLINE_S = 120.0
 LATE_CODE = "LATE_CALL_RISK_POST_SETTLEMENT"
 LATE_ANTIBODY_CODE = "LATE_ANTIBODY_POST_SETTLEMENT"
 _NO_ANTIBODY = {"payee_in_antibody": 0.0, "antibody_id_prefix": 0.0, "antibody_expires_ts": 0.0}
+
+
+def _payee_ref(payee_hash: str) -> str:
+    """``payee_ref:<16 hex>`` for the audit trail; "" when the hash is not a 64-hex digest."""
+    try:
+        return make_payee_ref(payee_hash) if payee_hash else ""
+    except ValueError:
+        return ""
+
+
+def _call_ref_of(txn: Transaction, ctx: Any) -> str:
+    cid = active_call_id(txn, ctx)
+    return make_call_ref(cid) if cid else ""
 
 
 class TxnGuardService:
@@ -113,12 +128,16 @@ class TxnGuardService:
             raise
         await self.idem.mark(key)
 
-    async def _ensure_hold(self, d: TxnDecision, payer: str) -> None:
+    async def _ensure_hold(
+        self, d: TxnDecision, payer: str, *, rail: str = "", bucket: str = "", payee_hash: str = "",
+        call_ref: str = "", trigger: str | None = None,
+    ) -> None:  # fmt: skip
         if d.decision != "allow":
             await self.holds.create(
                 d.txn_id, d.decision, d.reasons, self._clock() + self.hold_deadline,  # type: ignore[arg-type]
                 payer_token=payer, score=d.score, model_version=d.model_version,
-                decision_seq=d.decision_seq,
+                decision_seq=d.decision_seq, rail=rail, amount_bucket=bucket,
+                payee_ref=_payee_ref(payee_hash), call_ref=call_ref, trigger=trigger,
             )  # fmt: skip
 
     # ------------------------------------------------------------------------ transactions
@@ -133,12 +152,17 @@ class TxnGuardService:
             if hit is not None:
                 feats = feats | self._antibody_patch(hit)
             d = await self._score(txn.txn_id, feats, txn.ts)
-            await self._ensure_hold(d, txn.payer_token)
+            bucket, cref = amount_bucket(txn.amount_inr), _call_ref_of(txn, ctx)
+            await self._ensure_hold(
+                d, txn.payer_token, rail=txn.rail, bucket=bucket, payee_hash=txn.payee_hash,
+                call_ref=cref,
+            )  # fmt: skip
             entry = PendingEntry(
                 txn_id=txn.txn_id, payer_token=txn.payer_token, ts=txn.ts, decision=d.decision,
                 score=d.score, seq=d.decision_seq, model_version=d.model_version, features=feats,
                 first_json=d.model_dump_json(), payee_hash=txn.payee_hash.lower(),
                 antibody_ids=[hit.antibody_id] if hit is not None else [],
+                rail=txn.rail, amount_bucket=bucket, call_ref=cref,
             )  # fmt: skip
             if not await self.pending.add(entry):  # lost a cross-instance race: replay the winner
                 winner = await self.pending.get(txn.txn_id)
@@ -159,7 +183,10 @@ class TxnGuardService:
     async def _replay(self, txn: Transaction, entry: PendingEntry) -> TxnDecision:
         """Same bytes, same hold, same history: never a fresh score."""
         d = TxnDecision.model_validate_json(entry.first_json)
-        await self._ensure_hold(d, txn.payer_token)
+        await self._ensure_hold(
+            d, txn.payer_token, rail=entry.rail, bucket=entry.amount_bucket,
+            payee_hash=txn.payee_hash, call_ref=entry.call_ref,
+        )  # fmt: skip
         await self._publish(d)
         await self._h(self.history.record_txn, txn)  # idempotent per txn_id
         self.handled += 1
@@ -172,7 +199,7 @@ class TxnGuardService:
         risk = extract_features(txn, ctx)["active_call_risk"]
         cur = await self.pending.get(txn.txn_id) or entry
         if risk > cur.features.get("active_call_risk", 0.0):
-            await self._upgrade(cur, {"active_call_risk": risk})
+            await self._upgrade(cur, {"active_call_risk": risk}, call_ref=_call_ref_of(txn, ctx))
             cur = await self.pending.get(txn.txn_id) or cur
         # same gap for antibodies: one applied after our lookup but before ``pending.add`` was
         # missed by handle_antibody's pending scan; the upgrade is recorded here exactly once
@@ -193,7 +220,9 @@ class TxnGuardService:
                     continue  # same window rule as features.extract_features
                 if risk.score <= e.features.get("active_call_risk", 0.0):
                     continue  # adds nothing the stored verdict has not seen
-                d = await self._upgrade(e, {"active_call_risk": risk.score})
+                d = await self._upgrade(
+                    e, {"active_call_risk": risk.score}, call_ref=make_call_ref(risk.call_id)
+                )  # fmt: skip
                 if d is not None:
                     upgrades.append(d)
             self.handled += 1
@@ -257,7 +286,7 @@ class TxnGuardService:
 
     async def _upgrade(
         self, e: PendingEntry, patch: dict[str, float], late_code: str = LATE_CODE,
-        antibody_id: str | None = None,
+        antibody_id: str | None = None, call_ref: str = "",
     ) -> TxnDecision | None:  # fmt: skip
         hold = await self.holds.get(e.txn_id)
         if hold is not None and hold.state != "open":
@@ -270,6 +299,7 @@ class TxnGuardService:
         feats = e.features | patch
         applied = [*e.antibody_ids, antibody_id] if antibody_id else e.antibody_ids
         d = await self._score(e.txn_id, feats, e.ts)
+        new_ref = call_ref or e.call_ref
         if RANK[d.decision] <= RANK[e.decision]:
             await self.pending.update(
                 e.model_copy(update={"features": feats, "antibody_ids": applied})
@@ -293,11 +323,18 @@ class TxnGuardService:
         d = d.model_copy(
             update={"decision_seq": seq, "reasons": reasons, "ts": max(e.ts, self._clock())}
         )
+        trigger = ("late_" if e.decision == "allow" else "") + (
+            "antibody" if antibody_id else "call_risk"
+        )
         if hold is None:
-            await self._ensure_hold(d, e.payer_token)
+            await self._ensure_hold(
+                d, e.payer_token, rail=e.rail, bucket=e.amount_bucket, payee_hash=e.payee_hash,
+                call_ref=new_ref, trigger=trigger,
+            )  # fmt: skip
         else:
             await self.holds.upgrade(
-                e.txn_id, d.decision, reasons, d.score, d.model_version, seq  # type: ignore[arg-type]
+                e.txn_id, d.decision, reasons, d.score, d.model_version, seq,  # type: ignore[arg-type]
+                trigger=trigger, call_ref=call_ref or None,
             )  # fmt: skip
         await self._publish(d)
         await self.pending.update(
@@ -309,6 +346,7 @@ class TxnGuardService:
                     "score": d.score,
                     "model_version": d.model_version,
                     "antibody_ids": applied,
+                    "call_ref": new_ref,
                 }
             )  # fmt: skip
         )

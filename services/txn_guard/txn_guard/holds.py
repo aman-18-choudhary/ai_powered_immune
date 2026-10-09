@@ -7,25 +7,31 @@ auto-released or auto-blocked.
 Audit is a transactional outbox: the audit entry is written into the hold record
 (``audit_pending``) in the SAME compare-and-set as the state change, then ``drain_audit``
 publishes pending entries to the ``AuditSink`` at-least-once and clears them only after a
-successful publish. Each entry carries a deterministic ``payload_hash`` over (event, txn_id,
-decision, decision_seq, score, actor/action, model_version, reason codes): part of the ledger's
-full idempotency key (an exact repeat is absorbed, so at-least-once is safe). Drains happen
-right after each change, on every idempotent re-entry (repeated
+successful publish. Each entry carries a structured, PII-free ``payload`` (txn_id, decision,
+decision_seq, score to 4 dp, sorted reason codes, model_version, rail, amount BUCKET, deadline;
+upgrade/resolution fields per event) and ``payload_hash = sha256(canonical_json(payload))``. The
+payload holds only the hold's own timestamps (never a wall clock read at drain time), so a retry
+re-emits byte-identical content, which the ledger absorbs (its idempotency key covers the hash,
+actor, model version and case refs). ``case_refs`` = txn id, ``payee_ref:<16 hex>`` (the keyed
+payee hash: the same mule account across banks) and, when a call risk drove the decision,
+``call_ref:<16 hex>``. No amounts, account numbers, phones or payer tokens are emitted.
+Drains happen right after each change, on every idempotent re-entry (repeated
 create/resolve/upgrade/verify) and from the periodic ``sweep``. A failing sink never fails the
 state change; the entry stays in the outbox.
 """
 
-import hashlib
-import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
+from scam_contracts.canonical import payload_hash as canonical_payload_hash
 from scam_contracts.models import LedgerEntryIn, Reason
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
+from svckit.ledger import emit_ledger, utc_ts
 
 log = logging.getLogger("txn_guard")
 
@@ -54,6 +60,19 @@ class HoldConflict(HoldError):
     pass
 
 
+AMOUNT_BUCKETS: tuple[tuple[int, str], ...] = (
+    (1_000, "<1k"), (10_000, "1k-10k"), (100_000, "10k-100k"), (1_000_000, "100k-1m"),
+)  # fmt: skip
+
+
+def amount_bucket(amount: Decimal | float | int) -> str:
+    """Coarse amount class for the audit trail (the amount itself is never emitted)."""
+    for limit, label in AMOUNT_BUCKETS:
+        if amount < limit:
+            return label
+    return ">=1m"
+
+
 class AuditEntry(BaseModel):
     event_type: str
     txn_id: str
@@ -64,21 +83,35 @@ class AuditEntry(BaseModel):
     model_version: str
     reason_codes: list[str] = []
     payload_hash: str
+    payload: dict[str, Any] = {}  # empty only for entries queued by an older version
+    case_refs: list[str] = []
+
+
+def _bare(ref: str) -> str | None:
+    return ref.split(":", 1)[1] if ref else None
 
 
 def make_entry(
     event_type: str, txn_id: str, decision: str, decision_seq: int, score: float, actor: str,
-    model_version: str, reasons: list[Reason],
+    model_version: str, reasons: list[Reason], *, deadline: datetime | None = None,
+    rail: str = "", amount_bucket: str = "", payee_ref: str = "", call_ref: str = "",
+    extra: dict[str, Any] | None = None,
 ) -> AuditEntry:  # fmt: skip
-    codes = sorted(r.code for r in reasons)
-    raw = json.dumps(
-        [event_type, txn_id, decision, decision_seq, round(score, 6), actor, model_version, codes],
-        separators=(",", ":"),
-    )
+    """Build one outbox entry. Everything in the payload derives from the hold's own state."""
+    codes = sorted({r.code for r in reasons})
+    fields: dict[str, Any] = {
+        "txn_id": txn_id, "decision": decision, "decision_seq": decision_seq,
+        "score": round(score, 4), "reason_codes": codes, "model_version": model_version or None,
+        "rail": rail or None, "amount_bucket": amount_bucket or None,
+        "deadline_ts": utc_ts(deadline) if deadline else None, "payee_ref": _bare(payee_ref),
+        "call_ref": _bare(call_ref),
+    }  # fmt: skip
+    payload = {k: v for k, v in (fields | (extra or {})).items() if v is not None}
+    refs = [txn_id, *(r for r in (payee_ref, call_ref) if r)]
     return AuditEntry(
         event_type=event_type, txn_id=txn_id, decision=decision, decision_seq=decision_seq,
-        score=round(score, 6), actor=actor, model_version=model_version, reason_codes=codes,
-        payload_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        score=round(score, 4), actor=actor, model_version=model_version, reason_codes=codes,
+        payload_hash=canonical_payload_hash(payload), payload=payload, case_refs=refs,
     )  # fmt: skip
 
 
@@ -96,6 +129,10 @@ class Hold(BaseModel):
     resolved_by: str | None = None
     resolved_at: datetime | None = None
     overdue_flagged: bool = False
+    rail: str = ""
+    amount_bucket: str = ""
+    payee_ref: str = ""  # "payee_ref:<16 hex>" from the keyed payee hash (audit linking only)
+    call_ref: str = ""  # "call_ref:<16 hex>" of the call risk that influenced the decision
     audit_pending: list[AuditEntry] = []
 
 
@@ -120,21 +157,29 @@ class InMemoryAuditSink:
 
 
 class BusAuditSink:
-    """Writes ``LedgerEntryIn`` to Topics.LEDGER (the ledger service itself is a later task);
-    at-least-once, so the ledger dedupes on the full idempotency key (service, event_type,
-    payload_hash, actor, model_version, case_refs, payload_present)."""
+    """Publishes structured, PII-checked ``LedgerEntryIn`` entries to Topics.LEDGER through
+    ``svckit.ledger.emit_ledger`` (at-least-once; the ledger absorbs exact repeats). An entry
+    queued by an older version (no payload) is sent hash-only as before. A payload the PII guard
+    refuses raises ``LedgerPayloadError`` and stays in the outbox (logged, never echoed)."""
 
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
 
     async def emit(self, entry: AuditEntry) -> None:
-        await self._bus.publish(
-            Topics.LEDGER, entry.txn_id,
-            LedgerEntryIn(
-                service=SERVICE, actor=entry.actor, event_type=entry.event_type,
-                payload_hash=entry.payload_hash, model_version=entry.model_version or None,
-            ),
+        if not entry.payload:
+            await self._bus.publish(
+                Topics.LEDGER, entry.txn_id,
+                LedgerEntryIn(
+                    service=SERVICE, actor=entry.actor, event_type=entry.event_type,
+                    payload_hash=entry.payload_hash, model_version=entry.model_version or None,
+                ),
+            )  # fmt: skip
+            return
+        sent = await emit_ledger(
+            self._bus, SERVICE, entry.actor, entry.event_type, entry.payload,
+            model_version=entry.model_version or None, case_refs=entry.case_refs,
         )  # fmt: skip
+        assert sent.payload_hash == entry.payload_hash
 
 
 # ------------------------------------------------------------------------------------ store
@@ -142,6 +187,8 @@ class HoldStore(Protocol):
     async def create(
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
         payer_token: str = "", score: float = 0.0, model_version: str = "", decision_seq: int = 1,
+        rail: str = "", amount_bucket: str = "", payee_ref: str = "", call_ref: str = "",
+        trigger: str | None = None,
     ) -> Hold: ...  # fmt: skip
 
     async def get(self, txn_id: str) -> Hold | None: ...
@@ -150,12 +197,13 @@ class HoldStore(Protocol):
 
     async def resolve(
         self, txn_id: str, action: Action, actor: str, *, expect_decision: str | None = None,
-        expect_seq: int | None = None,
+        expect_seq: int | None = None, role: str | None = None,
     ) -> Hold: ...  # fmt: skip
 
     async def upgrade(
         self, txn_id: str, decision: Decision, reasons: list[Reason], score: float,
-        model_version: str, decision_seq: int,
+        model_version: str, decision_seq: int, *, trigger: str = "call_risk",
+        call_ref: str | None = None,
     ) -> Hold | None: ...  # fmt: skip
 
     async def drain_audit(self, txn_id: str) -> None: ...
@@ -240,13 +288,20 @@ class _BaseHoldStore:
     async def create(
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
         payer_token: str = "", score: float = 0.0, model_version: str = "", decision_seq: int = 1,
+        rail: str = "", amount_bucket: str = "", payee_ref: str = "", call_ref: str = "",
+        trigger: str | None = None,
     ) -> Hold:  # fmt: skip
-        entry = make_entry("hold.created", txn_id, decision, decision_seq, score, SYSTEM_ACTOR,
-                           model_version, reasons)  # fmt: skip
+        extra = {"from_decision": "allow", "trigger": trigger} if trigger else None
+        entry = make_entry(
+            "hold.created", txn_id, decision, decision_seq, score, SYSTEM_ACTOR, model_version,
+            reasons, deadline=deadline, rail=rail, amount_bucket=amount_bucket,
+            payee_ref=payee_ref, call_ref=call_ref, extra=extra,
+        )  # fmt: skip
         hold = Hold(
             txn_id=txn_id, payer_token=payer_token, decision=decision, score=score,
             reasons=reasons, model_version=model_version, decision_seq=decision_seq,
-            created_at=self._clock(), deadline=deadline, audit_pending=[entry],
+            created_at=self._clock(), deadline=deadline, rail=rail, amount_bucket=amount_bucket,
+            payee_ref=payee_ref, call_ref=call_ref, audit_pending=[entry],
         )  # fmt: skip
         created = await self._cas(txn_id, None, hold)
         await self._drain_quietly(txn_id)  # also drains a pending entry left by an earlier crash
@@ -257,7 +312,7 @@ class _BaseHoldStore:
 
     async def resolve(
         self, txn_id: str, action: Action, actor: str, *, expect_decision: str | None = None,
-        expect_seq: int | None = None,
+        expect_seq: int | None = None, role: str | None = None,
     ) -> Hold:  # fmt: skip
         if not actor or not actor.strip():
             raise ActorRequired("resolving a hold requires a non-empty actor")
@@ -278,12 +333,16 @@ class _BaseHoldStore:
                 expect_seq is not None and cur.decision_seq != expect_seq
             ):
                 raise HoldConflict("hold changed since it was read (decision/seq mismatch)")
+            resolved_at = self._clock()
             entry = make_entry(
-                "hold.resolved", txn_id, f"{cur.decision}:{action}", cur.decision_seq,
-                cur.score, actor, cur.model_version, cur.reasons,
+                "hold.resolved", txn_id, cur.decision, cur.decision_seq, cur.score, actor,
+                cur.model_version, cur.reasons, deadline=cur.deadline, rail=cur.rail,
+                amount_bucket=cur.amount_bucket, payee_ref=cur.payee_ref, call_ref=cur.call_ref,
+                extra={"action": action, "resolver_role": role or "unspecified",
+                       "resolver_ref": actor, "resolved_ts": utc_ts(resolved_at)},
             )  # fmt: skip
             new = cur.model_copy(
-                update={"state": state, "resolved_by": actor, "resolved_at": self._clock(),
+                update={"state": state, "resolved_by": actor, "resolved_at": resolved_at,
                         "audit_pending": [*cur.audit_pending, entry]}
             )  # fmt: skip
             if await self._cas(txn_id, cur, new):
@@ -293,7 +352,8 @@ class _BaseHoldStore:
 
     async def upgrade(
         self, txn_id: str, decision: Decision, reasons: list[Reason], score: float,
-        model_version: str, decision_seq: int,
+        model_version: str, decision_seq: int, *, trigger: str = "call_risk",
+        call_ref: str | None = None,
     ) -> Hold | None:  # fmt: skip
         """Raise an open hold to a stronger decision; None if missing, resolved or not stronger."""
         for _ in range(8):
@@ -303,12 +363,18 @@ class _BaseHoldStore:
             if RANK[decision] <= RANK[cur.decision] or decision_seq <= cur.decision_seq:
                 await self._drain_quietly(txn_id)
                 return None
-            entry = make_entry("hold.upgraded", txn_id, decision, decision_seq, score,
-                               SYSTEM_ACTOR, model_version, reasons)  # fmt: skip
+            ref = call_ref or cur.call_ref
+            entry = make_entry(
+                "hold.upgraded", txn_id, decision, decision_seq, score, SYSTEM_ACTOR,
+                model_version, reasons, deadline=cur.deadline, rail=cur.rail,
+                amount_bucket=cur.amount_bucket, payee_ref=cur.payee_ref, call_ref=ref,
+                extra={"from_decision": cur.decision, "to_decision": decision,
+                       "trigger": trigger},
+            )  # fmt: skip
             new = cur.model_copy(
                 update={"decision": decision, "reasons": reasons, "score": score,
                         "model_version": model_version, "decision_seq": decision_seq,
-                        "audit_pending": [*cur.audit_pending, entry]}
+                        "call_ref": ref, "audit_pending": [*cur.audit_pending, entry]}
             )  # fmt: skip
             if await self._cas(txn_id, cur, new):
                 await self._drain_quietly(txn_id)
@@ -322,8 +388,12 @@ class _BaseHoldStore:
         for h in await self._open(MAX_LIST):
             if not self.is_overdue(h) or h.overdue_flagged:
                 continue
-            entry = make_entry("hold.overdue", h.txn_id, h.decision, h.decision_seq, h.score,
-                               SYSTEM_ACTOR, h.model_version, h.reasons)  # fmt: skip
+            entry = make_entry(
+                "hold.overdue", h.txn_id, h.decision, h.decision_seq, h.score, SYSTEM_ACTOR,
+                h.model_version, h.reasons, deadline=h.deadline, rail=h.rail,
+                amount_bucket=h.amount_bucket, payee_ref=h.payee_ref, call_ref=h.call_ref,
+                extra={"overdue": True},
+            )  # fmt: skip
             new = h.model_copy(
                 update={"overdue_flagged": True, "audit_pending": [*h.audit_pending, entry]}
             )
