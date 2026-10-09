@@ -56,7 +56,15 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool, StaticPool
-from svckit.ledger import build_ledger_entry, hash_ref, utc_ts
+from svckit.ledger import (
+    LedgerPayloadError,
+    build_or_placeholder,
+    hash_ref,
+    redacted_ref,
+    safe_actor,
+    utc_ts,
+)
+from svckit.pii import string_has_identifier
 
 ANTIBODY_TTL_DAYS = 14
 SERVICE = "antibody-hub"
@@ -174,20 +182,41 @@ def _kind_ref(kind: str) -> str:
     return "payee_ref" if kind == "mule_account" else f"{kind}_ref"
 
 
+def _safe_slug(value: str | None) -> str | None:
+    """Bank ids / roles in audit payloads: the value if the guard accepts it, else a stable
+    ``redacted_<16 hex>`` stand-in (a gateway header is not under our validation)."""
+    if not value:
+        return None
+    return value if not string_has_identifier(value) and len(value) <= 64 else redacted_ref(value)
+
+
 def ledger_entry(
     rec: dict[str, Any], event: str, actor: str, role: str | None, bank: str | None
 ) -> LedgerEntryIn:
     """The structured ledger entry for one antibody lifecycle event. Deterministic in (rec, event,
-    actor, role, bank): replays produce byte-identical entries."""
+    actor, role, bank): replays produce byte-identical entries. Never raises: values the guard
+    refuses are replaced by ``redacted_<hash>`` stand-ins, and if the payload is still refused a
+    fixed-shape placeholder is returned, so an audit problem cannot fail the analyst's action."""
     payload: dict[str, Any] = {
         "antibody_id": rec["antibody_id"], "event": event, "generation": rec["generation"],
         "kind": rec["kind"], "key_hash_prefix": rec["key_hash"][:8],
-        "expires_at": utc_ts(rec["expires_at"]), "actor_role": role or "unspecified",
+        "expires_at": utc_ts(rec["expires_at"]), "actor_role": _safe_slug(role) or "unspecified",
     }  # fmt: skip
-    if bank:
-        payload["actor_bank"] = bank
-    refs = [rec["antibody_id"], hash_ref(_kind_ref(rec["kind"]), rec["key_hash"])]
-    return build_ledger_entry(SERVICE, actor, f"antibody.{event}", payload, case_refs=refs)
+    safe_bank = _safe_slug(bank)
+    if safe_bank:
+        payload["actor_bank"] = safe_bank
+    try:
+        pref = hash_ref(_kind_ref(rec["kind"]), rec["key_hash"])
+    except LedgerPayloadError:
+        pref = ""
+    refs = [rec["antibody_id"], *([pref] if pref else [])]
+    entry, refused = build_or_placeholder(
+        SERVICE, safe_actor(actor), f"antibody.{event}", payload, case_refs=refs,
+        placeholder={"antibody_id": rec["antibody_id"], "event": event,
+                     "generation": rec["generation"], "kind": rec["kind"]},
+        placeholder_refs=refs,
+    )  # fmt: skip
+    return entry
 
 
 def _role_of(actor: str, role: str | None) -> str:
@@ -491,11 +520,13 @@ class AntibodyStore:
         """Payload: event, key_hash_prefix, actor_role and the change time (microseconds, so an
         add / remove / add sequence stays three distinct entries)."""
         payload = {
-            "event": event, "key_hash_prefix": key_hash[:8], "actor_role": role or "unspecified",
-            "at": utc_ts(now, micros=True),
+            "event": event, "key_hash_prefix": key_hash[:8],
+            "actor_role": _safe_slug(role) or "unspecified", "at": utc_ts(now, micros=True),
         }  # fmt: skip
-        entry = build_ledger_entry(
-            SERVICE, actor, event, payload, case_refs=[hash_ref("payee_ref", key_hash)]
+        refs = [hash_ref("payee_ref", key_hash)]
+        entry, _ = build_or_placeholder(
+            SERVICE, safe_actor(actor), event, payload, case_refs=refs,
+            placeholder={"event": event}, placeholder_refs=refs,
         )  # fmt: skip
         self._enqueue_ledger(conn, entry, now)
 

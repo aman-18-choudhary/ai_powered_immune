@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AfterValidator, BaseModel, Field
 from svckit.bus import Bus, InMemoryBus
 from svckit.health import make_health_router
+from svckit.pii import string_has_identifier
 
 from .consumer import run_maintenance
 from .hub import Hub
@@ -49,7 +50,16 @@ HashStr = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 FREE_TEXT_MAX = 200
-SOURCE_BANK_RE = r"^[a-z0-9_-]{2,32}$"
+SOURCE_BANK_RE = r"^[a-z][a-z0-9_-]{1,31}$"  # pseudonymous slug; also no 9+ digit run (below)
+
+
+def _bank_slug(v: str) -> str:
+    if string_has_identifier(v):
+        raise ValueError("bank id must not look like an identifier")
+    return v
+
+
+BankSlug = Annotated[str, Field(pattern=SOURCE_BANK_RE), AfterValidator(_bank_slug)]
 
 _RULES = [
     re.compile(r"\d(?:\D{0,3}\d){8,}"),  # 9+ digits, up to 3 non-digits between any two
@@ -134,7 +144,7 @@ class SubmitBody(BaseModel):
     # confirmed_by is deliberately absent: it always comes from the authenticated principal
     kind: Kind
     key_hash: HashStr
-    source_bank: str = Field(pattern=SOURCE_BANK_RE)
+    source_bank: BankSlug
     evidence_ref: EvidenceRef | None = None
     extend: bool = False
 
@@ -181,6 +191,10 @@ def create_app(
         if banks is not None
         else [b.strip() for b in os.getenv("HUB_BANKS", "").split(",") if b.strip()]
     )
+    for b in bank_set:
+        _bank_slug(b)
+        if not re.fullmatch(SOURCE_BANK_RE, b):
+            raise ValueError("HUB_BANKS entry is not a valid bank slug")
     ttl = int(os.getenv("ANTIBODY_TTL_DAYS", str(ANTIBODY_TTL_DAYS)))
     store = AntibodyStore(
         database_url or os.getenv("HUB_DATABASE_URL", "sqlite://"), ttl_days=ttl, clock=clock,
