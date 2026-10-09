@@ -21,7 +21,7 @@ def make_entries(n: int, *, start_hash: str = GENESIS, start_seq: int = 1) -> li
             "seq": seq, "ts": f"2026-03-10T12:00:{seq % 60:02d}.000000Z", "service": "txn-guard",
             "actor": "system:txn-guard", "event_type": "hold.created",
             "payload_hash": payload_hash(payload), "prev_hash": prev, "model_version": "m1",
-            "payload": payload, "case_refs": [f"txn:t{seq}"],
+            "payload": payload, "payload_present": True, "case_refs": [f"txn:t{seq}"],
         }  # fmt: skip
         e["entry_hash"] = compute_entry_hash(prev, e)
         out.append(e)
@@ -56,3 +56,11 @@ def rehash_from(entries: list[dict[str, Any]], i: int) -> None:
         if j > 0:
             entries[j]["prev_hash"] = entries[j - 1]["entry_hash"]
         entries[j]["entry_hash"] = compute_entry_hash(entries[j]["prev_hash"], entries[j])
+
+
+def redact(entry: dict[str, Any]) -> dict[str, Any]:
+    """The exported hash-only form: payload withheld, hash and presence flag kept."""
+    out = clone(entry)
+    out["payload"] = None
+    out["payload_present"] = True
+    return out

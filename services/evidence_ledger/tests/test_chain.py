@@ -2,7 +2,7 @@ import pytest
 
 from evidence_ledger.verify import GENESIS, verify_chain
 
-from .chainkit import Keys, clone, make_entries, rehash_from
+from .chainkit import Keys, clone, make_entries, redact, rehash_from
 
 
 def test_chain_verifies():
@@ -139,3 +139,63 @@ def test_accepts_pydantic_models():
 
     es = [LedgerEntry.model_validate(e) for e in make_entries(4)]
     assert verify_chain(es).ok
+
+
+# ---------------------------------------------------------------- chain format v2 (review item 2)
+def test_entry_hash_golden_vector():
+    """entry_hash = sha256(prev_hash || canonical_json({seq, ts, service, actor, event_type,
+    payload_hash, payload_present, model_version, case_refs})). The payload BODY is not hashed."""
+    import hashlib
+
+    from scam_contracts.canonical import canonical_json
+
+    from evidence_ledger.verify import CHAIN_FORMAT_VERSION, compute_entry_hash
+
+    assert CHAIN_FORMAT_VERSION == 2
+    e = {
+        "seq": 1, "ts": "2026-03-10T12:00:01.000000Z", "service": "s", "actor": "a",
+        "event_type": "e", "payload_hash": "a" * 64, "payload_present": True,
+        "model_version": None, "case_refs": ["r"], "payload": {"x": 1}, "prev_hash": GENESIS,
+    }  # fmt: skip
+    core = {k: e[k] for k in ("seq", "ts", "service", "actor", "event_type", "payload_hash",
+                              "payload_present", "model_version", "case_refs")}  # fmt: skip
+    want = hashlib.sha256(GENESIS.encode() + canonical_json(core)).hexdigest()
+    assert compute_entry_hash(GENESIS, e) == want
+    assert want == "0cb5aacfc45c7be9d333985d2ee0560894906433d2c5bee8dc0da83ffb0d53c3"  # pinned
+    assert compute_entry_hash(GENESIS, {**e, "payload": {"y": 2}}) == want  # body not covered
+
+
+def test_redacted_entries_verify_and_are_reported():
+    es = make_entries(6)
+    es[2] = redact(es[2])
+    r = verify_chain(es)
+    assert r.ok and r.redacted == (3,)
+    assert verify_chain(make_entries(3)).redacted == ()
+
+
+def test_tampering_a_withheld_payloads_hash_fails():
+    es = make_entries(6)
+    es[2] = redact(es[2])
+    es[2]["payload_hash"] = "f" * 64
+    r = verify_chain(es)
+    assert not r.ok and r.first_bad_seq == 3
+
+
+def test_present_payload_must_match_hash_and_presence_flag():
+    es = make_entries(4)
+    es[1]["payload"] = {"decision": "allow"}
+    assert verify_chain(es).first_bad_seq == 2
+    es = make_entries(4)
+    es[1]["payload_present"] = False  # claims no payload but carries one
+    assert verify_chain(es).first_bad_seq == 2
+    es = make_entries(4)
+    es[1]["payload"] = None
+    es[1]["payload_present"] = False  # hash-only lie: entry_hash covers the flag
+    assert verify_chain(es).first_bad_seq == 2
+
+
+def test_unknown_entry_fields_fail_verification():
+    es = make_entries(4)
+    es[2]["note"] = "smuggled"
+    r = verify_chain(es)
+    assert not r.ok and r.first_bad_seq == 3 and "unknown field" in r.reason

@@ -371,3 +371,81 @@ def test_tamper_reasons_are_specific(built, name):
     member, fn = TAMPERS[name]
     edit(d, member, fn)
     assert REASONS[name] in run_verify(d).stdout
+
+
+# ---------------------------------------------------------------- redaction (review item 2)
+def resign(d: Path, ring) -> None:
+    """Insider helper: fix every member hash and re-sign the manifest with the REAL key, so only
+    semantic checks (not hashes or signatures) can catch what was changed."""
+    from scam_contracts.canonical import canonical_json
+
+    m = json.loads((d / "manifest.json").read_text())
+    for name in m["members"]:
+        m["members"][name] = hashlib.sha256((d / name).read_bytes()).hexdigest()
+    m.pop("signature_b64", None)
+    m["signature_b64"] = base64.b64encode(ring.signer.sign(canonical_json(m))).decode()
+    (d / "manifest.json").write_text(json.dumps(m, indent=2, sort_keys=True))
+
+
+def fill_sentinels(store, n=12):
+    for i in range(1, n + 1):
+        mine = i % 3 == 0
+        store.append(
+            entry_in(
+                i, refs=["case-1", tid(i)] if mine else [tid(i)],
+                payload={"txn_id": tid(i), "note": f"{'MINE' if mine else 'OTHERCASE'}-SENTINEL-{i}"},
+            )
+        )  # fmt: skip
+
+
+def test_package_never_contains_other_cases_payload_text(store, keyring, tmp_path):
+    fill_sentinels(store)
+    p = pkg.build(store, keyring, "case-1", case_refs=["case-1"])
+    assert b"OTHERCASE" not in p.data  # stored zip: member bytes are scannable as-is
+    assert p.data.count(b"MINE-SENTINEL-3") >= 1
+    d = extract(p.data, tmp_path / "r")
+    doc = json.loads((d / "entries.json").read_text())
+    ctx = [e for e in doc["entries"] if e["seq"] not in doc["selected_seqs"]]
+    assert ctx and all(e["payload"] is None and e["payload_present"] is True for e in ctx)
+    sel = [e for e in doc["entries"] if e["seq"] in doc["selected_seqs"]]
+    assert all(e["payload"] is not None for e in sel)
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["redacted_seqs"] == [e["seq"] for e in ctx]
+    r = run_verify(d, "--allow-unpinned")
+    assert r.returncode == 0, r.stdout
+    assert "redacted (payload withheld)" in r.stdout and str(ctx[0]["seq"]) in r.stdout
+
+
+def test_selected_entry_with_payload_nulled_fails(store, keyring, tmp_path):
+    fill_sentinels(store)
+    d = extract(pkg.build(store, keyring, "case-1", case_refs=["case-1"]).data, tmp_path / "n")
+    doc = json.loads((d / "entries.json").read_text())
+    sel = next(e for e in doc["entries"] if e["seq"] == doc["selected_seqs"][0])
+    sel["payload"] = None  # payload_present stays true: looks like a redaction
+    (d / "entries.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    resign(d, keyring)
+    r = run_verify(d, "--allow-unpinned")
+    assert r.returncode == 1 and "withheld" in r.stdout and "selected" in r.stdout
+
+
+def test_manifest_redacted_list_must_match(store, keyring, tmp_path):
+    fill_sentinels(store)
+    d = extract(pkg.build(store, keyring, "case-1", case_refs=["case-1"]).data, tmp_path / "m")
+    m = json.loads((d / "manifest.json").read_text())
+    m["redacted_seqs"] = m["redacted_seqs"][1:]
+    (d / "manifest.json").write_text(json.dumps(m, indent=2, sort_keys=True))
+    resign(d, keyring)
+    r = run_verify(d, "--allow-unpinned")
+    assert r.returncode == 1 and "redacted_seqs" in r.stdout
+
+
+def test_withheld_payload_hash_tamper_fails(store, keyring, tmp_path):
+    fill_sentinels(store)
+    d = extract(pkg.build(store, keyring, "case-1", case_refs=["case-1"]).data, tmp_path / "h")
+    doc = json.loads((d / "entries.json").read_text())
+    ctx = next(e for e in doc["entries"] if e["seq"] not in doc["selected_seqs"])
+    ctx["payload_hash"] = "e" * 64
+    (d / "entries.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    resign(d, keyring)
+    r = run_verify(d, "--allow-unpinned")
+    assert r.returncode == 1 and f"entry {ctx['seq']}" in r.stdout

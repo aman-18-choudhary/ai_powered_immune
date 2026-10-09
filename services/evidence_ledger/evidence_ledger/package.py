@@ -33,7 +33,7 @@ from . import verify as verify_module
 from .chain import to_dict
 from .keys import KeyRing
 from .store import LedgerStore
-from .verify import MANIFEST, PACKAGE_FORMAT_VERSION, PACKAGE_MEMBERS
+from .verify import CHAIN_FORMAT_VERSION, MANIFEST, PACKAGE_FORMAT_VERSION, PACKAGE_MEMBERS
 
 AUDIT_EVENT = "package.exported"
 DEFAULT_MAX_SPAN = 5000
@@ -254,23 +254,32 @@ def build(
     span = cp["seq"] - lo + 1
     if span > max_span:
         raise PackageTooLarge(span, max_span)
-    entries = [to_dict(e) for e in store.segment(lo, cp["seq"])]
+    sel = set(selected)
+    entries = []
+    redacted_seqs: list[int] = []
+    for e in store.segment(lo, cp["seq"]):
+        d = to_dict(e)
+        if e.seq not in sel and d["payload_present"]:
+            d["payload"] = None  # withheld: the chain still binds payload_hash (chain format 2)
+            redacted_seqs.append(e.seq)
+        entries.append(d)
     if len(entries) != span:
         raise NotCovered(case_id)  # the ledger changed shape underneath us; refuse
     cps = [c for c in store.checkpoints(hi, max_span) if c["seq"] <= cp["seq"]]
     case = {"case_id": case_id, "title": title, "case_refs": sorted(set(case_refs))}
     entries_doc = {
-        "package_format_version": PACKAGE_FORMAT_VERSION, "case_id": case_id, "case": case,
+        "package_format_version": PACKAGE_FORMAT_VERSION,
+        "chain_format_version": CHAIN_FORMAT_VERSION, "case_id": case_id, "case": case,
         "selected_seqs": selected, "entries": entries,
     }  # fmt: skip
     proof = {
         "package_format_version": PACKAGE_FORMAT_VERSION,
+        "chain_format_version": CHAIN_FORMAT_VERSION,
         "segment": {"from_seq": lo, "to_seq": cp["seq"], "count": span},
         "anchor_prev_hash": entries[0]["prev_hash"],
         "checkpoints": cps,
         "public_keys": keyring.public_keys(),
     }  # fmt: skip
-    sel = set(selected)
     blobs: dict[str, bytes] = {
         "entries.json": _j(entries_doc),
         "chain_proof.json": _j(proof),
@@ -282,11 +291,13 @@ def build(
     members = {n: _sha(blobs[n]) for n in PACKAGE_MEMBERS}
     manifest: dict[str, Any] = {
         "package_format_version": PACKAGE_FORMAT_VERSION,
+        "chain_format_version": CHAIN_FORMAT_VERSION,
         "case_id": case_id,
         "generated_from_head_seq": store.last_non_audit_seq(AUDIT_EVENT),
         "entries": [
             {"seq": e["seq"], "entry_hash": e["entry_hash"]} for e in entries if e["seq"] in sel
         ],
+        "redacted_seqs": redacted_seqs,
         "members": members,
         "key_id": keyring.signer.key_id,
     }  # fmt: skip

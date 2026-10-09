@@ -11,8 +11,12 @@ Usage:  python verify.py [PATH] [--trusted-key-id KEY_ID] [--json]
 
 Definitions
 * canonical JSON: UTF-8, keys sorted, separators (",", ":"), ensure_ascii=False, no NaN.
-* entry_hash = sha256( prev_hash_ascii || canonical_json(entry without "entry_hash") ) as hex;
-  the first entry's prev_hash is 64 zeros. ``ts`` is the ledger's receipt time (UTC).
+* chain format 2: entry_hash = sha256( prev_hash_ascii || canonical_json({seq, ts, service,
+  actor, event_type, payload_hash, payload_present, model_version, case_refs}) ) as hex; the first
+  entry's prev_hash is 64 zeros. ``ts`` is the ledger's receipt time (UTC). The payload BODY is
+  not hashed; it is checked separately: sha256(canonical_json(payload)) must equal payload_hash.
+  An entry whose payload_present is true but whose body is omitted is REDACTED (payload
+  withheld): its hash chain still verifies, its content is unknown beyond payload_hash.
 * checkpoint signature = Ed25519 over canonical_json({checkpoint_id, seq, entry_hash, count, ts,
   key_id}); key_id = first 16 hex of sha256(raw 32-byte public key).
 * first_bad_seq: the seq of the first entry at which a check fails, scanning in order. A
@@ -38,7 +42,8 @@ from pathlib import Path
 from typing import Any
 
 GENESIS = "0" * 64
-PACKAGE_FORMAT_VERSION = 1
+PACKAGE_FORMAT_VERSION = 2
+CHAIN_FORMAT_VERSION = 2
 PACKAGE_MEMBERS = (
     "entries.json",
     "chain_proof.json",
@@ -147,6 +152,7 @@ class VerifyResult:
     ok: bool
     first_bad_seq: int | None
     reason: str
+    redacted: tuple[int, ...] = ()
 
 
 def _ok() -> VerifyResult:
@@ -169,14 +175,31 @@ def ts_str(value: Any) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+ENTRY_FIELDS = frozenset(
+    {
+        "seq", "ts", "service", "actor", "event_type", "payload_hash", "prev_hash", "entry_hash",
+        "model_version", "payload", "payload_present", "case_refs",
+    }
+)  # fmt: skip
+HASHED_FIELDS = (
+    "seq", "ts", "service", "actor", "event_type", "payload_hash", "payload_present",
+    "model_version", "case_refs",
+)  # fmt: skip
+
+
 def entry_dict(e: Any) -> dict[str, Any]:
-    """Normalise a dict or a pydantic-like model to the canonical entry dict."""
+    """Normalise a dict or a pydantic-like model to the canonical entry dict. ``payload_present``
+    defaults to ``payload is not None`` (a stored entry); an exported REDACTED entry sets it true
+    with ``payload`` None."""
     d = e.model_dump() if hasattr(e, "model_dump") else dict(e)
+    payload = d.get("payload")
     out = {
         "seq": d["seq"], "ts": ts_str(d["ts"]), "service": d["service"], "actor": d["actor"],
         "event_type": d["event_type"], "payload_hash": d["payload_hash"],
         "prev_hash": d["prev_hash"], "model_version": d.get("model_version"),
-        "payload": d.get("payload"), "case_refs": list(d.get("case_refs") or []),
+        "payload": payload,
+        "payload_present": d.get("payload_present", payload is not None),
+        "case_refs": list(d.get("case_refs") or []),
     }  # fmt: skip
     if "entry_hash" in d:
         out["entry_hash"] = d["entry_hash"]
@@ -184,10 +207,9 @@ def entry_dict(e: Any) -> dict[str, Any]:
 
 
 def compute_entry_hash(prev_hash: str, entry: Any) -> str:
-    d = entry_dict({**(entry if isinstance(entry, Mapping) else entry.model_dump())})
-    d.pop("entry_hash", None)
-    d["prev_hash"] = prev_hash
-    return hashlib.sha256(prev_hash.encode("ascii") + canonical_json(d)).hexdigest()
+    d = entry_dict(entry if isinstance(entry, Mapping) else entry.model_dump())
+    core = {k: d[k] for k in HASHED_FIELDS}
+    return hashlib.sha256(prev_hash.encode("ascii") + canonical_json(core)).hexdigest()
 
 
 def _normalise_keys(pubkeys: Mapping[str, Any]) -> dict[str, bytes]:
@@ -240,8 +262,11 @@ def verify_chain(
         return _bad(None, "malformed entry")
     prev_seq: int | None = None
     prev_hash: str | None = None
+    redacted: list[int] = []
     for e, raw in zip(ents, stored, strict=True):
         seq = e["seq"]
+        if not isinstance(raw, Mapping) or not set(raw) <= ENTRY_FIELDS:
+            return _bad(seq if isinstance(seq, int) else None, f"entry {seq} has an unknown field")
         if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
             return _bad(seq if isinstance(seq, int) else None, "invalid seq")
         if prev_seq is not None and seq != prev_seq + 1:
@@ -256,13 +281,19 @@ def verify_chain(
             expect = prev_hash
         if expect is not None and e["prev_hash"] != expect:
             return _bad(seq, f"entry {seq} prev_hash does not link to its predecessor")
+        if not isinstance(e["payload_present"], bool):
+            return _bad(seq, f"entry {seq} payload_present must be true or false")
         if e["payload"] is not None:
+            if not e["payload_present"]:
+                return _bad(seq, f"entry {seq} carries a payload but payload_present is false")
             try:
                 ph = payload_hash(e["payload"])
             except (TypeError, ValueError):
                 return _bad(seq, f"entry {seq} payload is not canonical JSON")
             if ph != e["payload_hash"]:
                 return _bad(seq, f"entry {seq} payload does not match payload_hash")
+        elif e["payload_present"]:
+            redacted.append(seq)  # payload withheld: the hash chain still binds payload_hash
         if compute_entry_hash(e["prev_hash"], e) != raw.get("entry_hash"):
             return _bad(seq, f"entry {seq} entry_hash mismatch (entry altered)")
         prev_seq, prev_hash = seq, e["entry_hash"]
@@ -284,7 +315,7 @@ def verify_chain(
             hit = by_seq.get(seq)
             if hit is not None and hit["entry_hash"] != cp["entry_hash"]:
                 return _bad(seq, f"entry {seq} does not match signed checkpoint (chain rewritten)")
-    return _ok()
+    return VerifyResult(True, None, "ok", tuple(redacted))
 
 
 # --------------------------------------------------------------------------- package
@@ -323,6 +354,8 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
         manifest = json.loads(src.read(MANIFEST))
         if manifest.get("package_format_version") != PACKAGE_FORMAT_VERSION:
             return _bad(None, "unsupported package_format_version"), notes
+        if manifest.get("chain_format_version") != CHAIN_FORMAT_VERSION:
+            return _bad(None, "unsupported chain_format_version"), notes
         members = manifest["members"]
         if set(members) != set(PACKAGE_MEMBERS):
             return _bad(None, "manifest member list is not the expected set"), notes
@@ -377,6 +410,14 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
         )  # fmt: skip
         if not res.ok:
             return res, notes
+        selected = set(data["selected_seqs"])
+        withheld = selected & set(res.redacted)
+        if withheld:
+            return _bad(
+                min(withheld), f"selected entry {min(withheld)} has its payload withheld"
+            ), notes
+        if list(res.redacted) != manifest.get("redacted_seqs"):
+            return _bad(None, "manifest redacted_seqs does not match the redacted entries"), notes
         by_seq = {e["seq"]: e["entry_hash"] for e in entries}
         listed = manifest["entries"]
         if [x["seq"] for x in listed] != sorted(set(data["selected_seqs"])):
@@ -384,6 +425,11 @@ def verify_package(path: Path, trusted_key_id: str | None = None) -> tuple[Verif
         for x in listed:
             if by_seq.get(x["seq"]) != x["entry_hash"]:
                 return _bad(x["seq"], f"manifest entry {x['seq']} not in the verified chain"), notes
+        if res.redacted:
+            notes.append(
+                f"redacted (payload withheld): {len(res.redacted)} context entries, seqs "
+                f"{list(res.redacted)}; the chain binds only their payload_hash"
+            )
         notes.append(
             f"chain segment {seg['from_seq']}..{seg['to_seq']} verified ({len(entries)} entries, "
             f"{len(listed)} selected) against signed checkpoint(s)"
@@ -397,6 +443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Offline evidence-package verifier")
     ap.add_argument("path", nargs="?", default=str(Path(__file__).resolve().parent))
     ap.add_argument("--trusted-key-id", default=None)
+    ap.add_argument("--allow-unpinned", action="store_true")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
     res, notes = verify_package(Path(args.path), args.trusted_key_id)

@@ -137,6 +137,11 @@ class LedgerEntry(_Frozen):
     ``ts`` is the ledger's RECEIPT time (UTC), so chain order is receipt order, not event order.
     ``payload`` is optional PII-free evidence; when present ``payload_hash`` equals
     ``scam_contracts.canonical.payload_hash(payload)``.
+
+    Chain format 2: ``entry_hash = sha256(prev_hash || canonical_json({seq, ts, service, actor,
+    event_type, payload_hash, payload_present, model_version, case_refs}))`` (hex; prev_hash is
+    the ASCII hex of the previous entry_hash, 64 zeros at genesis). The payload BODY is not part
+    of the hash, so an exported entry may withhold it (redaction) and still verify.
     """
 
     seq: int

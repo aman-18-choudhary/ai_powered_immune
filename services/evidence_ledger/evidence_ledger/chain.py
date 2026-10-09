@@ -100,4 +100,5 @@ def to_dict(e: LedgerEntry) -> dict[str, Any]:
     """JSON-ready canonical entry dict (ts as the fixed-width UTC string)."""
     d = e.model_dump()
     d["ts"] = ts_str(d["ts"])
+    d["payload_present"] = d["payload"] is not None
     return d
