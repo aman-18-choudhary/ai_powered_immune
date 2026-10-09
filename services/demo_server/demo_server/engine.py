@@ -26,6 +26,7 @@ import hashlib
 import heapq
 import logging
 import shutil
+import threading
 import time
 import uuid
 from collections import deque
@@ -193,6 +194,7 @@ class Run:
         self.wake = asyncio.Event()
         self.stop_flag = False
         self.done = asyncio.Event()
+        self.ready = asyncio.Event()  # set once a seek replay reached its target (or ended)
         self.hold_meta: dict[str, dict[str, Any]] = {}
         self._hold_buf: list[tuple[str, str, Hold]] = []
         self._hold_last: dict[str, tuple[str, int]] = {}
@@ -350,23 +352,32 @@ class Run:
         self.fast_until = None
         self.st.status = "running" if self.running.is_set() else "paused"
         self.e.broadcast_snapshot()
+        self.ready.set()
 
     # --------------------------------------------------------------- manual input
-    async def _apply_manual(self) -> None:
-        """Re-apply recorded manual actions whose simulated time has been reached (replays)."""
+    async def _apply_manual(self, inclusive: bool = False) -> None:
+        """Re-apply recorded manual actions whose simulated time has been reached (replays).
+
+        Between items only actions strictly before ``t`` are due (an item at ``t`` has not run
+        yet); after an item ran, actions at ``t`` are due too. An action whose hold does not exist
+        yet is retried at the next boundary."""
+        key = f"done_{self.st.epoch}"
         for rec in self.st.manual_log:
-            if (
-                rec.get("epoch") != self.st.epoch
-                and rec["t"] <= self.st.t
-                and not rec.get(f"done_{self.st.epoch}")
-            ):
-                rec[f"done_{self.st.epoch}"] = True
-                try:
-                    await self.resolve_hold(
-                        rec["txn_ref"], rec["action"], rec["actor"], rec["role"], record=False
-                    )
-                except Exception as e:
-                    log.warning("manual replay failed (%s)", type(e).__name__)
+            if rec.get("epoch") == self.st.epoch or rec.get(key):
+                continue
+            due = rec["t"] <= self.st.t if inclusive else rec["t"] < self.st.t
+            if not due:
+                continue
+            try:
+                await self.resolve_hold(
+                    rec["txn_ref"], rec["action"], rec["actor"], rec["role"], record=False
+                )
+                rec[key] = True
+            except HoldNotFound:
+                continue
+            except Exception as e:
+                rec[key] = True
+                log.warning("manual replay failed (%s)", type(e).__name__)
 
     async def resolve_hold(
         self, ref: str, action: str, actor: str, role: str, *, expect_seq: int | None = None,
@@ -678,8 +689,8 @@ class Run:
             try:
                 await self.setup()
                 self.emit(
-                    "scenario.started", seed=st.seed, mode=st.mode, speed=st.speed,
-                    duration=round(st.duration, 3), epoch=st.epoch, simulated=True,
+                    "scenario.started", seed=st.seed, mode=st.mode,
+                    duration=round(st.duration, 3), simulated=True,
                     banks=dict(st.banks),
                 )  # fmt: skip
                 if not self.fast:
@@ -697,6 +708,7 @@ class Run:
                         await self.process_observe(it)
                     elif it.kind == "confirm":
                         await self._confirm(ANALYST_ACTOR, "analyst", resolve_hold=True)
+                    await self._apply_manual(inclusive=True)
                     await self.sync_ledger()
                 if self.fast:
                     await self._leave_fast()
@@ -724,6 +736,7 @@ class Run:
                 st.status = "error"
         finally:
             self.done.set()
+            self.ready.set()
             if self.fast:  # cancelled while replaying: leave subscribers with a coherent state
                 self.fast = False
 
@@ -821,6 +834,24 @@ class Run:
         return None
 
 
+_MODELS: tuple[Any, ...] | None = None
+_MODELS_LOCK = threading.Lock()
+
+
+def _shared_models() -> tuple[World, TxnScorer, CallScorer, dict[str, tuple[Any, ...]]]:
+    """World, scorers and token->city table, built once per process (immutable afterwards)."""
+    global _MODELS
+    with _MODELS_LOCK:
+        if _MODELS is None:
+            world = build_world(WORLD_SEED, WORLD_CITIZENS)
+            cities = {
+                world.payer_token(c.citizen_id): geomod.city_for(c.state, c.district, c.city)
+                for c in world.citizens
+            }
+            _MODELS = (world, TxnScorer(), CallScorer(load_classifier()), cities)
+        return _MODELS  # type: ignore[return-value]
+
+
 class Engine:
     """Process-wide owner of the current run, the event log and the shared models."""
 
@@ -853,18 +884,10 @@ class Engine:
         return self.signer.public_raw.hex()
 
     async def start(self) -> None:
-        """Load the models and the simulated world off the event loop."""
-
-        def load() -> None:
-            self.world = build_world(WORLD_SEED, WORLD_CITIZENS)
-            self.txn_scorer = TxnScorer()
-            self.call_scorer = CallScorer(load_classifier())
-            for c in self.world.citizens:
-                self.token_city[self.world.payer_token(c.citizen_id)] = geomod.city_for(
-                    c.state, c.district, c.city
-                )
-
-        await asyncio.to_thread(load)
+        """Load the models and the simulated world (once per process) off the event loop."""
+        world, txn, call, cities = await asyncio.to_thread(_shared_models)
+        self.world, self.txn_scorer, self.call_scorer = world, txn, call
+        self.token_city = cities
 
     # ---------------------------------------------------------------- views
     def last_id(self) -> int:
@@ -1012,6 +1035,8 @@ class Engine:
         st.manual_log = manual
         self.log.reset()
         self._launch(plan, fast_until=t, start_paused=not resume)
+        assert self.run is not None
+        await asyncio.wait_for(self.run.ready.wait(), 60.0)
 
     async def join(self, timeout: float | None = None) -> None:
         """Wait until the current run finished, was stopped or failed (tests, graceful close)."""

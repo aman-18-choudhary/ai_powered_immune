@@ -142,6 +142,7 @@ def create_app(
     )  # fmt: skip
     app.state.engine = eng
     app.state.settings = cfg
+    app.state.limiter = limiter
     app.add_middleware(
         CORSMiddleware, allow_origins=list(cfg.cors_origins), allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
@@ -161,10 +162,12 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
         # never echo the submitted value (FastAPI's default includes "input" / "ctx")
-        items = [
-            {"loc": [str(x) for x in e["loc"]], "msg": e["msg"], "type": e["type"]}
-            for e in exc.errors()
-        ]
+        items = []
+        for e in exc.errors():
+            loc = [str(x) for x in e["loc"]]
+            if e["type"] == "extra_forbidden" and loc:
+                loc[-1] = "*"  # the offending key is caller-supplied text: do not echo it
+            items.append({"loc": loc, "msg": e["msg"], "type": e["type"]})
         return JSONResponse({"error": "invalid_request", "detail": items}, status_code=422)
 
     @app.exception_handler(StarletteHTTPException)

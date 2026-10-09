@@ -7,11 +7,12 @@ import time
 import zipfile
 
 import pytest
-from conftest import SECRET, instant, login, make_settings
-from demo_server.api import create_app
+from conftest import instant, login, make_settings
 from fastapi.testclient import TestClient
 from sim_engine.replay import build_hero_scenario
 from sim_engine.world import build_world
+
+from demo_server.api import create_app
 
 
 @pytest.fixture(scope="module")

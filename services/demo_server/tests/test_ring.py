@@ -3,8 +3,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from demo_server.ring import RingGraph, inflow_bucket, inr
 from scam_contracts.models import Transaction
+
+from demo_server.ring import RingGraph, inflow_bucket, inr
 
 T0 = datetime(2026, 1, 6, 8, 0, tzinfo=UTC)
 _n = 0

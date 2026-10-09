@@ -3,9 +3,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+
 from demo_server.api import create_app
 from demo_server.config import Settings
-from fastapi.testclient import TestClient
 
 SECRET = "unit-test-secret-" + "x" * 32
 

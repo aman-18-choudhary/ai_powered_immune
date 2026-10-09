@@ -15,6 +15,7 @@ language was given and is unsupported).
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -263,7 +264,7 @@ async def assess(scorer: Scorer, message: str, lang: str | None = None) -> Asses
         chosen = detect_lang(message)
     version = scorer.model_version
     text = message.strip()
-    if not text:
+    if not any(not ch.isspace() and unicodedata.category(ch) != "Cf" for ch in text):
         return Assessment("safe", 0.0, [], _advice("no_input", chosen), chosen, True, version)
     truncated = len(text) > MAX_CHARS
     if truncated:

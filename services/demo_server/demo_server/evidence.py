@@ -88,10 +88,26 @@ def parse(output: str, code: int) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _fail(line: str) -> dict[str, Any]:
+    return {
+        "exit_code": 1, "status": "FAIL", "lines": [line], "redacted_seqs": [],
+        "entries": None, "checkpoints": None,
+    }  # fmt: skip
+
+
 async def run_verifier(
-    package: bytes, public_key_hex: str, *, timeout_s: float = 20.0, output_cap: int = 64 * 1024
-) -> dict[str, Any]:
-    """Unpack ``package`` and run its shipped ``verify.py``, pinned to ``public_key_hex``."""
+    package: bytes, public_key_hex: str, *, timeout_s: float = 20.0, output_cap: int = 64 * 1024,
+    expected_verifier: bytes | None = None,
+) -> dict[str, Any]:  # fmt: skip
+    """Unpack ``package`` and run its shipped ``verify.py``, pinned to ``public_key_hex``.
+
+    Defence in depth: the package's ``verify.py`` must be byte-identical to the ledger's own
+    verifier source (``expected_verifier``, default ``evidence_ledger.package.verifier_source()``)
+    before it is executed, so a tampered package cannot bring its own "verifier"."""
+    if expected_verifier is None:
+        from evidence_ledger.package import verifier_source
+
+        expected_verifier = verifier_source()
     tmp = await asyncio.to_thread(tempfile.mkdtemp, prefix="verify-")
     root = Path(tmp)
     proc: asyncio.subprocess.Process | None = None
@@ -103,39 +119,45 @@ async def run_verifier(
         script = root / "verify.py"
         if not script.is_file():
             raise VerifyError("package has no verify.py")
+        if await asyncio.to_thread(script.read_bytes) != expected_verifier:
+            return _fail("package verify.py differs from the ledger's verifier; not executed")
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-I", "-S", str(script), str(root), "--trusted-pubkey", public_key_hex,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(root), env={"PATH": "/usr/bin:/bin"},
         )  # fmt: skip
 
+        truncated = False
+
         async def read_capped() -> bytes:
+            """Keep the first ``output_cap`` bytes; past the cap the verifier is killed and the
+            rest is drained (not stored) so the pipe reaches EOF and the process is reaped."""
+            nonlocal truncated
             assert proc is not None and proc.stdout is not None
             buf = bytearray()
-            while len(buf) < output_cap:
-                chunk = await proc.stdout.read(min(4096, output_cap - len(buf)))
+            total = 0
+            while True:
+                chunk = await proc.stdout.read(65536)
                 if not chunk:
-                    break
-                buf += chunk
-            return bytes(buf)
+                    return bytes(buf)
+                total += len(chunk)
+                if len(buf) < output_cap:
+                    buf += chunk[: output_cap - len(buf)]
+                if total > output_cap and not truncated:
+                    truncated = True
+                    proc.kill()
 
         try:
             out = await asyncio.wait_for(read_capped(), timeout_s)
-            code = (
-                await asyncio.wait_for(proc.wait(), 5.0)
-                if proc.returncode is None
-                else proc.returncode
-            )
+            code = await asyncio.wait_for(proc.wait(), 5.0)
         except TimeoutError:
             proc.kill()
-            await proc.wait()
-            return {
-                "exit_code": 1, "status": "FAIL", "lines": ["verification timed out"],
-                "redacted_seqs": [], "entries": None, "checkpoints": None,
-            }  # fmt: skip
-        if len(out) >= output_cap:
-            proc.kill()
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), 5.0)
+            except TimeoutError:
+                log.error("verifier process did not exit after kill")
+            return _fail("verification timed out")
+        if truncated:
             code = 1
         return parse(out.decode("utf-8", "replace"), int(code))
     finally:
