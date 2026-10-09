@@ -10,7 +10,7 @@ inputs always give identical bytes:
                         checkpoint(s) covering the end of the segment, and all public keys.
 * ``explanations.md``   human-readable timeline rendered ONLY from stored fields and payloads.
 * ``certificate_section63_template.md``  a template for counsel (not legal advice).
-* ``verify.py``         the standalone stdlib-only verifier (byte copy of ``evidence_ledger.verify``).
+* ``verify.py``         the standalone stdlib-only verifier (byte copy of ``verify.py`` here).
 * ``manifest.json``     sha256 of every other member + the entry list, Ed25519-signed.
 
 Design note: the end of the segment is a signed checkpoint, so the checkpoint signature
@@ -168,7 +168,9 @@ def render_explanations(
 
 def render_certificate(case_id: str, hashes: dict[str, str]) -> str:
     rows = "\n".join(f"| {name} | `{h}` |" for name, h in sorted(hashes.items()))
-    return f"""# Electronic-record certificate TEMPLATE (Bharatiya Sakshya Adhiniyam, 2023, Section 63)
+    return f"""# Electronic-record certificate TEMPLATE
+
+(Bharatiya Sakshya Adhiniyam, 2023, Section 63)
 
 > DISCLAIMER. This is a TEMPLATE for counsel to complete and conform to the form prescribed in
 > the Schedule to the Act. It is not legal advice and it is not a statement that any record is
@@ -237,7 +239,10 @@ def build(
     case_refs: list[str] | tuple[str, ...] = (),
     max_span: int = DEFAULT_MAX_SPAN,
 ) -> Package:
-    selected = store.select_seqs(list(case_refs), list(seqs), limit=max_span)
+    try:
+        selected = store.select_seqs(list(case_refs), list(seqs), limit=max_span)
+    except LookupError:
+        raise EmptyCase(case_id) from None
     if not selected:
         raise EmptyCase(case_id)
     if len(selected) > max_span:
