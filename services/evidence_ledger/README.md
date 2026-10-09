@@ -216,7 +216,13 @@ everything (a refused entry is quarantined). Conventions:
 
 `payee_ref` identifies a mule account across banks (that is its purpose); it is a truncated keyed
 hash, so it reveals nothing about the account number, but anyone holding the federation key can
-test a guessed account against it. When the guard refuses an emitter's payload the emitter sends a fixed-shape placeholder (`audit:
+test a guessed account against it. Operational notes: emitters deliver from outboxes in bounded batches (txn-guard 200 holds, call-guard
+50 entries per sweep cycle), so a sweep is O(batch) and a large backlog drains over several cycles;
+env: `LEDGER_EMIT_TIMEOUT_S`, `LEDGER_DRAIN_INTERVAL_S`, `LEDGER_DRAIN_CONCURRENCY`,
+`LEDGER_BREAKER_COOLDOWN_S`. `txn_ref` is not injective for a bank-supplied id that itself equals
+another id's `txn_ref`.
+
+When the guard refuses an emitter's payload the emitter sends a fixed-shape placeholder (`audit:
 payload_refused`, a `redacted_<16 hex>` actor) instead of failing its business action; the redundant
 `payee_ref` + `key_hash_prefix` pair in antibody payloads is intentional (the ref joins cases, the
 prefix lets a reader match the antibody to a payee hash they already hold).

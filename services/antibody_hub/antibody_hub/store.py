@@ -248,7 +248,9 @@ class AntibodyStore:
         self.park_attempts = park_attempts
         self.park_after_s = park_after_s
         self.ttl = timedelta(days=ttl_days)
-        self._clock = clock or (lambda: datetime.now(UTC))
+        # normalise to UTC: SQLite drops tzinfo, so a non-UTC clock would be read back mislabelled
+        raw = clock or (lambda: datetime.now(UTC))
+        self._clock = lambda: raw().astimezone(UTC)
         self._lock: threading.RLock | None = None
         if url.startswith("sqlite"):
             self._lock = threading.RLock()

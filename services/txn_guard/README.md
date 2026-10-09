@@ -228,9 +228,17 @@ the PII guard accepts it (`txn_<16 hex>`), otherwise `txn_` + 16 hex of its sha2
 numeric ids such as 12-digit UPI RRNs, which the guard must refuse); **create ledger cases with
 the same `txn_ref`**. A payload the guard still refuses is replaced by a placeholder
 `{txn_id, event, decision_seq, audit: payload_refused}` (redacted actor if needed) so the outbox
-always drains and the chain records that a hold change happened. Audit never delays a decision:
-the drain runs in a background task and a state change waits at most `LEDGER_EMIT_WAIT_S`
-(default 0.05 s) for it; the periodic sweep retries. Holds created before this version keep sending
+always drains and the chain records that a hold change happened. Audit never delays a decision: a state change only *schedules* the hold's audit drain (no await
+on the ledger or on any timeout; it yields a few event-loop turns so a fast sink has normally
+finished). Drains run as background tasks (`svckit.drain.Drainer`): one per hold, at most
+`LEDGER_DRAIN_CONCURRENCY` (8) at once, each with a `LEDGER_EMIT_TIMEOUT_S` (0.5 s) timeout, and a
+breaker (5 consecutive failures, then no scheduling for `LEDGER_BREAKER_COOLDOWN_S`, default 10 s).
+The periodic `sweep` retries pending holds, at most `LEDGER_SWEEP_BATCH` (200) per cycle with the
+same bounds (O(batch) per cycle; a larger backlog drains over several cycles; while the breaker is
+open it probes with one attempt). Shutdown cancels the drains; entries stay in the hold records.
+Delivery is at-least-once and the ledger absorbs repeats. `txn_ref` is not injective in one corner:
+a bank-supplied id that equals another id's `txn_ref` (`txn_` + 16 hex) would join the same case;
+real ids are not minted that way, but treat case selection by `txn_ref` accordingly. Holds created before this version keep sending
 hash-only entries from their old outbox.
 
 ## Cross-bank antibodies (Task 11)

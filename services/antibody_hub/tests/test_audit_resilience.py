@@ -79,3 +79,24 @@ async def test_forced_refusal_writes_a_placeholder_row_in_the_same_transaction(
     assert e["payload"]["audit"] == "payload_refused" and e["event_type"] == "antibody.created"
     assert set(e["payload"]) == {"antibody_id", "event", "generation", "kind", "audit"}
     assert e["case_refs"][0] == r.json()["antibody_id"]
+
+
+async def test_non_utc_injected_clock_cannot_skip_an_extend(db_url, bus):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from antibody_hub.hub import Hub
+    from antibody_hub.store import AntibodyStore
+
+    ist = ZoneInfo("Asia/Kolkata")
+    t = {"now": datetime(2026, 1, 6, 15, 0, tzinfo=ist)}
+    store = AntibodyStore(db_url, clock=lambda: t["now"])
+    hub = Hub(store, bus)
+    from .conftest import mule
+
+    h = mule("ist")
+    first = await hub.submit("mule_account", h, "bank_a", "analyst-1", None, False, role="analyst")
+    t["now"] += timedelta(hours=1)
+    ext = await hub.submit("mule_account", h, "bank_a", "analyst-1", None, True, role="analyst")
+    assert first.created and ext.extended
+    store.close()

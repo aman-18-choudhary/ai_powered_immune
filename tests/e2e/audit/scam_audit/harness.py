@@ -159,10 +159,7 @@ async def run_hero_audit(
         clock=LedgerClock(datetime(2026, 1, 1, tzinfo=UTC)), keyring=keyring,
         checkpoint_every=50, maintenance_interval_s=0, consume=True,
     )  # fmt: skip
-    # SQLite drops tzinfo: give the hub a UTC clock (the simulator's timestamps are IST)
-    hub_store = AntibodyStore(
-        f"sqlite:///{workdir / 'hub.db'}", clock=lambda: clock.t.astimezone(UTC)
-    )
+    hub_store = AntibodyStore(f"sqlite:///{workdir / 'hub.db'}", clock=clock)  # IST sim clock
     hub = Hub(hub_store, bus)
     ab_task = None
     try:

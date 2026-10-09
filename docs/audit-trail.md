@@ -46,12 +46,13 @@ per state change, none quarantined, package about 50 KB.
 
 ## Audit never gets in the way of a fraud action
 
-* **call-guard:** the alert is published first; the audit entry is stored atomically with the
-  crossing marker and delivered best-effort from an outbox (bounded wait, background sweep). A
-  ledger outage delays or defers the audit entry, never the alert. Honest limit: an audit entry
-  can be lost only if the session store loses it.
-* **txn-guard:** a hold change waits at most 50 ms for its audit drain; the decision is published
-  regardless and the outbox retries.
+* **call-guard:** the alert is published first and the consumer never awaits the ledger. Alerts
+  and audit entries are both at-least-once; the audit entry is stored atomically with the
+  crossing marker and delivered from a background outbox (concurrency cap, per-entry timeout,
+  circuit breaker, periodic sweeper). A ledger outage only defers audit entries; the only way to
+  lose one is to lose the session store.
+* **txn-guard:** a hold change only schedules its audit drain; the decision path never waits for
+  the ledger (same cap, timeout and breaker; the sweeper retries in bounded batches).
 * **antibody-hub:** the audit entry is written in the same transaction as the change, built so
   that it cannot fail the action.
 * **Refusals:** when the PII guard refuses a payload (for example a numeric transaction id or a
