@@ -1,0 +1,206 @@
+import threading
+
+import pytest
+from scam_contracts.canonical import payload_hash
+from scam_contracts.models import LedgerEntryIn
+from sqlalchemy import delete, text, update
+from sqlalchemy.exc import DBAPIError
+
+from evidence_ledger.chain import EntryRejected
+from evidence_ledger.store import checkpoints, entry_refs, ledger_entries
+from evidence_ledger.verify import GENESIS, verify_chain
+
+from .conftest import entry_in
+
+
+def all_entries(store):
+    return store.page(1, 1000)
+
+
+def test_append_builds_a_verifiable_chain(store):
+    for i in range(1, 8):
+        r = store.append(entry_in(i))
+        assert r.created and r.entry.seq == i
+    es = all_entries(store)
+    assert es[0].prev_hash == GENESIS
+    assert verify_chain(es).ok
+    assert store.head().seq == 7 and store.head().entry_hash == es[-1].entry_hash
+
+
+def test_duplicate_event_written_once(store):
+    a = store.append(entry_in(1))
+    b = store.append(entry_in(1))
+    assert not b.created and b.entry == a.entry
+    assert store.head().seq == 1
+    assert store.counters.snapshot()["duplicates"] == 1
+    # same (service, event_type, payload_hash) but different actor/model: still the same entry
+    c = store.append(entry_in(1, actor="someone-else"))
+    assert not c.created and c.entry.seq == 1
+    # a different event_type or service is a different event
+    assert store.append(entry_in(1, event_type="hold.resolved")).created
+    assert store.append(entry_in(1, service="antibody-hub")).created
+
+
+def test_concurrent_duplicate_race_yields_one_row(store):
+    results = []
+    barrier = threading.Barrier(8)
+
+    def go():
+        barrier.wait()
+        results.append(store.append(entry_in(1)))
+
+    ts = [threading.Thread(target=go) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert sum(r.created for r in results) == 1 and store.head().seq == 1
+
+
+def test_concurrent_appends_are_gap_free(store):
+    def worker(w):
+        for i in range(10):
+            store.append(entry_in(w * 100 + i))
+
+    ts = [threading.Thread(target=worker, args=(w,)) for w in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    es = all_entries(store)
+    assert [e.seq for e in es] == list(range(1, 41))
+    assert verify_chain(es).ok
+
+
+def test_payload_hash_mismatch_rejected(store):
+    bad = LedgerEntryIn(
+        service="s", actor="a", event_type="e", payload_hash="0" * 64, payload={"k": "v"}
+    )
+    with pytest.raises(EntryRejected) as ei:
+        store.append(bad)
+    assert ei.value.code == "payload_hash_mismatch"
+    assert store.head().seq == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"note": "call 9876543210"}, {"a": {"b": ["x", "mail me bob@okaxis"]}}, {"9876543210": 1}],
+)
+def test_pii_in_payload_rejected_without_echo(store, payload):
+    e = LedgerEntryIn(
+        service="s", actor="a", event_type="e", payload_hash=payload_hash(payload), payload=payload
+    )
+    with pytest.raises(EntryRejected) as ei:
+        store.append(e)
+    assert ei.value.code == "pii" and "9876543210" not in str(ei.value)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [dict(actor="bob@gmail.com"), dict(service="a b"), dict(event_type="x" * 200),
+     dict(case_refs=["acct-123456789012"]), dict(payload_hash="xyz"), dict(actor="a" * 200)],
+)  # fmt: skip
+def test_bad_fields_rejected(store, kw):
+    base = dict(service="s", actor="a", event_type="e", payload_hash="a" * 64)
+    with pytest.raises(EntryRejected):
+        store.append(LedgerEntryIn(**{**base, **kw}))
+
+
+def test_corroboration_actor_with_bank_suffix_is_accepted(store):
+    assert store.append(entry_in(1, actor="analyst-1@bank_a")).created
+
+
+def test_hash_only_entries_are_valid(store):
+    r = store.append(entry_in(1, payload=None, refs=[]))
+    assert r.entry.payload is None and verify_chain(all_entries(store)).ok
+
+
+def test_receipt_time_is_utc_aware_and_monotonic_with_clock(store):
+    store.append(entry_in(1))
+    store.append(entry_in(2))
+    a, b = all_entries(store)
+    assert a.ts.utcoffset().total_seconds() == 0 and a.ts < b.ts
+
+
+# ------------------------------------------------------------------ immutability
+@pytest.mark.parametrize("table", [ledger_entries, entry_refs, checkpoints])
+def test_update_and_delete_blocked_by_triggers(store, table):
+    for i in range(1, 6):  # 5 entries -> a checkpoint exists
+        store.append(entry_in(i))
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(update(table).values({list(table.c.keys())[1]: "x"}))
+    with pytest.raises(DBAPIError), store.engine.begin() as c:
+        c.execute(delete(table))
+    with store.engine.begin() as c:
+        assert c.execute(text(f"select count(*) from {table.name}")).scalar() > 0
+
+
+def test_tampering_after_dropping_triggers_is_still_detected(store):
+    """A DBA bypassing the triggers is exactly what the hash chain and checkpoints are for."""
+    for i in range(1, 11):
+        store.append(entry_in(i))
+    with store.engine.begin() as c:
+        c.execute(text("drop trigger trg_ledger_entries_no_update"))
+        c.execute(text("update ledger_entries set actor='mallory' where seq=3"))
+    r = verify_chain(all_entries(store))
+    assert not r.ok and r.first_bad_seq == 3
+
+
+# ------------------------------------------------------------------ checkpoints
+def test_checkpoint_every_n_entries(store, keyring):
+    for i in range(1, 13):
+        store.append(entry_in(i))
+    cps = store.checkpoints(0, 100)
+    assert [c["seq"] for c in cps] == [5, 10]
+    es = all_entries(store)
+    assert verify_chain(es, checkpoints=cps, pubkeys=keyring.public_keys()).ok
+    assert store.latest_checkpoint()["seq"] == 10
+    assert store.counters.snapshot()["checkpoints"] == 2
+
+
+def test_checkpoint_interval_only_when_new_entries(store, clock):
+    assert store.checkpoint_if_due(60) is False  # empty ledger
+    store.append(entry_in(1))
+    assert store.checkpoint_if_due(60) is False  # not yet due
+    clock.advance(seconds=120)
+    assert store.checkpoint_if_due(60) is True
+    assert store.checkpoint_if_due(60) is False  # nothing new
+    store.append(entry_in(2))
+    clock.advance(seconds=120)
+    assert store.checkpoint_if_due(60) is True
+    assert [c["seq"] for c in store.checkpoints(0, 10)] == [1, 2]
+
+
+def test_checkpoint_covering_creates_on_demand_and_is_stable(store):
+    for i in range(1, 8):
+        store.append(entry_in(i))
+    cp = store.checkpoint_covering(6)  # head is 7, cps exist at 5
+    assert cp["seq"] == 7
+    assert store.checkpoint_covering(6)["checkpoint_id"] == cp["checkpoint_id"]
+    assert store.checkpoint_covering(5)["seq"] == 5
+    assert store.checkpoint_covering(99) is None
+
+
+def test_checkpoint_writes_are_idempotent_per_seq(store):
+    for i in range(1, 4):
+        store.append(entry_in(i))
+    a = store.checkpoint_covering(3)
+    b = store.checkpoint_covering(3)
+    assert a == b and len(store.checkpoints(0, 10)) == 1
+
+
+# ------------------------------------------------------------------ reads and cases
+def test_pagination_bounds(store):
+    for i in range(1, 8):
+        store.append(entry_in(i))
+    assert [e.seq for e in store.page(3, 2)] == [3, 4]
+    assert len(store.page(1, 10_000)) == 7  # capped, never unbounded
+    assert store.get(99) is None and store.get(2).seq == 2
+
+
+def test_case_selection_by_refs_and_seqs(store):
+    store.append(entry_in(1, refs=["case-a", "txn_1"]))
+    store.append(entry_in(2, refs=["case-b"]))
+    store.append(entry_in(3, refs=["case-a"]))
+    assert store.select_seqs(["case-a"], [], limit=10) == [1, 3]
+    assert store.select_seqs(["case-a"], [2], limit=10) == [1, 2, 3]
+    assert store.select_seqs(["nope"], [], limit=10) == []
+    with pytest.raises(LookupError):
+        store.select_seqs([], [99], limit=10)
+    assert len(store.select_seqs(["case-a"], [], limit=1)) == 2  # limit+1 means "too many"

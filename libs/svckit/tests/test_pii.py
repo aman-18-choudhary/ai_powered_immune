@@ -54,13 +54,16 @@ def test_guard_accepts(text):
     assert not contains_identifier(text), text
 
 
-def test_hex_digests_are_exempt_but_digit_runs_are_not():
+def test_hex_ids_are_exempt_but_digit_runs_are_not():
     digest = "0123456789abcdef" * 4
     assert contains_identifier(digest)  # the raw guard trips on digests...
-    assert not string_has_identifier(digest)  # ...the digest-aware guard exempts them
-    assert string_has_identifier("1" * 64)  # all-digit string is never a digest
-    assert string_has_identifier(digest[:-1])  # odd length is not a digest
+    assert not string_has_identifier(digest)  # ...the id-aware guard exempts them
+    assert not string_has_identifier("txn_3a9f0c12d45b7e68")
+    assert not string_has_identifier("antibody 0123456789abcdef0 confirmed")
+    assert string_has_identifier("1" * 64)  # all-digit string is never an id
+    assert string_has_identifier("acct 123456789012")
     assert string_has_identifier(digest.upper())
+    assert string_has_identifier("0123456789abcdef 9876543210")  # id next to a phone number
 
 
 def test_json_walk_checks_keys_and_nested_values_and_ignores_numbers():

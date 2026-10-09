@@ -17,8 +17,9 @@ _RULES = [
     re.compile(r"\b[a-z]{5}\d{4}[a-z]\b"),  # PAN
     re.compile(r"\b[a-z]{4}0[a-z0-9]{6}\b"),  # IFSC
 ]
-_DIGEST_LENGTHS = {32, 40, 56, 64, 96, 128}
-_HEX_RE = re.compile(r"^[0-9a-f]+$")
+# Opaque identifiers minted by the platform (sha256 digests, "txn_<16 hex>" ...): a lowercase hex
+# token of 16+ chars containing at least one letter. All-digit tokens are never exempt.
+_HEX_ID = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[a-f])[0-9a-f]{16,}(?![0-9A-Za-z])")
 
 
 def _flatten(s: str) -> str:
@@ -44,19 +45,15 @@ def contains_identifier(text: str) -> bool:
     return re.search(r"\d{9,}", alnum) is not None  # digits split only by punctuation/space
 
 
-def is_hex_digest(text: str) -> bool:
-    """A lowercase hex digest (sha256 etc.) that is not all digits. Such strings are the
-    platform's own pseudonymous hashes and would otherwise trip the digit rules."""
-    return len(text) in _DIGEST_LENGTHS and _HEX_RE.match(text) is not None and not text.isdigit()
-
-
 def string_has_identifier(text: str) -> bool:
-    return False if is_hex_digest(text) else contains_identifier(text)
+    """``contains_identifier`` after blanking platform-minted hex ids (digests, txn ids), which
+    would otherwise trip the digit rules. Use this for ids and payload values."""
+    return contains_identifier(_HEX_ID.sub(" ", text))
 
 
 def json_has_identifier(obj: Any) -> bool:
     """True if any key or string value anywhere in a JSON structure looks like an identifier.
-    Hex digests are exempt. Numbers are not inspected."""
+    Hex ids are exempt. Numbers are not inspected."""
     if isinstance(obj, str):
         return string_has_identifier(obj)
     if isinstance(obj, dict):
