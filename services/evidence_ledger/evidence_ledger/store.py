@@ -8,7 +8,7 @@ Invariants
   the lock the idempotency lookup, the head read, the chain insert, the case-ref rows and (every
   ``checkpoint_every`` entries) the signed checkpoint all happen in ONE transaction, so ``seq`` is
   gap-free and two replicas racing the same event yield exactly one row. The unique constraint on
-  (service, event_type, payload_hash) is the backstop.
+  idem_key (sha256 over every stored input field) is the backstop.
 * ``ts`` is the ledger's RECEIPT time (UTC). Chain order is receipt order, not event order.
 * ``ledger_entries``, ``entry_refs``, ``checkpoints`` and ``cases`` have triggers that RAISE on
   UPDATE and DELETE (and TRUNCATE on Postgres). A database superuser can drop the triggers; the
@@ -33,7 +33,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    UniqueConstraint,
     create_engine,
     func,
     select,
@@ -42,7 +41,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-from .chain import GENESIS, EntryRejected, build_entry, to_model, validate_entry
+from .chain import GENESIS, EntryRejected, build_entry, idempotency_key, to_model, validate_entry
 from .keys import Signer
 from .verify import canonical_json, checkpoint_message, ts_str
 
@@ -66,7 +65,7 @@ ledger_entries = Table(
     Column("model_version", String(128)),
     Column("payload", Text),
     Column("case_refs", Text, nullable=False),
-    UniqueConstraint("service", "event_type", "payload_hash", name="uq_ledger_idempotency"),
+    Column("idem_key", String(64), nullable=False, unique=True),
 )  # fmt: skip
 
 entry_refs = Table(
@@ -246,8 +245,8 @@ class LedgerStore:
         return Head(0, GENESIS, 0) if r is None else Head(r.seq, r.entry_hash, r.seq)
 
     def append(self, entry_in: LedgerEntryIn) -> AppendResult:
-        """Idempotent on (service, event_type, payload_hash): a repeat returns the existing entry
-        and writes nothing. Raises ``EntryRejected`` for permanent problems (nothing is written)."""
+        """Idempotent on the exact entry (``chain.idempotency_key``): a repeat returns the
+        existing entry and writes nothing. Raises ``EntryRejected`` for permanent problems (nothing is written)."""
         try:
             validate_entry(entry_in)
         except EntryRejected:
@@ -255,13 +254,8 @@ class LedgerStore:
             raise
         with self._append_tx() as conn:
             c = ledger_entries.c
-            existing = conn.execute(
-                select(ledger_entries).where(
-                    (c.service == entry_in.service)
-                    & (c.event_type == entry_in.event_type)
-                    & (c.payload_hash == entry_in.payload_hash)
-                )
-            ).first()
+            idem = idempotency_key(entry_in)
+            existing = conn.execute(select(ledger_entries).where(c.idem_key == idem)).first()
             if existing is not None:
                 self.counters.inc("duplicates")
                 return AppendResult(_row_to_entry(existing), False)
@@ -277,6 +271,7 @@ class LedgerStore:
                     payload_hash=d["payload_hash"],
                     prev_hash=d["prev_hash"],
                     entry_hash=d["entry_hash"],
+                    idem_key=idem,
                     model_version=d["model_version"],
                     payload=canonical_json(d["payload"]).decode()
                     if d["payload"] is not None

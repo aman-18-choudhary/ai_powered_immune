@@ -30,24 +30,53 @@ def test_append_builds_a_verifiable_chain(store):
 def test_duplicate_event_written_once(store):
     a = store.append(entry_in(1))
     b = store.append(entry_in(1))
-    assert not b.created and b.entry == a.entry
+    c = store.append(entry_in(1))  # replay of the exact same entry 3x -> one row
+    assert not b.created and not c.created and b.entry == a.entry
     assert store.head().seq == 1
-    assert store.counters.snapshot()["duplicates"] == 1
-    # same (service, event_type, payload_hash) but different actor/model: still the same entry
-    c = store.append(entry_in(1, actor="someone-else"))
-    assert not c.created and c.entry.seq == 1
+    assert store.counters.snapshot()["duplicates"] == 2
     # a different event_type or service is a different event
     assert store.append(entry_in(1, event_type="hold.resolved")).created
     assert store.append(entry_in(1, service="antibody-hub")).created
 
 
+def test_entries_differing_in_actor_model_or_refs_are_distinct_events(store):
+    """Review probe: the old (service, event_type, payload_hash) key silently dropped these."""
+    a = store.append(entry_in(1, refs=["caseA"]))
+    other_actor = store.append(entry_in(1, refs=["caseA"], actor="analyst-9"))
+    other_ref = store.append(entry_in(1, refs=["caseB"]))
+    assert other_actor.created and other_ref.created
+    assert len({a.entry.seq, other_actor.entry.seq, other_ref.entry.seq}) == 3
+    assert store.select_seqs(["caseB"], [], limit=10) == [other_ref.entry.seq]
+    mv = entry_in(1, refs=["caseA"]).model_copy(update={"model_version": "m2"})
+    assert store.append(mv).created
+    # and each of those is itself idempotent
+    assert not store.append(entry_in(1, refs=["caseB"])).created
+    assert not store.append(entry_in(1, refs=["caseA"], actor="analyst-9")).created
+    assert store.head().seq == 4
+
+
+def test_case_refs_order_does_not_make_a_new_event(store):
+    assert store.append(entry_in(1, refs=["a", "b"])).created
+    assert not store.append(entry_in(1, refs=["b", "a"])).created
+
+
+def test_hash_only_then_same_entry_with_payload_is_a_distinct_entry(store):
+    """Documented: the payload-less form and the payload-carrying form are different records."""
+    full = entry_in(1)
+    hash_only = full.model_copy(update={"payload": None})
+    a = store.append(hash_only)
+    b = store.append(full)
+    assert a.created and b.created and a.entry.payload is None and b.entry.payload is not None
+
+
 def test_concurrent_duplicate_race_yields_one_row(store):
     results = []
     barrier = threading.Barrier(8)
+    e = entry_in(1, actor="same")
 
     def go():
         barrier.wait()
-        results.append(store.append(entry_in(1)))
+        results.append(store.append(e))
 
     ts = [threading.Thread(target=go) for _ in range(8)]
     [t.start() for t in ts]
