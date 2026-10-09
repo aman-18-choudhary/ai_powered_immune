@@ -162,7 +162,9 @@ def gen_scam_campaign(
     txn_counter = 0
     camp_first_mules: list[int] = []
 
-    def mk_txn(payer_token, payee_acc, rail, amount, ts, bank_id, device, role) -> Transaction:
+    def mk_txn(
+        payer_token, payee_acc, rail, amount, ts, bank_id, device, role, payer_acc_id
+    ) -> Transaction:
         nonlocal txn_counter
         tid = stable_id("txn", "s", world.seed, seed, campaign_id, txn_counter)
         txn_counter += 1
@@ -177,6 +179,7 @@ def gen_scam_campaign(
             ts=ts,
             payee_account_age_days=max(0, (ts - payee_acc.opened_at).days),
             device_id_token=device,
+            payer_account_ref=world.payee_hash(payer_acc_id),
         )
         camp.txns.append(txn)
         camp.txn_roles[tid] = role
@@ -241,7 +244,9 @@ def gen_scam_campaign(
         for pi, (rail, amt) in enumerate(plan):
             mule_i = int(vic_mules[pi % len(vic_mules)])
             mule = mules[mule_i]
-            txn = mk_txn(vtoken, mule, rail, amt, ts, cit.bank_id, device, "victim_transfer")
+            txn = mk_txn(
+                vtoken, mule, rail, amt, ts, cit.bank_id, device, "victim_transfer", cit.account_id
+            )
             inflows[mule.account_id].append((ts, amt))
             first = first or txn
             ts = ts + timedelta(minutes=float(rng.uniform(1, 5)))
@@ -262,7 +267,7 @@ def gen_scam_campaign(
             while amount > 0.005:
                 chunk = min(amount, limit)
                 mk_txn(camp.mule_payer_tokens[mi], cashout, rail, chunk, send_ts, mule.bank_id,
-                       mule_devices[mi % 2], "mule_forward")  # fmt: skip
+                       mule_devices[mi % 2], "mule_forward", mule.account_id)  # fmt: skip
                 amount -= chunk
                 send_ts += timedelta(minutes=float(rng.uniform(1, 4)))
 

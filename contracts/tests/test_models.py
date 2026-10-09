@@ -226,3 +226,12 @@ def test_canonical_json_golden_vectors():
     )
     with pytest.raises(ValueError):
         canonical_json({"x": float("nan")})
+
+
+def test_payer_account_ref_is_optional_and_additive():
+    assert make_txn().payer_account_ref is None
+    t = make_txn(payer_account_ref="a" * 64)
+    assert Transaction.model_validate_json(t.model_dump_json()).payer_account_ref == "a" * 64
+    old = make_txn().model_dump(mode="json")
+    old.pop("payer_account_ref")
+    assert Transaction.model_validate(old).payer_account_ref is None

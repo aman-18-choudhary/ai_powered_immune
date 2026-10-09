@@ -148,6 +148,7 @@ def gen_benign_txns(world: World, days: int, seed: int) -> Iterator[Transaction]
                     ts=ts,
                     payee_account_age_days=max(0, (ts - payee.opened_at).days),
                     device_id_token=world.device_token(payer.device_id),
+                    payer_account_ref=world.payee_hash(payer.account_id),
                 )
             )
         out.sort(key=lambda t: t.ts)

@@ -40,6 +40,12 @@ class Transaction(_Frozen):
     ts: AwareDatetime
     payee_account_age_days: int
     device_id_token: str
+    # Account identity assumption (additive, optional): the keyed hash of the PAYING account, with
+    # the same function and key as ``payee_hash`` (``keyed_hash(account, "payee", key)``), so one
+    # account carries one hash whether it is paid or paying. The paying bank can compute it from
+    # its own ledger. It links a mule's incoming payments to its outgoing sweep; absent for events
+    # from producers that do not supply it (consumers then fall back to ``payer_token``).
+    payer_account_ref: str | None = None
 
     @model_validator(mode="after")
     def _check_amount(self) -> "Transaction":
