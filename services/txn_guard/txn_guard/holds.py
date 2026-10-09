@@ -20,7 +20,10 @@ create/resolve/upgrade/verify) and from the periodic ``sweep``. A failing sink n
 state change; the entry stays in the outbox.
 """
 
+import asyncio
+import hashlib
 import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -31,7 +34,7 @@ from scam_contracts.canonical import payload_hash as canonical_payload_hash
 from scam_contracts.models import LedgerEntryIn, Reason
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
-from svckit.ledger import emit_ledger, utc_ts
+from svckit.ledger import build_or_placeholder, txn_ref, utc_ts
 
 log = logging.getLogger("txn_guard")
 
@@ -99,15 +102,16 @@ def make_entry(
 ) -> AuditEntry:  # fmt: skip
     """Build one outbox entry. Everything in the payload derives from the hold's own state."""
     codes = sorted({r.code for r in reasons})
+    ref = txn_ref(txn_id)  # the guard refuses numeric ids (UPI RRNs): payloads carry txn_<hash>
     fields: dict[str, Any] = {
-        "txn_id": txn_id, "decision": decision, "decision_seq": decision_seq,
+        "txn_id": ref, "decision": decision, "decision_seq": decision_seq,
         "score": round(score, 4), "reason_codes": codes, "model_version": model_version or None,
         "rail": rail or None, "amount_bucket": amount_bucket or None,
         "deadline_ts": utc_ts(deadline) if deadline else None, "payee_ref": _bare(payee_ref),
         "call_ref": _bare(call_ref),
     }  # fmt: skip
     payload = {k: v for k, v in (fields | (extra or {})).items() if v is not None}
-    refs = [txn_id, *(r for r in (payee_ref, call_ref) if r)]
+    refs = [ref, *(r for r in (payee_ref, call_ref) if r)]
     return AuditEntry(
         event_type=event_type, txn_id=txn_id, decision=decision, decision_seq=decision_seq,
         score=round(score, 4), actor=actor, model_version=model_version, reason_codes=codes,
@@ -157,10 +161,12 @@ class InMemoryAuditSink:
 
 
 class BusAuditSink:
-    """Publishes structured, PII-checked ``LedgerEntryIn`` entries to Topics.LEDGER through
-    ``svckit.ledger.emit_ledger`` (at-least-once; the ledger absorbs exact repeats). An entry
-    queued by an older version (no payload) is sent hash-only as before. A payload the PII guard
-    refuses raises ``LedgerPayloadError`` and stays in the outbox (logged, never echoed)."""
+    """Publishes structured, PII-checked ``LedgerEntryIn`` entries to Topics.LEDGER
+    (at-least-once; the ledger absorbs exact repeats). An entry queued by an older version (no
+    payload) is sent hash-only. A payload the PII guard refuses is replaced by a fixed-shape
+    placeholder ``{txn_id, event, decision_seq, audit: payload_refused}`` so the outbox always
+    drains and the chain still records that this kind of change happened; only the hash of the
+    hold id and the error class are logged."""
 
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
@@ -175,11 +181,20 @@ class BusAuditSink:
                 ),
             )  # fmt: skip
             return
-        sent = await emit_ledger(
-            self._bus, SERVICE, entry.actor, entry.event_type, entry.payload,
+        ref = txn_ref(entry.txn_id)
+        out, refused = build_or_placeholder(
+            SERVICE, entry.actor, entry.event_type, entry.payload,
             model_version=entry.model_version or None, case_refs=entry.case_refs,
+            placeholder={"txn_id": ref, "event": entry.event_type,
+                         "decision_seq": entry.decision_seq},
+            placeholder_refs=[ref],
         )  # fmt: skip
-        assert sent.payload_hash == entry.payload_hash
+        if refused:
+            log.warning(
+                "audit payload refused by the PII guard; placeholder sent hold=%s",
+                hashlib.sha256(entry.txn_id.encode()).hexdigest()[:12],
+            )
+        await self._bus.publish(Topics.LEDGER, out.case_refs[0] if out.case_refs else SERVICE, out)
 
 
 # ------------------------------------------------------------------------------------ store
@@ -226,9 +241,21 @@ def _utcnow() -> datetime:
 class _BaseHoldStore:
     """Shared rules over primitives: ``_get``, ``_cas``, ``_open``, ``_pending_ids``, counters."""
 
-    def __init__(self, audit: AuditSink | None = None, clock: Callable[[], datetime] = _utcnow):
+    def __init__(
+        self,
+        audit: AuditSink | None = None,
+        clock: Callable[[], datetime] = _utcnow,
+        emit_wait_s: float | None = None,
+    ):
         self._audit: AuditSink = audit if audit is not None else InMemoryAuditSink()
         self._clock = clock
+        # how long a state change waits for its audit drain before moving on (the drain keeps
+        # running in the background; the periodic sweep retries): audit never delays a decision
+        self._emit_wait = (
+            emit_wait_s if emit_wait_s is not None
+            else float(os.getenv("LEDGER_EMIT_WAIT_S", "0.05"))
+        )  # fmt: skip
+        self._bg: set[asyncio.Task[None]] = set()
 
     # primitives -------------------------------------------------------------------------
     async def _get(self, txn_id: str) -> Hold | None:
@@ -280,10 +307,22 @@ class _BaseHoldStore:
                 return
 
     async def _drain_quietly(self, txn_id: str) -> None:
+        """Drain in a task and wait at most ``emit_wait_s`` for it. A slow or failing ledger never
+        delays or fails the caller: the task finishes in the background, an unfinished or failed
+        drain leaves the entry in the outbox for the next change or ``sweep``."""
+        task = asyncio.ensure_future(self._drain_logged(txn_id))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        await asyncio.wait({task}, timeout=self._emit_wait)
+
+    async def _drain_logged(self, txn_id: str) -> None:
         try:
             await self.drain_audit(txn_id)
-        except Exception:
-            log.warning("audit drain failed txn_id=%s (kept in outbox)", txn_id, exc_info=True)
+        except Exception as e:
+            log.warning(
+                "audit drain failed hold=%s error=%s (kept in outbox)",
+                hashlib.sha256(txn_id.encode()).hexdigest()[:12], type(e).__name__,
+            )  # fmt: skip
 
     async def create(
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
