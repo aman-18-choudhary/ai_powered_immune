@@ -43,13 +43,14 @@ from .features import extract_features
 from .history import CALL_RISK_WINDOW, HistoryStore
 from .holds import RANK, HoldStore
 from .model import Scorer
-from .pending import InMemoryPendingStore, PendingEntry, PendingStore
+from .pending import MAX_PENDING_SCAN, InMemoryPendingStore, PendingEntry, PendingStore
 
 log = logging.getLogger("txn_guard")
 
 DEFAULT_HOLD_DEADLINE_S = 120.0
 LATE_CODE = "LATE_CALL_RISK_POST_SETTLEMENT"
 LATE_ANTIBODY_CODE = "LATE_ANTIBODY_POST_SETTLEMENT"
+_NO_ANTIBODY = {"payee_in_antibody": 0.0, "antibody_id_prefix": 0.0, "antibody_expires_ts": 0.0}
 
 
 class TxnGuardService:
@@ -66,11 +67,14 @@ class TxnGuardService:
         hold_deadline_s: float = DEFAULT_HOLD_DEADLINE_S,
         clock: Callable[[], datetime] | None = None,
         antibodies: AntibodyLookup | None = None,
+        max_pending_scan: int = MAX_PENDING_SCAN,
     ) -> None:
         self.scorer, self.history, self.holds = scorer, history, holds
         self.bus, self.idem = bus, idem
         self.pending: PendingStore = pending or InMemoryPendingStore()
         self.antibodies = antibodies
+        self.max_pending_scan = max_pending_scan
+        self.antibody_scan_truncated = 0
         self.hold_deadline = timedelta(seconds=hold_deadline_s)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -125,7 +129,7 @@ class TxnGuardService:
                 return await self._replay(txn, existing)
             ctx = await self._h(self.history.context_for, txn, txn.ts)
             feats = extract_features(txn, ctx)
-            hit = self.antibodies.lookup(txn.payee_hash) if self.antibodies else None
+            hit = await self._lookup(txn.payee_hash)
             if hit is not None:
                 feats = feats | self._antibody_patch(hit)
             d = await self._score(txn.txn_id, feats, txn.ts)
@@ -133,7 +137,7 @@ class TxnGuardService:
             entry = PendingEntry(
                 txn_id=txn.txn_id, payer_token=txn.payer_token, ts=txn.ts, decision=d.decision,
                 score=d.score, seq=d.decision_seq, model_version=d.model_version, features=feats,
-                first_json=d.model_dump_json(), payee_hash=txn.payee_hash,
+                first_json=d.model_dump_json(), payee_hash=txn.payee_hash.lower(),
                 antibody_ids=[hit.antibody_id] if hit is not None else [],
             )  # fmt: skip
             if not await self.pending.add(entry):  # lost a cross-instance race: replay the winner
@@ -145,6 +149,12 @@ class TxnGuardService:
             await self._gap_check(txn, entry)
             self.handled += 1
             return d
+
+    async def _lookup(self, payee_hash: str) -> CachedAntibody | None:
+        """Antibody lookup off the event loop (the cache may be a blocking Redis client)."""
+        if self.antibodies is None:
+            return None
+        return await asyncio.to_thread(self.antibodies.lookup, payee_hash)
 
     async def _replay(self, txn: Transaction, entry: PendingEntry) -> TxnDecision:
         """Same bytes, same hold, same history: never a fresh score."""
@@ -160,9 +170,18 @@ class TxnGuardService:
         the context and the risk's pending scan; re-read once now that the entry exists."""
         ctx = await self._h(self.history.context_for, txn, txn.ts)
         risk = extract_features(txn, ctx)["active_call_risk"]
-        if risk > entry.features.get("active_call_risk", 0.0):
-            cur = await self.pending.get(txn.txn_id) or entry
+        cur = await self.pending.get(txn.txn_id) or entry
+        if risk > cur.features.get("active_call_risk", 0.0):
             await self._upgrade(cur, {"active_call_risk": risk})
+            cur = await self.pending.get(txn.txn_id) or cur
+        # same gap for antibodies: one applied after our lookup but before ``pending.add`` was
+        # missed by handle_antibody's pending scan; the upgrade is recorded here exactly once
+        hit = await self._lookup(txn.payee_hash)
+        if hit is not None and hit.antibody_id not in cur.antibody_ids:
+            await self._upgrade(
+                cur, self._antibody_patch(hit), late_code=LATE_ANTIBODY_CODE,
+                antibody_id=hit.antibody_id,
+            )  # fmt: skip
 
     # --------------------------------------------------------------------------- call risk
     async def handle_call_risk(self, risk: CallRisk) -> list[TxnDecision]:
@@ -201,11 +220,26 @@ class TxnGuardService:
             return []
         await self._h_cache(self.antibodies.cache.apply, ab)
         ups: list[TxnDecision] = []
-        hit = self.antibodies.cache.contains(ab.key_hash, ab.kind) if not ab.revoked else None
+        hit = (
+            None if ab.revoked
+            else await self._h_cache(self.antibodies.cache.contains, ab.key_hash, ab.kind)
+        )  # fmt: skip
         if hit is not None and ab.kind == "mule_account":
             patch = self._antibody_patch(hit)
             since = self._clock() - CALL_RISK_WINDOW
-            for e in await self.pending.recent_by_payee(ab.key_hash, since):
+            rows = await self.pending.recent_by_payee(
+                ab.key_hash.lower(), since, self.max_pending_scan + 1
+            )
+            if len(rows) > self.max_pending_scan:  # one hot payee must not stall the consumer
+                self.antibody_scan_truncated += 1
+                log.warning(
+                    "antibody late-scan truncated at %d pending transactions (newest first)",
+                    self.max_pending_scan,
+                )
+                rows = rows[: self.max_pending_scan]
+            for i, e in enumerate(rows):
+                if i and i % 50 == 0:
+                    await asyncio.sleep(0)  # yield between batches
                 async with self._lock(e.payer_token):
                     cur = await self.pending.get(e.txn_id) or e
                     if hit.antibody_id in cur.antibody_ids:
@@ -228,6 +262,11 @@ class TxnGuardService:
         hold = await self.holds.get(e.txn_id)
         if hold is not None and hold.state != "open":
             return None  # a human already resolved it
+        if antibody_id is None and self.antibodies is not None:
+            # not an antibody-driven upgrade: refresh the antibody features from the cache so a
+            # tombstoned antibody is not kept alive in the stored features
+            cur_hit = await self._lookup(e.payee_hash) if e.payee_hash else None
+            patch = {**patch, **(self._antibody_patch(cur_hit) if cur_hit else _NO_ANTIBODY)}
         feats = e.features | patch
         applied = [*e.antibody_ids, antibody_id] if antibody_id else e.antibody_ids
         d = await self._score(e.txn_id, feats, e.ts)

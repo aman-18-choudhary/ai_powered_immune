@@ -92,6 +92,7 @@ def create_app(
     startup: list[Callable[[], Awaitable[Any]]] | None = None,
     bootstrap_fn: Callable[[], Awaitable[int]] | None = None,
     bank_id: str | None = None,
+    rebootstrap_interval_s: float | None = None,
 ) -> FastAPI:
     scorer = scorer or (service.scorer if service else Scorer())
     clock = clock or (lambda: datetime.now(UTC))
@@ -102,13 +103,29 @@ def create_app(
     if sweep_interval_s is None:
         sweep_interval_s = float(os.getenv("AUDIT_DRAIN_INTERVAL_S", "5"))
 
+    if rebootstrap_interval_s is None:
+        rebootstrap_interval_s = float(os.getenv("ANTIBODY_REBOOTSTRAP_INTERVAL_S", "900"))
+
     async def sweeper() -> None:
         while True:
             try:
                 await holds.sweep()  # type: ignore[union-attr]
+                if service is not None and service.antibodies is not None:
+                    await asyncio.to_thread(service.antibodies.cache.sweep)
             except Exception:
-                log.warning("hold sweep failed", exc_info=True)
+                log.warning("hold/antibody sweep failed", exc_info=True)
             await asyncio.sleep(sweep_interval_s)
+
+    async def rebootstrapper() -> None:
+        """Periodic re-bootstrap: repairs antibody events lost to the DLQ or a long outage. Merge-
+        safe with live events (sticky revoked, greatest expiry)."""
+        while True:
+            await asyncio.sleep(rebootstrap_interval_s)
+            try:
+                assert bootstrap_fn is not None
+                await bootstrap_fn()
+            except Exception:
+                log.warning("antibody re-bootstrap failed", exc_info=True)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -123,6 +140,8 @@ def create_app(
             )
         if sweep_interval_s > 0:
             tasks.append(asyncio.create_task(sweeper()))
+        if bootstrap_fn is not None and rebootstrap_interval_s > 0:
+            tasks.append(asyncio.create_task(rebootstrapper()))
         try:
             yield
         finally:
@@ -141,6 +160,7 @@ def create_app(
         return True
 
     app = FastAPI(title="txn-guard", lifespan=lifespan)
+    app.state.service = service
     app.include_router(
         make_health_router(
             ready,
@@ -262,6 +282,10 @@ def _antibody_metrics(service: TxnGuardService | None) -> str:
     return (
         "# TYPE txn_guard_antibody_cache_size gauge\n"
         f"txn_guard_antibody_cache_size {look.cache.size()}\n"
+        "# TYPE txn_guard_antibody_cache_evictions_total counter\n"
+        f"txn_guard_antibody_cache_evictions_total {look.cache.evictions()}\n"
+        "# TYPE txn_guard_antibody_scan_truncated_total counter\n"
+        f"txn_guard_antibody_scan_truncated_total {service.antibody_scan_truncated}\n"
         "# TYPE txn_guard_antibody_matches_total counter\n"
         f"txn_guard_antibody_matches_total {int(s['hits'])}\n"
         "# TYPE txn_guard_antibody_bootstrap_failed gauge\n"
@@ -285,12 +309,20 @@ def create_service_app() -> FastAPI:
 
     url = os.environ["REDIS_URL"]
     kafka = os.getenv("KAFKA_BOOTSTRAP")
+    hub_url_env = os.getenv("HUB_URL")
     bus: Bus = KafkaBus(kafka) if kafka else InMemoryBus()
     aredis = Redis.from_url(url)
     hist_client = redis_sync.Redis.from_url(url)
     idem = RedisIdempotencyStore(aredis)
     holds = RedisHoldStore(aredis, audit=BusAuditSink(bus))
-    bank_id = os.getenv("TXN_BANK_ID", "bank")
+    bank_id = os.getenv("TXN_BANK_ID", "")
+    if not bank_id:
+        if hub_url_env or kafka:
+            raise RuntimeError(
+                "TXN_BANK_ID must be set when HUB_URL or KAFKA_BOOTSTRAP is configured: two banks "
+                "sharing a default would share a consumer group and a Redis prefix"
+            )
+        bank_id = "bank"
     cache = RedisAntibodyCache(
         hist_client,
         capacity=int(os.getenv("ANTIBODY_CACHE_CAPACITY", str(DEFAULT_CAPACITY))),
@@ -311,7 +343,10 @@ def create_service_app() -> FastAPI:
         closers.append(client.aclose)
 
         async def bootstrap_fn() -> int:  # noqa: F811
-            n = await bootstrap(cache, client, bank_id, stats=lookup.stats)
+            n = await bootstrap(
+                cache, client, bank_id, stats=lookup.stats,
+                deadline_s=float(os.getenv("ANTIBODY_BOOTSTRAP_DEADLINE_S", "15")),
+            )  # fmt: skip
             if lookup.use_bloom:
                 try:
                     snap = await client.bloom(bank_id)

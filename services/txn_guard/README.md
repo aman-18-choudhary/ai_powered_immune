@@ -210,8 +210,12 @@ and `consumer.run_antibody_consumer` feed it.
   `antibody_id` (a tombstone removes the entry; an older or later non-revoked event for the same id
   never resurrects it), a NEW `antibody_id` for the same key re-activates, otherwise the greatest
   `expires_at` wins, expired entries (`expires_at <= now`) are ignored and purged. `apply` is
-  idempotent. In-memory (default capacity 100,000, soonest-expiring evicted) or Redis
-  (`RedisAntibodyCache`, memory bounded by per-key TTL).
+  idempotent. In-memory or Redis (`RedisAntibodyCache`, the deployed configuration). Both enforce
+  `ANTIBODY_CACHE_CAPACITY` (default 100,000): when full the soonest-expiring OTHER entries are
+  evicted (never the one just applied), counted in `txn_guard_antibody_cache_evictions_total` and
+  logged as a rate-limited WARNING; an evicted antibody is not enforced until the next bootstrap
+  (fail-open at capacity). Measured ~206 B/entry in-memory (about 300-350 B with the key string,
+  30-35 MB at the default); tombstones are bounded by the same capacity (in Redis by TTL).
 * **Consumer**: `antibody.published`, one consumer group per bank instance
   (`txn-guard-antibody-<TXN_BANK_ID>`, so every bank sees every event); malformed events are
   retried then dead-lettered.
@@ -220,6 +224,15 @@ and `consumer.run_antibody_consumer` feed it.
   `X-Principal-Bank` and `X-Gateway-Secret`. Optional Bloom snapshot (`ANTIBODY_BLOOM=1`) is a
   negative pre-check only: a Bloom hit never blocks (it is confirmed against the exact cache), and a
   Bloom miss is ignored for keys touched by an event since the snapshot.
+* **DLQ and repair**: an antibody event that fails 3 times goes to `antibody.published.dlq`; the
+  miss is repaired only by bootstrap, so the service re-bootstraps every
+  `ANTIBODY_REBOOTSTRAP_INTERVAL_S` (default 900, 0 = off; merge-safe with live events because a
+  revoked antibody stays revoked). Startup bootstrap is bounded by `ANTIBODY_BOOTSTRAP_DEADLINE_S`
+  (default 15); malformed items are skipped and counted. `TXN_BANK_ID` is mandatory when `HUB_URL`
+  or `KAFKA_BOOTSTRAP` is set.
+* **Late scan**: one antibody event re-scores at most `max_pending_scan` (500) pending
+  transactions to that payee, newest first (log + `txn_guard_antibody_scan_truncated_total` when
+  truncated); the payee index keeps only ~30 minutes.
 * **Staleness / failure**: a new antibody is enforced after bus latency (about 6 ms in-process in the
   acceptance test); a bank that was offline only catches up through bootstrap, so an unknown
   antibody is not enforced until then (fail-open). If the hub is unreachable at boot a WARNING is
