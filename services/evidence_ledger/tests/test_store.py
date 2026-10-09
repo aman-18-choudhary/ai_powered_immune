@@ -291,3 +291,20 @@ def test_export_history_is_queryable_but_not_part_of_the_case(store):
     assert store.select_seqs(["case-x"], [], limit=10, exclude_event="package.exported") == [1]
     assert store.select_seqs(["case-x"], [], limit=10) == [1, 2]
     assert [e.seq for e in store.refs_page("case-x", "package.exported", 10)] == [2]
+
+
+# ---------------------------------------------------------------- fix round 2, item 3
+@pytest.mark.parametrize(
+    "mv", ["9876543210123", "v-9876543210", "model@okaxis", "a+919876543210", "x" * 65]
+)
+def test_model_version_goes_through_the_identifier_guard(store, mv):
+    e = entry_in(1).model_copy(update={"model_version": mv})
+    with pytest.raises(EntryRejected):
+        store.append(e)
+
+
+@pytest.mark.parametrize(
+    "mv", ["gbm-v1", "clf-v1", "rules-v1", "rules-fallback-v1", "m1", "txn-v3", "2026.03.1"]
+)
+def test_real_model_versions_are_accepted(store, mv):
+    assert store.append(entry_in(1).model_copy(update={"model_version": mv})).created

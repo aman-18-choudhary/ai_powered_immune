@@ -9,7 +9,7 @@ from typing import Any
 
 from scam_contracts.canonical import canonical_json, payload_hash
 from scam_contracts.models import LedgerEntry, LedgerEntryIn
-from svckit.pii import json_has_identifier, string_has_identifier
+from svckit.pii import contains_identifier, json_has_identifier, string_has_identifier
 
 from .verify import GENESIS, compute_entry_hash, entry_dict, ts_str
 
@@ -25,6 +25,7 @@ __all__ = [
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
 _ACTOR_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,100}(@[a-z0-9_-]{2,32})?$")  # "sub@bank_a" allowed
+_VERSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -41,8 +42,11 @@ def validate_entry(e: LedgerEntryIn) -> None:
         raise EntryRejected("bad_field")
     if not _ACTOR_RE.match(e.actor):
         raise EntryRejected("bad_field")
-    if e.model_version is not None and not _NAME_RE.match(e.model_version):
-        raise EntryRejected("bad_field")
+    if e.model_version is not None:
+        if not _VERSION_RE.match(e.model_version):
+            raise EntryRejected("bad_field")
+        if contains_identifier(e.model_version):  # strict: no hex-id exemption for versions
+            raise EntryRejected("pii")
     if not _HASH_RE.match(e.payload_hash):
         raise EntryRejected("bad_field")
     if any(string_has_identifier(x.replace("@", "-")) for x in (e.service, e.actor, e.event_type)):
