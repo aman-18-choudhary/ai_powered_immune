@@ -1,0 +1,143 @@
+/*
+ * Design tokens, three layers.
+ *   1. primitive  raw values (palette, scale). Never used by components directly.
+ *   2. semantic   meaning (surface, text, safe/warn/danger/intel/flow). Theme switches here.
+ *   3. component  per-component decisions built from semantic tokens (panel, chip, pill...).
+ * Tailwind consumes the semantic + component layer through the @theme block in globals.css.
+ */
+
+:root {
+  /* ---- 1. primitive ---------------------------------------------------- */
+  --p-ink-1000: #070a10;
+  --p-ink-950: #0b0f17;
+  --p-ink-900: #111827;
+  --p-ink-850: #151d2e;
+  --p-ink-800: #1b2538;
+  --p-ink-700: #2a3650;
+  --p-slate-50: #f6f8fc;
+  --p-slate-100: #eef2f8;
+  --p-slate-200: #dde4ef;
+  --p-slate-300: #c3cddd;
+  --p-slate-400: #94a3b8;
+  --p-slate-500: #7b8aa3;
+  --p-slate-700: #3b4a63;
+  --p-slate-900: #121a2b;
+  --p-emerald-300: #6ee7b7;
+  --p-emerald-400: #34d399;
+  --p-emerald-700: #047857;
+  --p-amber-300: #fcd34d;
+  --p-amber-400: #fbbf24;
+  --p-amber-700: #a16207;
+  --p-rose-400: #fb7185;
+  --p-rose-500: #f43f5e;
+  --p-rose-700: #be123c;
+  --p-violet-400: #a78bfa;
+  --p-violet-500: #8b5cf6;
+  --p-violet-700: #6d28d9;
+  --p-cyan-400: #22d3ee;
+  --p-cyan-700: #0e7490;
+
+  --p-space-1: 0.25rem;
+  --p-space-2: 0.5rem;
+  --p-space-3: 0.75rem;
+  --p-space-4: 1rem;
+  --p-space-6: 1.5rem;
+  --p-space-8: 2rem;
+  --p-radius-sm: 8px;
+  --p-radius-md: 12px;
+  --p-radius-lg: 16px;
+  --p-radius-xl: 22px;
+  --p-font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --p-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --p-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --p-dur-fast: 120ms;
+  --p-dur-base: 200ms;
+  --p-dur-slow: 420ms;
+
+  /* ---- 2. semantic (dark default) ------------------------------------- */
+  --bg: var(--p-ink-950);
+  --bg-sunken: var(--p-ink-1000);
+  --surface: color-mix(in srgb, var(--p-ink-900) 78%, transparent);
+  --surface-solid: var(--p-ink-900);
+  --surface-raised: color-mix(in srgb, var(--p-ink-850) 88%, transparent);
+  --surface-hover: color-mix(in srgb, var(--p-ink-800) 70%, transparent);
+  --border: rgb(255 255 255 / 0.08);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --fg: var(--p-slate-100);
+  --fg-muted: var(--p-slate-400);
+  --fg-subtle: var(--p-slate-500);
+  --fg-on-accent: #06090f;
+
+  --safe: var(--p-emerald-400);
+  --warn: var(--p-amber-400);
+  --danger: var(--p-rose-500);
+  --danger-text: var(--p-rose-400);
+  --intel: var(--p-violet-400);
+  --intel-strong: var(--p-violet-500);
+  --flow: var(--p-cyan-400);
+
+  --safe-soft: color-mix(in srgb, var(--safe) 14%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 16%, transparent);
+  --intel-soft: color-mix(in srgb, var(--intel-strong) 18%, transparent);
+  --flow-soft: color-mix(in srgb, var(--flow) 14%, transparent);
+
+  --focus-ring: var(--p-cyan-400);
+  --map-land: color-mix(in srgb, var(--p-slate-400) 12%, transparent);
+  --map-land-stroke: rgb(255 255 255 / 0.14);
+  --grid-line: rgb(255 255 255 / 0.035);
+  --aurora-a: var(--p-violet-500);
+  --aurora-b: var(--p-cyan-400);
+  --aurora-opacity: 0.16;
+  --noise-opacity: 0.05;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 40px -24px rgb(0 0 0 / 0.7);
+
+  /* ---- 3. component --------------------------------------------------- */
+  --panel-bg: var(--surface);
+  --panel-border: var(--border);
+  --panel-radius: var(--p-radius-lg);
+  --panel-blur: 14px;
+  --panel-glow: 0 0 0 1px rgb(255 255 255 / 0.02) inset;
+  --chip-bg: rgb(255 255 255 / 0.05);
+  --chip-border: var(--border);
+  --pill-sim-bg: var(--warn-soft);
+  --pill-sim-fg: var(--p-amber-300);
+  --phone-bezel: #05070c;
+  --phone-screen: #0a0e16;
+  color-scheme: dark;
+}
+
+:root.light,
+:root[data-theme="light"] {
+  --bg: var(--p-slate-50);
+  --bg-sunken: var(--p-slate-100);
+  --surface: color-mix(in srgb, #ffffff 82%, transparent);
+  --surface-solid: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: var(--p-slate-100);
+  --border: rgb(15 23 42 / 0.1);
+  --border-strong: rgb(15 23 42 / 0.2);
+  --fg: var(--p-slate-900);
+  --fg-muted: var(--p-slate-700);
+  --fg-subtle: #566379;
+  --fg-on-accent: #ffffff;
+
+  --safe: var(--p-emerald-700);
+  --warn: var(--p-amber-700);
+  --danger: var(--p-rose-700);
+  --danger-text: var(--p-rose-700);
+  --intel: var(--p-violet-700);
+  --intel-strong: var(--p-violet-700);
+  --flow: var(--p-cyan-700);
+  --focus-ring: var(--p-violet-700);
+  --map-land: color-mix(in srgb, var(--p-slate-700) 10%, transparent);
+  --map-land-stroke: rgb(15 23 42 / 0.22);
+  --grid-line: rgb(15 23 42 / 0.05);
+  --aurora-opacity: 0.12;
+  --noise-opacity: 0.04;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 14px 30px -22px rgb(15 23 42 / 0.35);
+  --pill-sim-fg: var(--p-amber-700);
+  --phone-bezel: #1a2233;
+  --phone-screen: #f8fafd;
+  color-scheme: light;
+}
