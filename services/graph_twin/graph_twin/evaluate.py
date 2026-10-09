@@ -155,11 +155,46 @@ def evaluate(seed: int, *, n_citizens: int = 600, days: int = 7, n_campaigns: in
     precision = tp / (tp + fp) if tp + fp else 1.0
     recall = len(detected & all_gt) / len(all_gt)
     benign_rings = sum(1 for r in rings if not (r.core & all_gt))
+    takedown = {}
+    from .takedown import (
+        best_flow,
+        exhaustive_flow,
+        extract_flow_input,
+        simulate_flow,
+        takedown_timeline,
+    )
+
+    for c in camps:
+        gt = gt_members[c.campaign_id]
+        hit = sorted((r for r in rings if r.core & gt), key=lambda r: r.ring_id)
+        if not hit:
+            continue
+        r = hit[0]
+        fi = extract_flow_input(twin.tg.g, r, twin.cfg)
+        row: dict = {"members": len(r.members)}
+        for k in (1, 2, 3):
+            gr = simulate_flow(fi, best_flow(fi, k, twin.cfg), twin.cfg).reduction_pct
+            if len(r.members) <= 12:
+                op = simulate_flow(fi, exhaustive_flow(fi, k, twin.cfg), twin.cfg).reduction_pct
+            else:
+                op = None
+            row[f"k{k}"] = {
+                "greedy_pct": gr, "optimal_pct": op,
+                "gap_pct_points": None if op is None else round(op - gr, 2),
+            }  # fmt: skip
+        det = rep.detect_ts[r.ring_id]
+        pick = best_flow(fi, 2, twin.cfg)
+        tl = takedown_timeline(store, r, det, pick, twin.cfg)
+        row["freeze_at_detection"] = {
+            "harm_before_inr": str(tl.harm_before_inr), "harm_after_inr": str(tl.harm_after_inr),
+            "reduction_pct": tl.reduction_pct, "observed_after_inr": str(tl.observed_after_ts_inr),
+        }  # fmt: skip
+        takedown[c.campaign_id] = row
     store.close()
     return {
         "seed": seed, "events": rep.events, "campaigns": n_campaigns, "rings": len(rings),
         "benign_rings": benign_rings, "member_precision": round(precision, 4),
-        "member_recall": round(recall, 4), "per_campaign": per_campaign,
+        "member_recall": round(recall, 4), "per_campaign": per_campaign, "takedown": takedown,
         "txn_ground_truth_check": all(truth.campaign_of(t.txn_id) for c in camps for t in c.txns),
     }  # fmt: skip
 
