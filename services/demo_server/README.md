@@ -211,6 +211,16 @@ simulated citizen is exposed.
   id, duration; no query string, headers, body or token; run uvicorn with `access_log=False`,
   which `python -m demo_server` does), per-role rate limiting that fails open, CORS only for the
   listed origins, `nosniff`, `frame-ancestors 'none'`, `no-referrer`, `no-store` on `/api`.
+* Log redaction (`demo_server/logredact.py`, installed by the app factory and `__main__`): the
+  WebSocket token travels in `?token=` (the client contract) and uvicorn logs the request target
+  of WebSocket connections even with `access_log=False`. Every log record created by Python
+  logging in this process after the app is created passes through a redactor that replaces
+  `token=<value>`, `Authorization`/`Bearer` values and anything shaped like a JWT, and rewrites
+  `call_<hex>` call ids to their `call_ref:` form. Tested against real uvicorn connect, reject
+  and disconnect. Not covered: output that does not go through Python logging (for example a
+  reverse proxy's own access log in front of this server, which will see the query string).
+  `python -m demo_server` also sets `ws_max_size=4096`, ping interval/timeout 20 s and
+  `server_header=False`.
 * The in-process ledger app trusts principal headers only with a per-process random
   `LEDGER_GATEWAY_SECRET` (set in the process environment at start unless already set), compared
   in constant time by the ledger.

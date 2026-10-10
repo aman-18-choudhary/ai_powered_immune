@@ -24,7 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from txn_guard.holds import HoldConflict, HoldNotFound
 
-from . import benchmark, citizen, evidence, geo
+from . import benchmark, citizen, evidence, geo, logredact
 from .auth import AuthError, Principal, code_ok, decode_token, issue_token
 from .config import ROLES, Settings
 from .engine import SPEED_MAX, SPEED_MIN, Engine, Run
@@ -124,6 +124,7 @@ def create_app(
     sleep: SleepFn = asyncio.sleep,
     engine: Engine | None = None,
 ) -> FastAPI:
+    logredact.install()  # also applies under `uvicorn demo_server.api:create_app --factory`
     cfg = settings or Settings.from_env()
     eng = engine or Engine(cfg, sleep=sleep)
     limiter = RateLimiter(cfg.rate_limits, cfg.rate_window_s)
