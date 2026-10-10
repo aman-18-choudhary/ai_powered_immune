@@ -342,24 +342,65 @@ export interface Metric {
 export interface BenchHeadline {
   precision: Metric;
   recall: Metric;
+  /** Benign transactions that were held (hold_verify). */
   fpr: Metric;
+  /** Benign transactions that got a step-up or a hold. */
   flagged_fpr: Metric;
   flagged_recall: Metric;
   f1: Metric;
+  step_up_benign_rate?: Metric;
   n_benign: number;
   n_scam: number;
+  tp?: number;
+  fp?: number;
+  fn?: number;
+  tn?: number;
+}
+export interface BenchAblation extends BenchHeadline {
+  victim_transfer_recall?: Metric;
+  mule_forward_recall?: Metric;
+  mean_share_post_detection_held?: Metric;
+  money_prevented_upper_bound_inr?: string;
+  money_at_risk_after_first_hold_inr?: string;
+}
+export interface BenchRole {
+  n: number;
+  held: number;
+  flagged: number;
+  recall: Metric;
+  flagged_recall: Metric;
+}
+export interface BenchSensitivity {
+  label: string;
+  gate: "none" | "label" | "hold" | string;
+  delay_s: number | null;
+  victim_transfer_recall: Metric;
+  mean_share_post_detection_held: Metric;
+  antibodies_published?: number | null;
+  antibody_matches?: number | null;
+  benign_matches?: number | null;
+}
+export interface BenchHero {
+  seeds: number;
+  counts: Record<string, number>;
+  model_only: Record<string, number>;
+  with_antibody: Record<string, number>;
+  mule_age_days_range?: number[];
 }
 export interface BenchmarkSummary {
   headline: BenchHeadline;
   per_rail: Record<string, BenchHeadline>;
-  per_role?: Record<string, unknown>;
-  ablations: Record<string, BenchHeadline & Record<string, unknown>>;
-  sensitivity: { label: string; delay_s: number | null; victim_transfer_recall: Metric; mean_share_post_detection_held: Metric }[];
+  per_role?: Record<string, BenchRole>;
+  ablations: Record<string, BenchAblation>;
+  sensitivity: BenchSensitivity[];
   limitations: string[];
-  hero?: { counts: Record<string, number>; seeds: number };
-  latency_ms?: { n: number; p50: number; p99: number };
-  meta: { seed: number; git_commit: string; runtime_s?: number; model_versions?: Record<string, string> };
+  hero?: BenchHero | null;
+  latency_ms?: { n: number; p50: number; p99: number } | null;
+  antibody?: { confirm_delay_s?: number; stage_enabled?: boolean };
+  calls?: Record<string, number>;
+  meta: { seed: number; git_commit: string; runtime_s?: number | null; model_versions?: Record<string, string>; command?: string };
   config?: Record<string, number>;
+  schema_version?: number;
 }
 export type VerifyStatus = "PASS_PINNED" | "INTEGRITY_OK_UNPINNED" | "FAIL";
 export interface VerifyResult {
