@@ -173,6 +173,11 @@ def create_app(
             items.append({"loc": loc, "msg": e["msg"], "type": e["type"]})
         return JSONResponse({"error": "invalid_request", "detail": items}, status_code=422)
 
+    @app.exception_handler(Exception)
+    async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
+        log.error("unhandled error type=%s", type(exc).__name__)
+        return JSONResponse({"error": "internal_error"}, status_code=500)
+
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         names = {404: "not_found", 405: "method_not_allowed", 401: "unauthorized",
@@ -558,6 +563,9 @@ def create_app(
     # ------------------------------------------------------------ static + SPA
     static_root = cfg.static_dir.resolve() if cfg.static_dir else None
 
+    def _static_file(path: Path) -> Response:
+        return FileResponse(path)
+
     @app.get("/{path:path}", include_in_schema=False)
     async def static(path: str) -> Response:
         if path.startswith("api/") or path == "api":
@@ -566,16 +574,16 @@ def create_app(
             if path in ("", "index.html"):
                 return HTMLResponse(PLACEHOLDER)
             raise _err(404, "not_found")
-        candidate = (static_root / path).resolve() if path else static_root / "index.html"
-        try:
-            candidate.relative_to(static_root)
-        except ValueError:
-            raise _err(404, "not_found") from None
-        if candidate.is_file():
-            return FileResponse(candidate)
         index = static_root / "index.html"
-        if index.is_file() and "." not in Path(path).name:
-            return FileResponse(index)  # SPA fallback
+        try:  # NUL bytes, over-long names and similar make resolve()/is_file() raise
+            candidate = (static_root / path).resolve() if path else index
+            candidate.relative_to(static_root)
+            if candidate.is_file():
+                return _static_file(candidate)
+            if index.is_file() and "." not in Path(path).name:
+                return _static_file(index)  # SPA fallback
+        except (ValueError, OSError):
+            pass
         raise _err(404, "not_found")
 
     return app

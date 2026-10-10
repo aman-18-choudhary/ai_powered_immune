@@ -49,7 +49,7 @@ Without `DEMO_STATIC_DIR` the root path serves a small placeholder page.
 
 All routes are under `/api`. Errors are `{"error": code, "detail"?: string}`; validation errors
 (`422`, `error: "invalid_request"`) carry `loc`/`msg`/`type` only, never the submitted value or
-unknown key names. Bodies are capped at 64 KiB (`413`). Rate limits are per role per minute
+unknown key names. Bodies are capped at 64 KiB (`413`). An unhandled error returns `500 {"error":"internal_error"}` without detail; static paths that cannot be resolved (NUL, over-long, invalid) return `404`. Rate limits are per role per minute
 (citizen 30, analyst/officer 300, admin 600; unauthenticated login 60), fixed window, fail open.
 
 | Method and path | Roles | Notes |

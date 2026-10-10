@@ -63,13 +63,13 @@ class SecurityMiddleware:
                 seen += len(msg.get("body", b""))
                 if seen > self.max and not rejected:
                     rejected = True
-                    await tracking_send_raw(413)
+                    await tracking_send_raw(413, "payload_too_large")
                     raise _TooLarge
             return msg
 
-        async def tracking_send_raw(code: int) -> None:
+        async def tracking_send_raw(code: int, error: str) -> None:
             nonlocal status, started
-            body = b'{"error":"payload_too_large"}'
+            body = b'{"error":"' + error.encode() + b'"}'
             status = code
             started = True
             hdrs = [
@@ -104,7 +104,7 @@ class SecurityMiddleware:
         try:
             if declared > self.max:
                 rejected = True
-                await tracking_send_raw(413)
+                await tracking_send_raw(413, "payload_too_large")
                 return
             await self.app(scope, counting_receive, tracking_send)
         except _TooLarge:
@@ -113,7 +113,7 @@ class SecurityMiddleware:
             if not rejected:
                 if not started:
                     log.error("unhandled error rid=%s", rid)
-                    await tracking_send_raw(500)
+                    await tracking_send_raw(500, "internal_error")
                     return
                 raise
         finally:
