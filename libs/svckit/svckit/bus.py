@@ -132,8 +132,16 @@ async def consume(
         msg: T | None
         try:
             msg = model.model_validate_json(raw)
-        except ValidationError:
-            log.warning("unparseable message on %s", topic, exc_info=True)
+        except ValidationError as e:
+            # type + stable error codes + a correlation key only: pydantic's message and
+            # ``input_value`` would put payload bytes (tokens, hashes) into the log
+            codes = sorted(
+                {str(x["type"]) for x in e.errors(include_input=False, include_url=False)}
+            )
+            log.warning(
+                "unparseable message on %s (error=%s codes=%s len=%d key=%s)",
+                topic, type(e).__name__, ",".join(codes)[:120], len(raw), message_key(raw)[:12],
+            )  # fmt: skip
             msg = None
         base = getattr(msg, "idempotency_key", None) or message_key(raw)
         key = f"{topic}:{group}:{base}"
@@ -146,14 +154,12 @@ async def consume(
                     if msg is None:
                         raise ValueError("unparseable message")
                     await handler(msg)
-                except Exception:
+                except Exception as e:
+                    # exception TYPE only: its message and traceback locals may hold payload
                     log.warning(
-                        "handler failed on %s (attempt %d/%d)",
-                        topic,
-                        attempt,
-                        max_retries,
-                        exc_info=True,
-                    )
+                        "handler failed on %s (attempt %d/%d, error=%s, key=%s)",
+                        topic, attempt, max_retries, type(e).__name__, message_key(raw)[:12],
+                    )  # fmt: skip
                     if attempt < max_retries and backoff_s > 0:
                         await asyncio.sleep(backoff_s * 2 ** (attempt - 1))
                 else:

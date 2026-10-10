@@ -173,3 +173,56 @@ async def test_readyz_extra_fields():
     app.include_router(make_health_router(ready, extra=lambda: {"model_version": "m1"}))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/readyz")).json() == {"status": "ready", "model_version": "m1"}
+
+
+SECRET = "tok_SECRET_payload_9f3a77"
+
+
+async def _logs_for(raw: bytes, caplog, handler=None, model=Reason) -> str:
+    import logging
+
+    bus = InMemoryBus()
+    await bus.publish_raw("t", "k", raw)
+
+    async def noop(m) -> None:
+        return None
+
+    with caplog.at_level(logging.DEBUG, logger="svckit"):
+        await _run(bus, handler or noop, InMemoryIdempotencyStore(), model=model)
+    text = []
+    for rec in caplog.records:
+        text.append(rec.getMessage())
+        if rec.exc_info:  # whatever a formatter would print from the traceback
+            import traceback
+
+            text.append("".join(traceback.format_exception(*rec.exc_info)))
+        text.append(str(rec.__dict__.get("args", "")))
+    return "\n".join(text)
+
+
+async def test_unparseable_message_is_not_logged(caplog):
+    raw = f'{{"code": "{SECRET}", "detail": '.encode()  # truncated JSON
+    out = await _logs_for(raw, caplog)
+    assert (
+        "unparseable" in out
+        and SECRET not in out
+        and "payload" not in out.replace("unparseable message", "")
+    )
+    assert message_key(raw)[:12] in out  # a stable correlation key instead of the payload
+
+
+async def test_schema_invalid_message_is_not_logged(caplog):
+    raw = (f'{{"code": "{SECRET}", "detail": "d", "weight": "{SECRET}"}}').encode()
+    out = await _logs_for(raw, caplog)
+    assert "unparseable" in out and SECRET not in out
+    assert "float" in out or "type" in out  # the error TYPE / code is kept
+
+
+async def test_handler_failure_log_has_no_exception_message(caplog):
+    raw = Reason(code="X", detail="d", weight=0.5).model_dump_json().encode()
+
+    async def boom(m) -> None:
+        raise RuntimeError(f"cannot process {SECRET}")
+
+    out = await _logs_for(raw, caplog, handler=boom)
+    assert "handler failed" in out and "RuntimeError" in out and SECRET not in out
