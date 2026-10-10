@@ -1,0 +1,15 @@
+{
+ "items": [
+  {
+   "checkpoint_id": "cp-0000000012",
+   "seq": 12,
+   "entry_hash": "bcde692339ad6ac7c30f05f407344de57beb31cab039ab5d669ac2ac65f47e7f",
+   "count": 12,
+   "ts": "2026-01-01T00:00:14.000000Z",
+   "key_id": "68f1cd273ce4f24b",
+   "signature_b64": "BZ1DN1Yi9TZAKbG+1pBVXOChcpnxLyS1916VuSSoKP4ToV5YLkzqKYglOiN0LwtIVcwbZhcl+Rau+xN3VRFPAw=="
+  }
+ ],
+ "next_from_seq": null,
+ "simulated_clock": true
+}

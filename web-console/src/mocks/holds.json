@@ -8,6 +8,7 @@
    "decision": "hold_verify",
    "decision_seq": 1,
    "score": 0.85,
+   "rail": "UPI",
    "reasons": [
     {
      "code": "ACTIVE_SCAM_CALL",
@@ -27,10 +28,9 @@
     {
      "code": "CALL_RISK_AMOUNT_GUARD",
      "weight": 0.8494,
-     "detail": "Scam-call risk 1.00 active and amount (Rs 16,000) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
+     "detail": "Scam-call risk 1.00 active and amount (INR 10k-100k) is far above this payer's norm to a new/young/recently-added payee; policy floor to hold_verify"
     }
    ],
-   "rail": "UPI",
    "amount_bucket": "10k-100k",
    "amount_inr": "16000.00",
    "payee_ref": "2315111f9fbd",
@@ -51,6 +51,7 @@
    "decision": "hold_verify",
    "decision_seq": 1,
    "score": 0.9896,
+   "rail": "UPI",
    "reasons": [
     {
      "code": "YOUNG_PAYEE_ACCOUNT",
@@ -73,7 +74,6 @@
      "detail": "First payment from this payer to this payee"
     }
    ],
-   "rail": "UPI",
    "amount_bucket": "10k-100k",
    "amount_inr": "14202.00",
    "payee_ref": "10d28f0f7677",
@@ -94,6 +94,7 @@
    "decision": "hold_verify",
    "decision_seq": 1,
    "score": 0.9,
+   "rail": "UPI",
    "reasons": [
     {
      "code": "AMOUNT_ANOMALY",
@@ -111,7 +112,6 @@
      "detail": "Payee matches a confirmed mule_account antibody 9352d6a9 (expires 2026-01-20); policy floor to hold_verify"
     }
    ],
-   "rail": "UPI",
    "amount_bucket": "10k-100k",
    "amount_inr": "13332.00",
    "payee_ref": "2315111f9fbd",
@@ -132,6 +132,7 @@
    "decision": "hold_verify",
    "decision_seq": 1,
    "score": 0.9621,
+   "rail": "UPI",
    "reasons": [
     {
      "code": "YOUNG_PAYEE_ACCOUNT",
@@ -149,7 +150,6 @@
      "detail": "First payment from this payer to this payee"
     }
    ],
-   "rail": "UPI",
    "amount_bucket": "10k-100k",
    "amount_inr": "19187.00",
    "payee_ref": "db4337516e6e",
@@ -170,6 +170,7 @@
    "decision": "hold_verify",
    "decision_seq": 1,
    "score": 1.0,
+   "rail": "UPI",
    "reasons": [
     {
      "code": "YOUNG_PAYEE_ACCOUNT",
@@ -187,7 +188,6 @@
      "detail": "First payment from this payer to this payee"
     }
    ],
-   "rail": "UPI",
    "amount_bucket": "10k-100k",
    "amount_inr": "18621.00",
    "payee_ref": "10d28f0f7677",

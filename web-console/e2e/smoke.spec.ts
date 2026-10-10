@@ -19,12 +19,11 @@ test("golden path: officer -> play -> call alert -> hold -> antibody applied -> 
   await expect(page.getByText("Antibody applied").first()).toBeVisible();
   await expect(page.getByText("Blocked by shared antibody")).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "Victim B protected" })).toBeVisible({ timeout: 240_000 });
+  await expect(page.getByRole("heading", { name: "Victim B protected" })).toBeVisible({ timeout: 150_000 });
   await page.getByTestId("verify-offline").click();
   await expect(page.getByTestId("verify-status")).toHaveText("PASS_PINNED");
   await expect(page.getByLabel("Verifier output")).toContainText("PASS");
-  // The only tolerated console error: the one-off 422 when probing optional cinematic pacing on a server that lacks it.
-  expect(errors.filter((e) => !e.includes("422"))).toEqual([]);
+  expect(errors).toEqual([]);
 });
 
 test("command centre renders KPIs and the ring takedown simulator", async ({ page }) => {

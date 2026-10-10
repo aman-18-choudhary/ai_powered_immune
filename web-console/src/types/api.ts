@@ -42,6 +42,10 @@ export interface DemoState {
   banks?: Banks;
   scenario_kind?: string;
   scenario_note?: string;
+  pacing?: "real" | "cinematic" | string;
+  /** Total length of the pacing timeline (seconds at 1x). */
+  wall_duration?: number;
+  wall_offset?: number;
 }
 
 export interface Banks {
@@ -62,6 +66,8 @@ export interface EventBase {
   id: number;
   t: number;
   wall: string;
+  /** Position on the run's pacing timeline (seconds at 1x); equals `t` under real pacing. */
+  wall_offset?: number;
   run_id?: string;
 }
 
@@ -200,6 +206,9 @@ export interface ScenarioSnapshot extends EventBase {
   seed?: number;
   scenario_kind?: string;
   scenario_note?: string;
+  pacing?: string;
+  wall_duration?: number;
+  wall_offset?: number;
   events: StreamEvent[];
 }
 

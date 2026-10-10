@@ -1,0 +1,419 @@
+{
+ "items": [
+  {
+   "seq": 1,
+   "ts": "2026-01-01T00:00:01.000000Z",
+   "service": "call-guard",
+   "actor": "system:call-guard",
+   "event_type": "callrisk.alert",
+   "payload_hash": "55d33a1a3fbf6802f4d0f27cee60fc3298773fc7915deea1a971e8c9c98649fb",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "entry_hash": "e4c97f118fb31a6809cec904f4c05e54723382a8d5ac166b9b52c20a8c327f0c",
+   "model_version": "clf-v1",
+   "payload": {
+    "call_ref": "799607a7e1bcb336",
+    "chunk_count": 1,
+    "crossed_ts": "2026-01-06T08:10:12Z",
+    "crossing": 1,
+    "model_version": "clf-v1",
+    "reason_codes": [
+     "AUTHORITY_IMPERSONATION",
+     "LEGAL_THREAT",
+     "SCRIPT_CLASSIFIER_MATCH"
+    ],
+    "score": 1.0,
+    "threshold": 0.7
+   },
+   "case_refs": [
+    "call_ref:799607a7e1bcb336"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 2,
+   "ts": "2026-01-01T00:00:02.000000Z",
+   "service": "call-guard",
+   "actor": "system:call-guard",
+   "event_type": "callrisk.alert",
+   "payload_hash": "84b386e8d763a883544fdf456d2b50f07253be48f9476206e844d35d1c9f2fa3",
+   "prev_hash": "e4c97f118fb31a6809cec904f4c05e54723382a8d5ac166b9b52c20a8c327f0c",
+   "entry_hash": "86ed90ba143f9892b633a5f2df1e8056b5c394544b1bdc646acba6ce0477dc78",
+   "model_version": "clf-v1",
+   "payload": {
+    "call_ref": "109bbcc2a84a9fb3",
+    "chunk_count": 1,
+    "crossed_ts": "2026-01-06T08:17:47Z",
+    "crossing": 1,
+    "model_version": "clf-v1",
+    "reason_codes": [
+     "AUTHORITY_IMPERSONATION",
+     "LEGAL_THREAT",
+     "SCRIPT_CLASSIFIER_MATCH"
+    ],
+    "score": 1.0,
+    "threshold": 0.7
+   },
+   "case_refs": [
+    "call_ref:109bbcc2a84a9fb3"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 3,
+   "ts": "2026-01-01T00:00:03.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.created",
+   "payload_hash": "5e2cb39d15cb295a89a37354c7cda82a4295ecc17feb59ea680263d5fb8cf96b",
+   "prev_hash": "86ed90ba143f9892b633a5f2df1e8056b5c394544b1bdc646acba6ce0477dc78",
+   "entry_hash": "8994688c7d02fdbcc898793b33316b6c7bba0e67676e97f4d33a864e33c34459",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "call_ref": "799607a7e1bcb336",
+    "deadline_ts": "2026-01-06T08:26:04Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "2315111f9fbdf00f",
+    "rail": "UPI",
+    "reason_codes": [
+     "ACTIVE_SCAM_CALL",
+     "AMOUNT_ANOMALY",
+     "CALL_RISK_AMOUNT_GUARD",
+     "NEW_PAYEE"
+    ],
+    "score": 0.85,
+    "txn_id": "txn_ceb756dbc2258882"
+   },
+   "case_refs": [
+    "txn_ceb756dbc2258882",
+    "payee_ref:2315111f9fbdf00f",
+    "call_ref:799607a7e1bcb336"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 4,
+   "ts": "2026-01-01T00:00:04.000000Z",
+   "service": "antibody-hub",
+   "actor": "analyst-1",
+   "event_type": "antibody.created",
+   "payload_hash": "de0e0310460a81c5e002e3468953c2051077264d140b2c02f39d90089f732362",
+   "prev_hash": "8994688c7d02fdbcc898793b33316b6c7bba0e67676e97f4d33a864e33c34459",
+   "entry_hash": "46e048b527316ac9872be2dc705d5f784e2282e691b04549fcda044adc490b27",
+   "model_version": null,
+   "payload": {
+    "actor_bank": "bank_a",
+    "actor_role": "analyst",
+    "antibody_id": "9352d6a9c66148c37ccedf0db75a0445305fdde0ddc304ab0d137f1fb213e2f6",
+    "event": "created",
+    "expires_at": "2026-01-20T08:25:04Z",
+    "generation": 1,
+    "key_hash_prefix": "2315111f",
+    "kind": "mule_account"
+   },
+   "case_refs": [
+    "9352d6a9c66148c37ccedf0db75a0445305fdde0ddc304ab0d137f1fb213e2f6",
+    "payee_ref:2315111f9fbdf00f"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 5,
+   "ts": "2026-01-01T00:00:05.000000Z",
+   "service": "txn-guard",
+   "actor": "analyst-1",
+   "event_type": "hold.resolved",
+   "payload_hash": "b5bb5b4b30e0fb2440da7a9f066d736885648f14a8c9576ffbba9e13c005b67d",
+   "prev_hash": "46e048b527316ac9872be2dc705d5f784e2282e691b04549fcda044adc490b27",
+   "entry_hash": "7b3e948f336fd5138391f7d3a51343dec3ef4717a2284840fec61e7ae91a306a",
+   "model_version": "gbm-v1",
+   "payload": {
+    "action": "confirm_block",
+    "amount_bucket": "10k-100k",
+    "call_ref": "799607a7e1bcb336",
+    "deadline_ts": "2026-01-06T08:26:04Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "2315111f9fbdf00f",
+    "rail": "UPI",
+    "reason_codes": [
+     "ACTIVE_SCAM_CALL",
+     "AMOUNT_ANOMALY",
+     "CALL_RISK_AMOUNT_GUARD",
+     "NEW_PAYEE"
+    ],
+    "resolved_ts": "2026-01-06T08:25:04Z",
+    "resolver_ref": "analyst-1",
+    "resolver_role": "analyst",
+    "score": 0.85,
+    "txn_id": "txn_ceb756dbc2258882"
+   },
+   "case_refs": [
+    "txn_ceb756dbc2258882",
+    "payee_ref:2315111f9fbdf00f",
+    "call_ref:799607a7e1bcb336"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 6,
+   "ts": "2026-01-01T00:00:06.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.created",
+   "payload_hash": "eed000fab3550739722149f94698490005ca94126a8078ac55ca07a7ebf7d4bf",
+   "prev_hash": "7b3e948f336fd5138391f7d3a51343dec3ef4717a2284840fec61e7ae91a306a",
+   "entry_hash": "ca931b7a7c33f97075b59b0dac74186c25ed162325934b7f9d1e4665ebbe1738",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "call_ref": "109bbcc2a84a9fb3",
+    "deadline_ts": "2026-01-06T08:30:17Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "10d28f0f7677738d",
+    "rail": "UPI",
+    "reason_codes": [
+     "ACTIVE_SCAM_CALL",
+     "AMOUNT_ANOMALY",
+     "NEW_PAYEE",
+     "YOUNG_PAYEE_ACCOUNT"
+    ],
+    "score": 0.9896,
+    "txn_id": "txn_5382ec8250db1ea5"
+   },
+   "case_refs": [
+    "txn_5382ec8250db1ea5",
+    "payee_ref:10d28f0f7677738d",
+    "call_ref:109bbcc2a84a9fb3"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 7,
+   "ts": "2026-01-01T00:00:07.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.created",
+   "payload_hash": "feb141e60c5c47d32ba9b02dcfbab511220a745088f809dfb165a2290e0e4c80",
+   "prev_hash": "ca931b7a7c33f97075b59b0dac74186c25ed162325934b7f9d1e4665ebbe1738",
+   "entry_hash": "b2537cbf4aa741be25640b28eb85763491f2a0d29faeb75965e0febb7692caaf",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "deadline_ts": "2026-01-06T08:31:47Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "2315111f9fbdf00f",
+    "rail": "UPI",
+    "reason_codes": [
+     "AMOUNT_ANOMALY",
+     "ANTIBODY_MATCH",
+     "NEW_PAYEE"
+    ],
+    "score": 0.9,
+    "txn_id": "txn_d75f5773a0838cfc"
+   },
+   "case_refs": [
+    "txn_d75f5773a0838cfc",
+    "payee_ref:2315111f9fbdf00f"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 8,
+   "ts": "2026-01-01T00:00:08.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.created",
+   "payload_hash": "ccec175e21843413c2e42a9be603fe8a477f6008a0e6caa010b97a2b4c89a3cf",
+   "prev_hash": "b2537cbf4aa741be25640b28eb85763491f2a0d29faeb75965e0febb7692caaf",
+   "entry_hash": "8bb349c6188437cbcffeb12975132a6be8d20e1c45db6a07b9c2cb8fc67da033",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "deadline_ts": "2026-01-06T08:34:40Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "db4337516e6ee374",
+    "rail": "UPI",
+    "reason_codes": [
+     "AMOUNT_ANOMALY",
+     "NEW_PAYEE",
+     "YOUNG_PAYEE_ACCOUNT"
+    ],
+    "score": 0.9621,
+    "txn_id": "txn_cbe6bb1e0d9bb253"
+   },
+   "case_refs": [
+    "txn_cbe6bb1e0d9bb253",
+    "payee_ref:db4337516e6ee374"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 9,
+   "ts": "2026-01-01T00:00:09.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.overdue",
+   "payload_hash": "32a8f39fe28eee01a85d5b6fe8cccba99b74f41040bf65902f45291baf4b9a76",
+   "prev_hash": "8bb349c6188437cbcffeb12975132a6be8d20e1c45db6a07b9c2cb8fc67da033",
+   "entry_hash": "09c0fe61c0afe309d96eeebcecfcca4befb122fc67b5b837fd69fb782518ab38",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "call_ref": "109bbcc2a84a9fb3",
+    "deadline_ts": "2026-01-06T08:30:17Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "overdue": true,
+    "payee_ref": "10d28f0f7677738d",
+    "rail": "UPI",
+    "reason_codes": [
+     "ACTIVE_SCAM_CALL",
+     "AMOUNT_ANOMALY",
+     "NEW_PAYEE",
+     "YOUNG_PAYEE_ACCOUNT"
+    ],
+    "score": 0.9896,
+    "txn_id": "txn_5382ec8250db1ea5"
+   },
+   "case_refs": [
+    "txn_5382ec8250db1ea5",
+    "payee_ref:10d28f0f7677738d",
+    "call_ref:109bbcc2a84a9fb3"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 10,
+   "ts": "2026-01-01T00:00:10.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.overdue",
+   "payload_hash": "38fef3d8c55c0d54f275b50a24bef94829aeaadfc2047d0996bcaa407f532012",
+   "prev_hash": "09c0fe61c0afe309d96eeebcecfcca4befb122fc67b5b837fd69fb782518ab38",
+   "entry_hash": "685cbfe74443ae303deeb3b70d1fb63d665ebe3be023a2b1f6226badd2281054",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "deadline_ts": "2026-01-06T08:31:47Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "overdue": true,
+    "payee_ref": "2315111f9fbdf00f",
+    "rail": "UPI",
+    "reason_codes": [
+     "AMOUNT_ANOMALY",
+     "ANTIBODY_MATCH",
+     "NEW_PAYEE"
+    ],
+    "score": 0.9,
+    "txn_id": "txn_d75f5773a0838cfc"
+   },
+   "case_refs": [
+    "txn_d75f5773a0838cfc",
+    "payee_ref:2315111f9fbdf00f"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 11,
+   "ts": "2026-01-01T00:00:11.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.created",
+   "payload_hash": "9d5dc2818bd223a4eba66abd98d8d0d9fb4394bf62d6e1890446648c26639b4c",
+   "prev_hash": "685cbfe74443ae303deeb3b70d1fb63d665ebe3be023a2b1f6226badd2281054",
+   "entry_hash": "651049637860997b514a610348b825579abd42d2972fc6707c53f7771d140c34",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "deadline_ts": "2026-01-06T08:37:38Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "payee_ref": "10d28f0f7677738d",
+    "rail": "UPI",
+    "reason_codes": [
+     "AMOUNT_ANOMALY",
+     "NEW_PAYEE",
+     "YOUNG_PAYEE_ACCOUNT"
+    ],
+    "score": 1.0,
+    "txn_id": "txn_f059698ae645715c"
+   },
+   "case_refs": [
+    "txn_f059698ae645715c",
+    "payee_ref:10d28f0f7677738d"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 12,
+   "ts": "2026-01-01T00:00:12.000000Z",
+   "service": "txn-guard",
+   "actor": "system:txn-guard",
+   "event_type": "hold.overdue",
+   "payload_hash": "dfb673fe2048172cff2bf0b913c0f735cf6e3d1af7001c46ea4a6dd6d4a275cb",
+   "prev_hash": "651049637860997b514a610348b825579abd42d2972fc6707c53f7771d140c34",
+   "entry_hash": "bcde692339ad6ac7c30f05f407344de57beb31cab039ab5d669ac2ac65f47e7f",
+   "model_version": "gbm-v1",
+   "payload": {
+    "amount_bucket": "10k-100k",
+    "deadline_ts": "2026-01-06T08:34:40Z",
+    "decision": "hold_verify",
+    "decision_seq": 1,
+    "model_version": "gbm-v1",
+    "overdue": true,
+    "payee_ref": "db4337516e6ee374",
+    "rail": "UPI",
+    "reason_codes": [
+     "AMOUNT_ANOMALY",
+     "NEW_PAYEE",
+     "YOUNG_PAYEE_ACCOUNT"
+    ],
+    "score": 0.9621,
+    "txn_id": "txn_cbe6bb1e0d9bb253"
+   },
+   "case_refs": [
+    "txn_cbe6bb1e0d9bb253",
+    "payee_ref:db4337516e6ee374"
+   ],
+   "payload_present": true
+  },
+  {
+   "seq": 13,
+   "ts": "2026-01-01T00:00:16.000000Z",
+   "service": "evidence-ledger",
+   "actor": "demo-admin-2e9f1839",
+   "event_type": "package.exported",
+   "payload_hash": "ecd05248299a77bd037119a1a9f21d029858bf7ebdc9d9bcbc8278459b48fced",
+   "prev_hash": "bcde692339ad6ac7c30f05f407344de57beb31cab039ab5d669ac2ac65f47e7f",
+   "entry_hash": "a117f35e37fa86a4291bbb90b30182d40e14c7d80d87bb03fe78019ffd4780e4",
+   "model_version": null,
+   "payload": {
+    "case_id": "hero-case",
+    "exported_by": "demo-admin-2e9f1839",
+    "from_seq": 1,
+    "package_sha256": "36d124355006bdf7a84b010b78cc51d3eda9ed7bea26a93b8a36e90d7cb1ea1d",
+    "to_seq": 10
+   },
+   "case_refs": [
+    "hero-case"
+   ],
+   "payload_present": true
+  }
+ ],
+ "next_from_seq": null,
+ "simulated_clock": true
+}

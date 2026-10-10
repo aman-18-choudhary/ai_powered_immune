@@ -59,7 +59,12 @@ describe("Landing / live interception", () => {
     expect(screen.getByText("Bank A · HDFC console")).toBeInTheDocument();
     expect(screen.getByText("Bank B · AXIS console")).toBeInTheDocument();
     expect(screen.getAllByText(/ANTIBODY_MATCH/).length).toBeGreaterThan(0);
-    expect(screen.getByTestId("finale-region")).toHaveTextContent("Victim B protected in 7.4 milliseconds");
+    const fin = heroEvents().find((e) => e.kind === "scenario.finished");
+    const ms = fin && fin.kind === "scenario.finished" ? fin.latency_ms : null;
+    expect(ms).not.toBeNull();
+    expect(screen.getByTestId("finale-region")).toHaveTextContent(`Victim B protected in ${(ms as number).toFixed(1)} milliseconds`);
+    // the scrubber works in the compressed timeline: its label is in time at 1x, with the sim clock beside it
+    expect(screen.getByTestId("sim-clock")).toHaveTextContent("43:29");
     expect(screen.getByTestId("honest-strip")).toBeInTheDocument();
     expect(screen.getByTestId("verify-offline")).toBeEnabled();
   });

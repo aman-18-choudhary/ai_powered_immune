@@ -57,8 +57,32 @@ export interface HoldRecord {
   source?: string;
   resolvedBy?: string;
   upgradedFrom?: string;
+  /** Every decision this hold has had, oldest first (decision_seq diff for the analyst view). */
+  history: HoldStep[];
   victim: "A" | "B" | null;
   hero: boolean;
+}
+export interface HoldStep {
+  seq: number;
+  decision: string;
+  from?: string;
+  t: number;
+  /** Which signal produced this step, inferred from the reason codes. */
+  trigger: HoldTrigger;
+}
+export type HoldTrigger = "initial" | "call_risk" | "antibody" | "late_call_risk" | "late_antibody" | "resolved";
+
+/** Derive what caused a decision from the reason codes (the services' own codes). */
+export function inferTrigger(codes: string[], kind: "created" | "upgraded" | "resolved"): HoldTrigger {
+  if (kind === "resolved") return "resolved";
+  const has = (c: string) => codes.includes(c);
+  if (has("LATE_ANTIBODY_POST_SETTLEMENT")) return "late_antibody";
+  if (has("LATE_CALL_RISK_POST_SETTLEMENT")) return "late_call_risk";
+  if (kind === "upgraded") {
+    if (has("ANTIBODY_MATCH") || has("ANTIBODY_MATCH_KNOWN_PAYEE")) return "antibody";
+    if (has("ACTIVE_SCAM_CALL") || has("CALL_RISK_AMOUNT_GUARD")) return "call_risk";
+  }
+  return "initial";
 }
 export interface AntibodyRecord {
   ref: string;
@@ -98,6 +122,8 @@ export interface StepRecord {
   title: string;
   caption: string;
   t: number;
+  /** Position on the pacing timeline (seconds at 1x). */
+  w: number;
 }
 export type Severity = "critical" | "warn" | "safe" | "intel" | "info";
 export interface IncidentRecord {
@@ -130,6 +156,11 @@ export interface RunState {
   mode: string | null;
   banks: Banks | null;
   scenarioNote: string | null;
+  /** "cinematic" (compressed gaps) or "real"; null until the server says. */
+  pacing: string | null;
+  /** Length and current position of the pacing timeline, seconds at 1x. */
+  wallDuration: number;
+  wallOffset: number;
   counters: Counters;
   lastEventId: number;
   steps: StepRecord[];
@@ -162,6 +193,9 @@ export function initialRun(): RunState {
     mode: null,
     banks: null,
     scenarioNote: null,
+    pacing: null,
+    wallDuration: 0,
+    wallOffset: 0,
     counters: { ...ZERO_COUNTERS },
     lastEventId: 0,
     steps: [],
@@ -212,6 +246,7 @@ function applyOne(d: RunState, e: StreamEvent): void {
     d.hasData = true;
     if (e.id > d.lastEventId) d.lastEventId = e.id;
     if (e.t > d.t) d.t = e.t;
+    if (e.wall_offset !== undefined && e.wall_offset > d.wallOffset) d.wallOffset = e.wall_offset;
   }
   switch (e.kind) {
     case "scenario.started": {
@@ -224,6 +259,7 @@ function applyOne(d: RunState, e: StreamEvent): void {
         mode: e.mode,
         banks: e.banks ?? null,
         scenarioNote: e.scenario_note ?? null,
+        wallOffset: e.wall_offset ?? 0,
         lastEventId: e.id,
         hasData: true,
         speed: d.speed,
@@ -232,7 +268,7 @@ function applyOne(d: RunState, e: StreamEvent): void {
     }
     case "scenario.step": {
       d.step = e.key;
-      d.steps.push({ id: e.id, key: e.key, title: e.title, caption: e.caption, t: e.t });
+      d.steps.push({ id: e.id, key: e.key, title: e.title, caption: e.caption, t: e.t, w: e.wall_offset ?? e.t });
       return;
     }
     case "call.chunk": {
@@ -286,6 +322,20 @@ function applyOne(d: RunState, e: StreamEvent): void {
         deadlineT: e.deadline_t, state: e.state || "open", victim: txn?.victim ?? prev?.victim ?? null,
         hero: txn?.hero ?? prev?.hero ?? false,
         upgradedFrom: e.kind === "hold.upgraded" ? e.from_decision : prev?.upgradedFrom,
+        history: [
+          ...(prev?.history ?? []),
+          ...(prev?.history.some((h) => h.seq === e.decision_seq && h.decision === e.decision)
+            ? []
+            : [
+                {
+                  seq: e.decision_seq,
+                  decision: e.decision,
+                  from: e.kind === "hold.upgraded" ? e.from_decision : undefined,
+                  t: e.t,
+                  trigger: inferTrigger(e.reasons.map((r) => r.code), e.kind === "hold.created" ? "created" : "upgraded"),
+                } satisfies HoldStep,
+              ]),
+        ],
       };
       if (!prev) d.holdOrder.push(e.txn_ref);
       d.holds[e.txn_ref] = rec;
@@ -307,6 +357,7 @@ function applyOne(d: RunState, e: StreamEvent): void {
         deadlineT: e.deadline_t, state: e.state, resolvedT: e.t, action: e.action, source: e.source,
         resolvedBy: e.resolved_by, victim: txn?.victim ?? prev?.victim ?? null, hero: txn?.hero ?? prev?.hero ?? false,
         upgradedFrom: prev?.upgradedFrom,
+        history: prev?.history ?? [],
       };
       if (!prev) d.holdOrder.push(e.txn_ref);
       d.holds[e.txn_ref] = rec;
@@ -403,6 +454,9 @@ function applySnapshotMut(d: RunState, snap: ScenarioSnapshot): RunState {
   n.duration = snap.duration;
   n.speed = keepSpeed;
   n.banks = snap.banks ?? null;
+  n.pacing = snap.pacing ?? null;
+  n.wallDuration = snap.wall_duration ?? 0;
+  n.wallOffset = snap.wall_offset ?? 0;
   n.scenarioNote = snap.scenario_note ?? snap.events.find((x) => x.kind === "scenario.started" && x.scenario_note)?.["scenario_note" as never] ?? null;
   n.seed = snap.seed ?? null;
   n.mode = snap.mode ?? null;
@@ -418,6 +472,9 @@ function applySnapshotMut(d: RunState, snap: ScenarioSnapshot): RunState {
   out.duration = snap.duration || out.duration;
   if (snap.last_event_id !== undefined) out.lastEventId = Math.max(out.lastEventId, snap.last_event_id);
   out.t = Math.max(out.t, snap.t);
+  out.wallDuration = snap.wall_duration ?? out.wallDuration;
+  out.wallOffset = Math.max(out.wallOffset, snap.wall_offset ?? 0);
+  out.pacing = snap.pacing ?? out.pacing;
   if (snap.events.length > 0 || snap.status !== "idle") out.hasData = true;
   return out;
 }

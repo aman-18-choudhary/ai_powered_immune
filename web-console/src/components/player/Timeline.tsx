@@ -17,9 +17,12 @@ interface Props {
   currentKey: string | null;
   disabled?: boolean;
   onSeek: (t: number) => void;
+  /** Optional readout of the simulated clock when the timeline is the (compressed) pacing timeline. */
+  simClock?: number;
+  simDuration?: number;
 }
 
-export function Timeline({ t, duration, markers, reached, currentKey, disabled, onSeek }: Props) {
+export function Timeline({ t, duration, markers, reached, currentKey, disabled, onSeek, simClock, simDuration }: Props) {
   const [drag, setDrag] = useState<number | null>(null);
   const dragging = useRef(false);
   const shown = drag ?? t;
@@ -73,7 +76,7 @@ export function Timeline({ t, duration, markers, reached, currentKey, disabled, 
             step={1}
             value={Math.round(shown)}
             disabled={disabled || duration <= 0}
-            aria-label="Scenario timeline (simulated seconds)"
+            aria-label="Scenario timeline"
             aria-valuetext={`${formatSimClock(shown)} of ${formatSimClock(duration)}`}
             onChange={(e) => {
               dragging.current = true;
@@ -90,6 +93,13 @@ export function Timeline({ t, duration, markers, reached, currentKey, disabled, 
           {formatSimClock(duration)}
         </span>
       </div>
+      {simClock !== undefined && simDuration !== undefined && simDuration > 0 && (
+        <p className="text-right text-[11px] text-subtle" data-testid="sim-clock">
+          Simulated clock <span className="mono tnum text-muted">{formatSimClock(simClock)}</span> of{" "}
+          <span className="mono tnum">{formatSimClock(simDuration)}</span>
+          <span className="sr-only"> (timeline time above is real viewing time at 1x)</span>
+        </p>
+      )}
       <ol className="flex flex-wrap gap-1.5" aria-label="Scenario steps">
         {STEP_ORDER.map((k, i) => {
           const done = reached.has(k) || (k === "bank_b_blocks" && reached.has("bank_b_misses"));

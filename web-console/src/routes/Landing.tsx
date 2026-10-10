@@ -12,7 +12,7 @@ import { FinaleCard } from "@/components/player/FinaleCard";
 import { HONEST_LABEL, STEP_ORDER } from "@/components/player/notes";
 import { useRunStore } from "@/state/runStore";
 import { useSession, canControl, canResolve } from "@/state/session";
-import { useSimTime } from "@/state/useSimTime";
+import { useSimClock } from "@/state/useSimTime";
 import { DEFAULT_UI_SPEED, playback, serverToUiSpeed } from "@/state/playback";
 import { endpoints } from "@/lib/api/endpoints";
 import { friendlyError } from "@/lib/api/client";
@@ -70,7 +70,8 @@ export default function Landing() {
   const run = useRunStore((s) => s.run);
   const conn = useRunStore((s) => s.conn);
   const role = useSession((s) => s.role);
-  const simT = useSimTime();
+  const clk = useSimClock();
+  const simT = clk.t;
   const { reduced } = useMotionPrefs();
   const [uiSpeed, setUiSpeed] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
@@ -85,6 +86,10 @@ export default function Landing() {
   const running = run.status === "running" || run.status === "starting" || run.status === "seeking";
   const finished = run.status === "finished";
   const speedShown = hasRun ? serverToUiSpeed(run.speed) : (uiSpeed ?? DEFAULT_UI_SPEED);
+  // Timeline units: seconds at 1x on the pacing timeline when the server provides one, else simulated seconds.
+  const timelined = run.wallDuration > 0;
+  const tlPos = timelined ? clk.w : clk.t;
+  const tlDuration = timelined ? run.wallDuration : run.duration;
 
   // ---- step memory so future markers exist on a replay ------------------------------------
   const [remembered, setRemembered] = useState<Record<string, number>>({});
@@ -94,18 +99,18 @@ export default function Landing() {
   useEffect(() => {
     if (run.steps.length === 0) return;
     const times: Record<string, number> = { ...loadStepTimes(run.seed, run.mode) };
-    for (const s of run.steps) times[s.key] = s.t;
+    for (const s of run.steps) times[s.key] = timelined ? s.w : s.t;
     saveStepTimes(run.seed, run.mode, times);
-  }, [run.steps, run.seed, run.mode]);
+  }, [run.steps, run.seed, run.mode, timelined]);
 
   const reached = useMemo(() => new Set(run.steps.map((s) => s.key)), [run.steps]);
   const markers: Marker[] = useMemo(() => {
     const out = new Map<string, Marker>();
     const titles = new Map(run.steps.map((s) => [s.key, s.title]));
     for (const [key, t] of Object.entries(remembered)) out.set(key, { key, t, title: titles.get(key) ?? key });
-    for (const s of run.steps) out.set(s.key, { key: s.key, t: s.t, title: s.title });
+    for (const s of run.steps) out.set(s.key, { key: s.key, t: timelined ? s.w : s.t, title: s.title });
     return [...out.values()].sort((a, b) => a.t - b.t);
-  }, [run.steps, remembered]);
+  }, [run.steps, remembered, timelined]);
   const currentStep = run.steps[run.steps.length - 1];
 
   // ---- announcements ----------------------------------------------------------------------
@@ -154,17 +159,18 @@ export default function Landing() {
   const stepBy = useCallback(
     (dir: 1 | -1) => {
       if (!control || !hasRun) return;
-      const now = useRunStore.getState().clock.t;
+      const ck = useRunStore.getState().clock;
+      const now = timelined ? ck.w : ck.t;
       const ts = markers.map((m) => m.t);
       if (dir === 1) {
         const next = ts.find((t) => t > now + 0.5);
-        seek(next ?? Math.min(run.duration, now + 120));
+        seek(next ?? Math.min(tlDuration, now + (timelined ? 5 : 120)));
       } else {
         const prev = [...ts].reverse().find((t) => t < now - 0.5);
         seek(prev ?? 0);
       }
     },
-    [control, hasRun, markers, run.duration, seek],
+    [control, hasRun, markers, tlDuration, timelined, seek],
   );
 
   const fullscreen = useCallback(() => {
@@ -290,8 +296,10 @@ export default function Landing() {
           <p className="text-xs text-muted">Read-only: sign in as Officer or Admin to control playback.</p>
         )}
         <Timeline
-          t={simT}
-          duration={run.duration}
+          t={tlPos}
+          duration={tlDuration}
+          simClock={simT}
+          simDuration={run.duration}
           markers={markers}
           reached={reached}
           currentKey={currentStep?.key ?? null}

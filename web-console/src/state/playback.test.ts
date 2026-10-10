@@ -7,7 +7,26 @@ import { endpoints } from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/client";
 import { playback, uiToServerSpeed, serverToUiSpeed, isCinematic } from "./playback";
 
-beforeEach(() => vi.clearAllMocks());
+import { useRunStore } from "./runStore";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  useRunStore.getState().reset();
+});
+
+describe("playback seek", () => {
+  it("seeks by wall seconds on the pacing timeline when the run has one", async () => {
+    vi.mocked(endpoints.demoControl).mockResolvedValue({ status: "paused", t: 0, speed: 1, duration: 10, run_id: "r", step: null } as never);
+    useRunStore.setState((s) => ({ run: { ...s.run, wallDuration: 71.1 } }));
+    await playback.seek(30);
+    expect(endpoints.demoControl).toHaveBeenCalledWith({ action: "seek", wall: 30 });
+  });
+  it("falls back to simulated t without a pacing timeline", async () => {
+    vi.mocked(endpoints.demoControl).mockResolvedValue({ status: "paused", t: 0, speed: 1, duration: 10, run_id: "r", step: null } as never);
+    await playback.seek(900);
+    expect(endpoints.demoControl).toHaveBeenCalledWith({ action: "seek", t: 900 });
+  });
+});
 
 describe("playback start", () => {
   it("requests cinematic pacing first, with 1x = server 1x", async () => {

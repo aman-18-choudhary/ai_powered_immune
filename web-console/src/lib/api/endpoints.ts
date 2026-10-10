@@ -26,7 +26,7 @@ export const endpoints = {
   demoState: (signal?: AbortSignal) => api.get<DemoState>("/demo/state", signal),
   demoStart: (b: { seed?: number; speed?: number; mode?: "hero" | "hero+noise"; pacing?: "real" | "cinematic" }) =>
     api.post<{ run_id: string }>("/demo/start", b),
-  demoControl: (b: { action: "pause" | "resume" | "stop" | "seek"; t?: number; speed?: number }) =>
+  demoControl: (b: { action: "pause" | "resume" | "stop" | "seek"; t?: number; wall?: number; speed?: number }) =>
     api.post<DemoState>("/demo/control", b),
   holds: (state: "open" | "all" = "all", signal?: AbortSignal) =>
     api.get<HoldsResponse>(`/holds?state=${state}`, signal),

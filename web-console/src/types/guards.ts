@@ -54,6 +54,7 @@ export function parseEvent(raw: unknown, depth = 0): StreamEvent | null {
     id,
     t,
     wall: str(raw.wall) ? raw.wall : "",
+    wall_offset: num(raw.wall_offset) ? raw.wall_offset : undefined,
     run_id: str(raw.run_id) ? raw.run_id : undefined,
   };
   const s = (k: string) => (str(raw[k]) ? (raw[k] as string) : "");
@@ -140,7 +141,8 @@ export function parseEvent(raw: unknown, depth = 0): StreamEvent | null {
         speed: n("speed"), step: str(raw.step) ? raw.step : null, duration: n("duration"),
         counters: parseCounters(raw.counters), last_event_id: num(raw.last_event_id) ? raw.last_event_id : undefined,
         banks: parseBanks(raw.banks), mode: s("mode") || undefined, seed: num(raw.seed) ? raw.seed : undefined,
-        scenario_kind: s("scenario_kind") || undefined, scenario_note: s("scenario_note") || undefined, events,
+        scenario_kind: s("scenario_kind") || undefined, scenario_note: s("scenario_note") || undefined,
+        pacing: s("pacing") || undefined, wall_duration: num(raw.wall_duration) ? raw.wall_duration : undefined, events,
       };
     }
     default:

@@ -1,8 +1,9 @@
 {
  "seq": 13,
- "entry_hash": "fc67aa1c379e892a7185ce1bd1a356e0e18c10e95edd1e2be74cb8c1ff400504",
+ "entry_hash": "a117f35e37fa86a4291bbb90b30182d40e14c7d80d87bb03fe78019ffd4780e4",
  "count": 13,
- "public_key_hex": "27fbeb540323efc467a8bf5f5a1266439b32b6e5fd7604eada3f461cd1eabb76",
- "key_id": "6e30f23562589e4a",
- "algorithm": "Ed25519"
+ "public_key_hex": "9c87e18e86731ed8157defc7a57774c0b7790cdb7300be8989bd2ce0baf37875",
+ "key_id": "68f1cd273ce4f24b",
+ "algorithm": "Ed25519",
+ "simulated_clock": true
 }

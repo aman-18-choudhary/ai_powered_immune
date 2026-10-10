@@ -1,5 +1,5 @@
 /** Step times are deterministic per (seed, mode); remember them so markers exist before they play. */
-const key = (seed: number | null, mode: string | null) => `ssi.steps.${seed ?? "x"}.${mode ?? "x"}`;
+const key = (seed: number | null, mode: string | null) => `ssi.steps2.${seed ?? "x"}.${mode ?? "x"}`;
 
 export function loadStepTimes(seed: number | null, mode: string | null): Record<string, number> {
   try {
