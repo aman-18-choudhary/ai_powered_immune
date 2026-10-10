@@ -40,7 +40,7 @@ describe("Landing / live interception", () => {
     await act(async () => {
       screen.getByTestId("hero-play").click();
     });
-    expect(endpoints.demoStart).toHaveBeenCalledWith(expect.objectContaining({ seed: 1, mode: "hero", speed: 20 }));
+    expect(endpoints.demoStart).toHaveBeenCalledWith(expect.objectContaining({ seed: 1, mode: "hero", pacing: "cinematic" }));
   });
 
   it("read-only roles cannot start and are told why", () => {

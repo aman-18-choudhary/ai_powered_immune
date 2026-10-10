@@ -61,7 +61,7 @@ export function parseEvent(raw: unknown, depth = 0): StreamEvent | null {
   const victim = raw.victim === "A" || raw.victim === "B" ? raw.victim : null;
   switch (kind) {
     case "scenario.started":
-      return { ...base, kind, seed: n("seed"), mode: s("mode"), duration: n("duration"), banks: parseBanks(raw.banks) };
+      return { ...base, kind, seed: n("seed"), mode: s("mode"), duration: n("duration"), banks: parseBanks(raw.banks), scenario_kind: s("scenario_kind") || undefined, scenario_note: s("scenario_note") || undefined };
     case "scenario.step":
       if (!str(raw.key)) return null;
       return { ...base, kind, key: raw.key, title: s("title"), caption: s("caption") };
@@ -139,7 +139,8 @@ export function parseEvent(raw: unknown, depth = 0): StreamEvent | null {
         ...base, kind, status: (st || "idle") as RunStatus,
         speed: n("speed"), step: str(raw.step) ? raw.step : null, duration: n("duration"),
         counters: parseCounters(raw.counters), last_event_id: num(raw.last_event_id) ? raw.last_event_id : undefined,
-        banks: parseBanks(raw.banks), mode: s("mode") || undefined, seed: num(raw.seed) ? raw.seed : undefined, events,
+        banks: parseBanks(raw.banks), mode: s("mode") || undefined, seed: num(raw.seed) ? raw.seed : undefined,
+        scenario_kind: s("scenario_kind") || undefined, scenario_note: s("scenario_note") || undefined, events,
       };
     }
     default:

@@ -129,6 +129,7 @@ export interface RunState {
   seed: number | null;
   mode: string | null;
   banks: Banks | null;
+  scenarioNote: string | null;
   counters: Counters;
   lastEventId: number;
   steps: StepRecord[];
@@ -160,6 +161,7 @@ export function initialRun(): RunState {
     seed: null,
     mode: null,
     banks: null,
+    scenarioNote: null,
     counters: { ...ZERO_COUNTERS },
     lastEventId: 0,
     steps: [],
@@ -221,6 +223,7 @@ function applyOne(d: RunState, e: StreamEvent): void {
         seed: e.seed,
         mode: e.mode,
         banks: e.banks ?? null,
+        scenarioNote: e.scenario_note ?? null,
         lastEventId: e.id,
         hasData: true,
         speed: d.speed,
@@ -400,6 +403,7 @@ function applySnapshotMut(d: RunState, snap: ScenarioSnapshot): RunState {
   n.duration = snap.duration;
   n.speed = keepSpeed;
   n.banks = snap.banks ?? null;
+  n.scenarioNote = snap.scenario_note ?? snap.events.find((x) => x.kind === "scenario.started" && x.scenario_note)?.["scenario_note" as never] ?? null;
   n.seed = snap.seed ?? null;
   n.mode = snap.mode ?? null;
   const out = draftOf(n);

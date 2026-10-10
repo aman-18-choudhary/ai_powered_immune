@@ -40,6 +40,8 @@ export interface DemoState {
   epoch?: number;
   last_event_id?: number;
   banks?: Banks;
+  scenario_kind?: string;
+  scenario_note?: string;
 }
 
 export interface Banks {
@@ -69,6 +71,8 @@ export interface ScenarioStarted extends EventBase {
   mode: string;
   duration: number;
   banks?: Banks;
+  scenario_kind?: string;
+  scenario_note?: string;
 }
 export interface ScenarioStep extends EventBase {
   kind: "scenario.step";
@@ -194,6 +198,8 @@ export interface ScenarioSnapshot extends EventBase {
   banks?: Banks;
   mode?: string;
   seed?: number;
+  scenario_kind?: string;
+  scenario_note?: string;
   events: StreamEvent[];
 }
 

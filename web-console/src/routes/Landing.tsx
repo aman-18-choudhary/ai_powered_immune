@@ -72,7 +72,7 @@ export default function Landing() {
   const role = useSession((s) => s.role);
   const simT = useSimTime();
   const { reduced } = useMotionPrefs();
-  const [uiSpeed, setUiSpeed] = useState<number>(DEFAULT_UI_SPEED);
+  const [uiSpeed, setUiSpeed] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [finaleDismissed, setFinaleDismissed] = useState<string | null>(null);
@@ -84,7 +84,7 @@ export default function Landing() {
   const hasRun = run.hasData && run.status !== "idle";
   const running = run.status === "running" || run.status === "starting" || run.status === "seeking";
   const finished = run.status === "finished";
-  const speedShown = hasRun ? serverToUiSpeed(run.speed) : uiSpeed;
+  const speedShown = hasRun ? serverToUiSpeed(run.speed) : (uiSpeed ?? DEFAULT_UI_SPEED);
 
   // ---- step memory so future markers exist on a replay ------------------------------------
   const [remembered, setRemembered] = useState<Record<string, number>>({});
@@ -130,7 +130,7 @@ export default function Landing() {
     useEvidence.getState().reset();
     setFinaleDismissed(null);
     try {
-      await playback.start(uiSpeed);
+      await playback.start(uiSpeed ?? undefined);
     } finally {
       setStarting(false);
     }
@@ -342,7 +342,7 @@ export default function Landing() {
         <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden />
         <span>
           <strong className="text-fg">Honest label. </strong>
-          {HONEST_LABEL} <span className="text-subtle">Everything shown is simulated; timings are measured.</span>
+          {run.scenarioNote ?? HONEST_LABEL} <span className="text-subtle">Everything shown is simulated; timings are measured.</span>
         </span>
       </p>
     </div>

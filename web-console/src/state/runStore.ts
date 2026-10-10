@@ -60,6 +60,7 @@ export const useRunStore = create<RunStore>((set, get) => ({
       banks: st.banks ?? run.banks,
       seed: st.seed ?? run.seed,
       mode: st.mode ?? run.mode,
+      scenarioNote: st.scenario_note ?? run.scenarioNote,
     };
     set({
       run: next,
