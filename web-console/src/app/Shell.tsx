@@ -160,7 +160,7 @@ export function Shell() {
         Skip to content
       </a>
       <Rail />
-      <div className="relative z-10 pb-[68px] md:pb-0 md:pl-[84px]">
+      <div className="relative z-10 min-w-0 pb-[68px] md:pb-0 md:pl-[84px]">
         <TopBar />
         <main id="main" tabIndex={-1} className="outline-none">
           <AnimatePresence mode="wait" initial={false}>

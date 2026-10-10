@@ -111,7 +111,7 @@ export function BankPane({ run, bank, simT, canResolve, onConfirm, confirming }:
       title={`${isA ? "Bank A" : "Bank B"} · ${name} console`}
       icon={<Landmark className="h-3.5 w-3.5" aria-hidden />}
       className="h-full"
-      bodyClassName="flex flex-col gap-3 overflow-y-auto p-3"
+      bodyClassName="flex flex-col gap-3 overflow-y-auto p-3 [&>*]:shrink-0"
       aria-label={`${isA ? "Bank A" : "Bank B"} console`}
     >
       {!isA && (

@@ -36,8 +36,12 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
       },
       onResync: noteResync,
     });
-    client.start();
-    return () => client.stop();
+    // Deferred so React StrictMode's mount/unmount probe never opens (and aborts) a socket.
+    const h = setTimeout(() => client.start(), 0);
+    return () => {
+      clearTimeout(h);
+      client.stop();
+    };
   }, [token, apply, setConn, noteResync, reset]);
 
   useEffect(() => {

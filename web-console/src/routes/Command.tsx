@@ -57,7 +57,7 @@ export default function Command() {
   const otherBank = "bank_b";
 
   return (
-    <div className="mx-auto max-w-[1680px] space-y-3 px-4 py-4 md:px-6">
+    <div className="mx-auto w-full min-w-0 max-w-[1680px] space-y-3 px-4 py-4 md:px-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Command Centre</h1>
@@ -76,13 +76,13 @@ export default function Command() {
 
       <KpiStrip v={values} loadingMoney={holds.loading} />
 
-      <div className="grid gap-3 xl:grid-cols-12">
-        <div className="xl:col-span-7">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-7">
           <Panel
             title="India: hotspots and payment paths"
             icon={<MapIcon className="h-3.5 w-3.5" aria-hidden />}
             className="h-full"
-            bodyClassName="grid min-h-[420px] gap-3 p-3 md:grid-cols-[1fr_190px]"
+            bodyClassName="grid min-h-[420px] grid-cols-1 gap-3 p-3 md:grid-cols-[1fr_190px]"
             aria-label="India map"
           >
             <div className="relative min-h-[380px]">
@@ -123,7 +123,7 @@ export default function Command() {
             </div>
           </Panel>
         </div>
-        <div className="grid gap-3 xl:col-span-5 xl:grid-rows-[1fr_auto]">
+        <div className="grid min-w-0 grid-cols-1 gap-3 xl:col-span-5 xl:grid-rows-[1fr_auto]">
           <div className="min-h-[300px]">
             <IncidentFeed incidents={run.incidents} banks={run.banks} height={300} />
           </div>
@@ -133,11 +133,11 @@ export default function Command() {
         </div>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-12">
-        <div className="xl:col-span-8">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-8">
           <RingPanel refreshKey={ringKey} />
         </div>
-        <div className="xl:col-span-4">
+        <div className="min-w-0 xl:col-span-4">
           <BenchmarkMini />
         </div>
       </div>

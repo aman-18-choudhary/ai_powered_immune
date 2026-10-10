@@ -62,7 +62,7 @@ export function KpiStrip({ v, loadingMoney }: { v: KpiValues; loadingMoney?: boo
         ) : (
           <span>{formatSeconds(v.medianTimeToBlockS)}</span>
         ),
-      sub: "hold to confirmed block (simulated clock)",
+      sub: "hold to block, sim clock",
     },
     {
       key: "ledger", label: "Ledger entries", icon: BookOpenCheck, tone: "text-intel",

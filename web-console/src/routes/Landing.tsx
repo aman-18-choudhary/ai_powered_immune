@@ -245,7 +245,7 @@ export default function Landing() {
   const showFinale = finished && run.finished && finaleDismissed !== run.runId;
 
   return (
-    <div ref={containerRef} className="mx-auto max-w-[1680px] space-y-3 bg-bg px-4 py-4 md:px-6">
+    <div ref={containerRef} className="mx-auto w-full min-w-0 max-w-[1680px] space-y-3 bg-bg px-4 py-4 md:px-6">
       {sr}
       <Panel as="section" className="p-0" bodyClassName="space-y-3 p-4" aria-label="Playback">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -301,17 +301,17 @@ export default function Landing() {
       </Panel>
 
       <div className="relative">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 xl:[grid-auto-rows:clamp(500px,calc(100dvh-410px),680px)]">
-          <div className="h-[520px] xl:h-auto">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4 xl:[grid-auto-rows:clamp(500px,calc(100dvh-410px),680px)]">
+          <div className="h-[520px] min-w-0 xl:h-auto">
             <PhonePane run={run} />
           </div>
-          <div className="h-[520px] xl:h-auto">
+          <div className="h-[520px] min-w-0 xl:h-auto">
             <BankPane run={run} bank="bank_a" simT={simT} canResolve={canResolve(role)} onConfirm={confirm} confirming={confirming} />
           </div>
-          <div className="h-[520px] xl:h-auto">
+          <div className="h-[520px] min-w-0 xl:h-auto">
             <BankPane run={run} bank="bank_b" simT={simT} canResolve={false} />
           </div>
-          <div className="h-[520px] xl:h-auto">
+          <div className="h-[520px] min-w-0 xl:h-auto">
             <MapPane run={run} />
           </div>
         </div>

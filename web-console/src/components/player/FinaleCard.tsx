@@ -89,7 +89,7 @@ export function FinaleCard({ runId, finished, canExport, onClose }: Props) {
         </div>
       </div>
 
-      <dl className="mt-5 grid grid-cols-3 gap-2">
+      <dl className="mt-5 grid grid-cols-3 gap-1.5 sm:gap-2">
         {[
           ["Antibody latency", formatLatencyMs(finished.latencyMs)],
           ["Ledger entries", finished.ledgerEntries !== undefined ? String(finished.ledgerEntries) : "—"],
@@ -97,7 +97,7 @@ export function FinaleCard({ runId, finished, canExport, onClose }: Props) {
         ].map(([k, val]) => (
           <div key={k} className="rounded-xl border border-line bg-chip px-3 py-2">
             <dt className="text-[10.5px] uppercase tracking-wider text-subtle">{k}</dt>
-            <dd className="mono tnum mt-0.5 text-lg font-semibold">{val}</dd>
+            <dd className="mono tnum mt-0.5 text-base font-semibold sm:text-lg">{val}</dd>
           </div>
         ))}
       </dl>
