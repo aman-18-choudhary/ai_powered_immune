@@ -23,7 +23,7 @@ function CopyBlock({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <div className="relative">
-      <pre className="mono overflow-x-auto rounded-xl border border-line bg-sunken p-3 pr-12 text-[12.5px] leading-relaxed" data-testid="run-block">
+      <pre tabIndex={0} aria-label="Commands to run the demo" className="mono overflow-x-auto rounded-xl border border-line bg-sunken p-3 pr-12 text-[12.5px] leading-relaxed" data-testid="run-block">
         {text}
       </pre>
       <button

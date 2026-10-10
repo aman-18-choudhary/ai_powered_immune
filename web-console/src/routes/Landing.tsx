@@ -350,7 +350,7 @@ export default function Landing() {
         <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden />
         <span>
           <strong className="text-fg">Honest label. </strong>
-          {run.scenarioNote ?? HONEST_LABEL} <span className="text-subtle">Everything shown is simulated; timings are measured.</span>
+          {run.scenarioNote ?? HONEST_LABEL} <span className="text-muted">Everything shown is simulated; timings are measured.</span>
         </span>
       </p>
     </div>

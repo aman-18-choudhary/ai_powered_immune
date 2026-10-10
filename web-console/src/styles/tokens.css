@@ -19,7 +19,7 @@
   --p-slate-200: #dde4ef;
   --p-slate-300: #c3cddd;
   --p-slate-400: #94a3b8;
-  --p-slate-500: #7b8aa3;
+  --p-slate-500: #8493ab;
   --p-slate-700: #3b4a63;
   --p-slate-900: #121a2b;
   --p-emerald-300: #6ee7b7;
@@ -122,8 +122,8 @@
   --fg-subtle: #566379;
   --fg-on-accent: #ffffff;
 
-  --safe: var(--p-emerald-700);
-  --warn: var(--p-amber-700);
+  --safe: #065f46;
+  --warn: #92400e;
   --danger: var(--p-rose-700);
   --danger-text: var(--p-rose-700);
   --intel: var(--p-violet-700);
@@ -136,7 +136,7 @@
   --aurora-opacity: 0.12;
   --noise-opacity: 0.04;
   --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 14px 30px -22px rgb(15 23 42 / 0.35);
-  --pill-sim-fg: var(--p-amber-700);
+  --pill-sim-fg: #78350f;
   --phone-bezel: #1a2233;
   --phone-screen: #f8fafd;
   color-scheme: light;

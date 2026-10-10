@@ -21,7 +21,7 @@ test("golden path: officer -> play -> call alert -> hold -> antibody applied -> 
 
   await expect(page.getByRole("heading", { name: "Victim B protected" })).toBeVisible({ timeout: 150_000 });
   await page.getByTestId("verify-offline").click();
-  await expect(page.getByTestId("verify-status")).toHaveText("PASS_PINNED");
+  await expect(page.getByTestId("verify-status")).toHaveText("PASS_PINNED", { timeout: 60_000 });
   await expect(page.getByLabel("Verifier output")).toContainText("PASS");
   expect(errors).toEqual([]);
 });

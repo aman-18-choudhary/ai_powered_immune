@@ -284,7 +284,7 @@ export function DecisionBar({ title, counts, total }: { title: string; counts: R
           return (
             <motion.div
               key={k}
-              className="grid place-items-center text-[11px] font-semibold text-[#06090f]"
+              className="grid place-items-center text-[11px] font-semibold text-[var(--fg-on-accent)]"
               style={{ background: DECISION_COLOR[k] ?? "var(--subtle)" }}
               initial={{ width: 0 }}
               animate={{ width: `${(n / Math.max(1, total)) * 100}%` }}

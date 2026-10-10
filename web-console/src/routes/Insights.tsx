@@ -27,18 +27,19 @@ function Limitations({ items }: { items: string[] }) {
       title="Limitations"
       icon={<AlertTriangle className="h-3.5 w-3.5 text-warn" aria-hidden />}
       className="border-warn/40"
-      bodyClassName="max-h-[70dvh] overflow-y-auto p-4"
       data-testid="limitations"
     >
-      <p className="mb-3 text-xs font-semibold text-warn">Read these before quoting any number on this page.</p>
-      <ol className="space-y-3 text-[12.5px] leading-snug text-muted">
-        {items.map((l, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="mono mt-0.5 shrink-0 text-subtle">{i + 1}.</span>
-            <span>{l}</span>
-          </li>
-        ))}
-      </ol>
+      <div tabIndex={0} aria-label="Limitations, scrollable" className="max-h-[70dvh] overflow-y-auto p-4">
+        <p className="mb-3 text-xs font-semibold text-warn">Read these before quoting any number on this page.</p>
+        <ol className="space-y-3 text-[12.5px] leading-snug text-muted">
+          {items.map((l, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="mono mt-0.5 shrink-0 text-subtle">{i + 1}.</span>
+              <span>{l}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </Panel>
   );
 }

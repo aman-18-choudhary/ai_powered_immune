@@ -159,7 +159,7 @@ export function EntryInspector({ entry, sealedInPackage, onClose }: { entry: Led
               <HashNote c={check} />
             </p>
             {entry.payload_present ? (
-              <pre className="mono mt-2 overflow-x-auto rounded-xl border border-line bg-sunken p-3 text-[12px] leading-relaxed" data-testid="payload-json">
+              <pre tabIndex={0} aria-label="Payload JSON" className="mono mt-2 overflow-x-auto rounded-xl border border-line bg-sunken p-3 text-[12px] leading-relaxed" data-testid="payload-json">
                 <Json v={entry.payload} />
               </pre>
             ) : (

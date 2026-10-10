@@ -25,8 +25,8 @@ export function ConnectionStatus() {
         live ? "border-safe/40 text-safe" : "border-warn/40 text-warn",
       )}
     >
-      <Icon className={cn("h-3.5 w-3.5", (conn === "connecting" || conn === "reconnecting") && "animate-spin")} aria-hidden />
-      <span className={cn(live && "live-dot")}>{LABEL[conn]}</span>
+      <Icon className={cn("h-3.5 w-3.5", (conn === "connecting" || conn === "reconnecting") && "animate-spin", live && "live-dot")} aria-hidden />
+      <span>{LABEL[conn]}</span>
     </span>
   );
 }

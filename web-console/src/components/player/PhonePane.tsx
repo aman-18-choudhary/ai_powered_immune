@@ -116,7 +116,7 @@ export function PhonePane({ run }: Props) {
           )}
         </AnimatePresence>
 
-        <div ref={scroller} className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2" aria-live="off" aria-label="Call transcript">
+        <div ref={scroller} tabIndex={0} role="log" className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2" aria-live="off" aria-label="Call transcript">
           {items.length === 0 && (
             <p className="px-1 pt-4 text-center text-[11px] text-subtle">Call transcript appears here as the call unfolds.</p>
           )}
