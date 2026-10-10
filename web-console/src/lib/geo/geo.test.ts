@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { layoutRing, edgePath } from "./ringLayout";
-import { aggregateCities, arcPath, buildArcs, dominantKind } from "./arcs";
+import { aggregateCities, arcMidpoint, arcPath, buildArcs, dominantKind, markerRadius } from "./arcs";
 import { fixtures } from "@/mocks/fixture";
 
 describe("ring tier layout", () => {
@@ -52,5 +52,19 @@ describe("map arcs", () => {
   it("picks a dominant kind and builds an SVG path", () => {
     expect(dominantKind({ held_transfer: 3, scam_call: 1 })).toBe("held_transfer");
     expect(arcPath([0, 100], [100, 100])).toMatch(/^M0.0,100.0 Q50.0,/);
+  });
+});
+
+describe("map markers", () => {
+  it("scales marker radius with event count and caps it", () => {
+    expect(markerRadius(1, false)).toBeLessThan(markerRadius(9, false));
+    expect(markerRadius(10_000, false)).toBe(24);
+    expect(markerRadius(10_000, true)).toBe(13);
+    expect(markerRadius(1, false)).toBeGreaterThanOrEqual(10);
+  });
+  it("puts the mule hop on the arc midpoint, above the chord", () => {
+    const m = arcMidpoint([0, 100], [100, 100]);
+    expect(m[0]).toBeCloseTo(50, 5);
+    expect(m[1]).toBeLessThan(100);
   });
 });

@@ -4,6 +4,7 @@ import { StreamClient, streamUrl } from "@/lib/ws/stream";
 import { useSession } from "./session";
 import { useRunStore } from "./runStore";
 import type { RunStatus } from "@/types/api";
+import { toast } from "./toasts";
 
 /** Owns the app-wide WebSocket and the /demo/state poller. Mounted once when signed in. */
 export function LiveDataProvider({ children }: { children: ReactNode }) {
@@ -15,6 +16,8 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
   const reset = useRunStore((s) => s.reset);
   const status = useRunStore((s) => s.run.status);
   const [, bump] = useState(0);
+  const wasLost = useRef(false);
+  const everOpen = useRef(false);
   const statusRef = useRef<RunStatus>(status);
   statusRef.current = status;
 
@@ -32,6 +35,14 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
       onBatch: apply,
       onState: (s) => {
         setConn(s);
+        if (s === "open") {
+          if (wasLost.current) toast.success("Live stream reconnected", "Events are flowing again.");
+          wasLost.current = false;
+        } else if ((s === "reconnecting" || s === "closed") && everOpen.current && !wasLost.current) {
+          wasLost.current = true;
+          toast.error("Live stream disconnected", "Trying to reconnect automatically.");
+        }
+        if (s === "open") everOpen.current = true;
         if (s === "unauthorized") useSession.getState().logout("expired");
       },
       onResync: noteResync,

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownRight, ArrowRight, ArrowUpRight } from "lucide-react";
 import { MAP_H, MAP_W, getIndiaGeo, project } from "@/lib/geo/india";
-import { aggregateCities, arcPath, buildArcs, dominantKind, type GeoPointLite } from "@/lib/geo/arcs";
+import { aggregateCities, arcMidpoint, arcPath, buildArcs, dominantKind, markerRadius, type GeoPointLite } from "@/lib/geo/arcs";
 import type { Hotspot, PointKind } from "@/types/api";
 import { useMotionPrefs } from "@/lib/motion/prefs";
 import { cn } from "@/lib/utils/cn";
@@ -53,24 +53,37 @@ export default function IndiaMap({ points, hotspots, compact, className }: Props
             <path key={s.name} d={s.d} fill="var(--map-land)" stroke="var(--map-land-stroke)" strokeWidth={0.6} />
           ))}
         </g>
-        <g fill="none" strokeLinecap="round">
-          {arcs.map((a) => {
+        <g fill="none" strokeLinecap="round" data-testid="arcs">
+          {arcs.map((a, ai) => {
             const p1 = project(a.from.lon, a.from.lat);
             const p2 = project(a.to.lon, a.to.lat);
             if (!p1 || !p2) return null;
             const d = arcPath(p1, p2);
+            const w = 1.8 + Math.min(2.2, (a.from.total + a.to.total) * 0.18);
+            const mid = arcMidpoint(p1, p2);
             return (
-              <g key={a.id}>
+              <g key={a.id} data-arc={a.id}>
+                <path d={d} stroke="var(--bg)" strokeWidth={w + 3} opacity={0.55} />
                 <motion.path
                   d={d}
                   stroke="var(--flow)"
-                  strokeWidth={1.4}
-                  opacity={0.35}
+                  strokeWidth={w}
+                  opacity={0.5}
                   initial={reduced ? false : { pathLength: 0 }}
                   animate={{ pathLength: 1 }}
-                  transition={{ duration: 1.2, ease: "easeOut" }}
+                  transition={{ duration: 1.4, ease: "easeOut" }}
                 />
-                <path d={d} stroke="var(--flow)" strokeWidth={2} className={reduced ? undefined : "flow-dash"} />
+                <path d={d} stroke="var(--flow)" strokeWidth={w} className={reduced ? undefined : "flow-dash"} />
+                {!reduced && (
+                  <circle r={compact ? 2.6 : 3.6} fill="var(--flow)" stroke="var(--bg)" strokeWidth={1}>
+                    <animateMotion dur={`${3.2 + (ai % 3) * 0.6}s`} repeatCount="indefinite" path={d} />
+                  </circle>
+                )}
+                {/* The mule layer has no geography in the simulator: the hop sits on the path, not on a map position. */}
+                <g transform={`translate(${mid[0]},${mid[1]})`}>
+                  <title>Mule hop (accounts have no location in the simulator)</title>
+                  <circle r={compact ? 3 : 4.5} fill="var(--bg)" stroke="var(--intel)" strokeWidth={1.6} />
+                </g>
               </g>
             );
           })}
@@ -79,7 +92,7 @@ export default function IndiaMap({ points, hotspots, compact, className }: Props
           {placed.map(({ c, xy }) => {
             const kind = dominantKind(c.kinds);
             const color = KIND_COLOR[kind];
-            const r = Math.min(compact ? 11 : 16, (compact ? 4 : 5) + Math.sqrt(c.total) * 2);
+            const r = markerRadius(c.total, !!compact);
             const isCash = kind === "cash_out";
             return (
               <g
@@ -96,12 +109,17 @@ export default function IndiaMap({ points, hotspots, compact, className }: Props
                 onBlur={() => setHover(null)}
                 className="cursor-pointer outline-none"
               >
-                {!reduced && <circle r={r} fill="none" stroke={color} strokeWidth={1.5} className="pulse-ring" />}
+                {/* cell: a soft halo scaled by how many events landed here, then the pulse and the marker */}
+                <circle r={r * 1.25} fill={color} fillOpacity={0.16} stroke={color} strokeOpacity={0.5} strokeWidth={1} />
+                {!reduced && <circle r={r} fill="none" stroke={color} strokeWidth={2} className="pulse-ring" />}
                 {isCash ? (
-                  <rect x={-r * 0.6} y={-r * 0.6} width={r * 1.2} height={r * 1.2} transform="rotate(45)" fill={color} fillOpacity={0.85} stroke="var(--bg)" strokeWidth={1} />
+                  <rect x={-r * 0.7} y={-r * 0.7} width={r * 1.4} height={r * 1.4} transform="rotate(45)" fill={color} stroke="var(--fg)" strokeWidth={1.4} />
                 ) : (
-                  <circle r={r * 0.6} fill={color} fillOpacity={0.85} stroke="var(--bg)" strokeWidth={1} />
+                  <circle r={r * 0.62} fill={color} stroke="var(--fg)" strokeWidth={1.2} />
                 )}
+                <text y={4} textAnchor="middle" fontSize={compact ? 8 : 10} fontWeight={700} fill="var(--bg)" className="mono" aria-hidden>
+                  {c.total > 1 ? c.total : ""}
+                </text>
                 {!compact && (
                   <text x={r + 4} y={4} fontSize={11} fill="var(--fg)" style={{ paintOrder: "stroke" }} stroke="var(--bg)" strokeWidth={3}>
                     {c.city}
@@ -167,7 +185,7 @@ function MapLegend() {
     { c: "var(--danger)", label: "Cash-out", shape: "diamond" },
   ];
   return (
-    <ul className="absolute bottom-1 left-1 flex flex-wrap gap-x-3 gap-y-1 rounded-lg border border-line bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] px-2 py-1 text-[10.5px] text-muted">
+    <ul className="absolute bottom-1 left-1 flex max-w-[calc(100%-8px)] flex-wrap gap-x-3 gap-y-1 rounded-lg border border-line-strong bg-[color-mix(in_srgb,var(--bg)_82%,transparent)] px-2.5 py-1.5 text-[11px] text-muted">
       {items.map((i) => (
         <li key={i.label} className="flex items-center gap-1.5">
           <span
@@ -181,6 +199,16 @@ function MapLegend() {
       <li className="flex items-center gap-1.5">
         <span className="inline-block h-0 w-4 border-t-2 border-dashed border-flow" aria-hidden />
         Payment path
+      </li>
+      <li className="flex items-center gap-1.5">
+        <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-intel bg-bg" aria-hidden />
+        Mule hop (no location)
+      </li>
+      <li className="flex items-center gap-1.5">
+        <span className="text-[10px]" aria-hidden>
+          ● ⬤
+        </span>
+        Size = events in that city
       </li>
     </ul>
   );

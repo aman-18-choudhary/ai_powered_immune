@@ -90,3 +90,29 @@ export function dominantKind(kinds: Partial<Record<PointKind, number>>): PointKi
   }
   return best;
 }
+
+/** Midpoint of the quadratic arc produced by `arcPath` (t = 0.5): the "mule hop" position. */
+export function arcMidpoint(a: [number, number], b: [number, number], lift = 0.28): [number, number] {
+  const mx = (a[0] + b[0]) / 2;
+  const my = (a[1] + b[1]) / 2;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len;
+  let ny = dx / len;
+  if (ny > 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const cx = mx + nx * len * lift;
+  const cy = my + ny * len * lift;
+  // B(0.5) = 0.25 P0 + 0.5 C + 0.25 P2
+  return [0.25 * a[0] + 0.5 * cx + 0.25 * b[0], 0.25 * a[1] + 0.5 * cy + 0.25 * b[1]];
+}
+
+/** Marker radius grows with the number of events in a city; capped so cells never swamp the map. */
+export function markerRadius(total: number, compact: boolean): number {
+  const base = compact ? 6 : 10;
+  const cap = compact ? 13 : 24;
+  return Math.min(cap, base + Math.sqrt(Math.max(0, total)) * (compact ? 2.2 : 4));
+}

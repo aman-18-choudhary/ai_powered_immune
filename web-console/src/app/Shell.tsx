@@ -1,9 +1,7 @@
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Activity, BookOpenCheck, FlaskConical, Gauge, LayoutDashboard, LogOut, Moon, Radar, ShieldCheck, Smartphone, Sun, Waves, type LucideIcon,
-} from "lucide-react";
+import { Activity, LogOut, Moon, Search, Sun, Waves } from "lucide-react";
 import { BrandMark, BrandWord } from "@/components/common/Brand";
 import { Skeleton } from "@/components/common/Panel";
 import { Button } from "@/components/ui/button";
@@ -16,29 +14,9 @@ import { routeVariants } from "@/lib/motion/variants";
 import { useSession } from "@/state/session";
 import { SimulationPill } from "./SimulationPill";
 import { ConnectionStatus } from "./ConnectionStatus";
+import { CommandPalette, openPalette, paletteShortcut } from "./CommandPalette";
+import { NAV, pageTitle } from "./nav";
 import { cn } from "@/lib/utils/cn";
-
-interface NavItem {
-  to: string;
-  label: string;
-  title: string;
-  icon: LucideIcon;
-  end?: boolean;
-}
-export const NAV: readonly NavItem[] = [
-  { to: "/", label: "Live", title: "Live Interception", icon: Radar, end: true },
-  { to: "/command", label: "Command", title: "Command Centre", icon: LayoutDashboard },
-  { to: "/analyst", label: "Analyst", title: "Analyst Console", icon: ShieldCheck },
-  { to: "/evidence", label: "Evidence", title: "Evidence Ledger", icon: BookOpenCheck },
-  { to: "/citizen", label: "Citizen", title: "Citizen Shield", icon: Smartphone },
-  { to: "/insights", label: "Insights", title: "Insights", icon: Gauge },
-  { to: "/about", label: "About", title: "About", icon: FlaskConical },
-];
-
-function pageTitle(path: string): string {
-  const hit = [...NAV].reverse().find((n) => (n.end ? path === n.to : path.startsWith(n.to)));
-  return hit?.title ?? "Not found";
-}
 
 function Rail() {
   return (
@@ -98,6 +76,10 @@ function TopBar() {
         <span className="font-medium text-fg">{pageTitle(pathname)}</span>
       </div>
       <SimulationPill />
+      <Button variant="ghost" size="sm" onClick={openPalette} aria-label="Open command palette" className="hidden gap-1.5 sm:inline-flex">
+        <Search className="h-4 w-4" aria-hidden />
+        <kbd className="mono rounded border border-line px-1 text-[10px] text-subtle">{paletteShortcut()}</kbd>
+      </Button>
       <div className="hidden sm:block">
         <ConnectionStatus />
       </div>
@@ -145,8 +127,27 @@ function RouteFallback() {
   );
 }
 
+/** Moves focus to <main> and announces the page after a client-side navigation (not on first load). */
+function useRouteFocus(pathname: string) {
+  const first = useRef(true);
+  const [announce, setAnnounce] = useState("");
+  useEffect(() => {
+    const title = pageTitle(pathname);
+    document.title = `${title} · ScamShield Immune`;
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    setAnnounce(`${title} page`);
+    const h = setTimeout(() => document.getElementById("main")?.focus({ preventScroll: true }), 60);
+    return () => clearTimeout(h);
+  }, [pathname]);
+  return announce;
+}
+
 export function Shell() {
   const { pathname } = useLocation();
+  const announce = useRouteFocus(pathname);
   return (
     <div className="relative min-h-dvh">
       <div className="backdrop" aria-hidden>
@@ -160,6 +161,10 @@ export function Shell() {
         Skip to content
       </a>
       <Rail />
+      <CommandPalette />
+      <div aria-live="polite" role="status" className="sr-only" data-testid="route-announce">
+        {announce}
+      </div>
       <div className="relative z-10 min-w-0 pb-[68px] md:pb-0 md:pl-[84px]">
         <TopBar />
         <main id="main" tabIndex={-1} className="outline-none">

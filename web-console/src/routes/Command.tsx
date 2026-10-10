@@ -12,6 +12,7 @@ import { useRest } from "@/lib/hooks/useRest";
 import { inrToPaise } from "@/lib/format";
 import { useRunStore } from "@/state/runStore";
 import { selectKpis, selectTimeToBlock } from "@/state/reducer";
+import { aggregateCities } from "@/lib/geo/arcs";
 import type { AntibodiesResponse, GeoResponse, HoldsResponse } from "@/types/api";
 
 const IndiaMap = lazy(() => import("@/components/common/IndiaMap"));
@@ -53,7 +54,15 @@ export default function Command() {
   };
 
   const points = useMemo(() => run.geo.map((g) => ({ lat: g.lat, lon: g.lon, kind: g.kind, city: g.city, state: g.state, t: g.t })), [run.geo]);
-  const hotspots = geo.data?.hotspots ?? [];
+  const hotspots = useMemo(() => geo.data?.hotspots ?? [], [geo.data]);
+  // Event totals per city come from the stream; the API supplies the trend for the latest window.
+  const cityRows = useMemo(() => {
+    const trend = new Map(hotspots.map((h) => [h.city, h]));
+    return aggregateCities(points)
+      .filter((c) => (c.kinds.cash_out ?? 0) < c.total)
+      .sort((a, b) => b.total - a.total)
+      .map((c) => ({ city: c.city, total: c.total, trend: trend.get(c.city) }));
+  }, [points, hotspots]);
   const otherBank = "bank_b";
 
   return (
@@ -91,17 +100,17 @@ export default function Command() {
               </Suspense>
             </div>
             <div className="space-y-2 text-xs">
-              <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-subtle">Hotspots (last window)</h3>
-              {hotspots.length === 0 ? (
+              <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-subtle">Hotspots (events, trend)</h3>
+              {cityRows.length === 0 ? (
                 <p className="text-subtle">{geo.forbidden ? "Not available for this role." : "Waiting for events…"}</p>
               ) : (
                 <ul className="space-y-1.5">
-                  {hotspots.map((h) => (
+                  {cityRows.map((h) => (
                     <li key={h.city} className="flex items-center justify-between rounded-lg border border-line bg-chip px-2 py-1.5">
                       <span className="font-medium">{h.city}</span>
-                      <span className="flex items-center gap-1 text-muted">
-                        <span className="mono tnum text-fg">{h.count}</span>
-                        <TrendIcon trend={h.trend} />
+                      <span className="flex items-center gap-1 text-muted" title={h.trend ? `Last window ${h.trend.count}, previous ${h.trend.prev_count}` : undefined}>
+                        <span className="mono tnum text-fg">{h.total}</span>
+                        <TrendIcon trend={h.trend?.trend ?? "flat"} />
                       </span>
                     </li>
                   ))}
