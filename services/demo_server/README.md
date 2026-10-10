@@ -4,7 +4,7 @@ The console's backend: one Python process that runs the platform's **real servic
 exposes it through the `/api` REST + `/api/stream` WebSocket contract described in
 `docs/superpowers/specs/2026-10-10-console-and-demo-server-design.md`.
 
-**Everything is simulated.** Transactions, calls, victims, mules and banks come from
+**Everything is simulated.** (`scenario_kind: "hero_hard_case"` and `scenario_note` say so on the stream and in `/demo/state`: the hero run is a constructed hard case.) Transactions, calls, victims, mules and banks come from
 `sim-engine`; the hero scenario is a constructed hard case; benchmark numbers are simulator-only.
 `GET /api/demo/state` and every REST body carry `"simulated": true`.
 
@@ -104,7 +104,7 @@ ISO timestamp.
 
 | `kind` | extra fields |
 |---|---|
-| `scenario.started` | `seed, mode, duration, simulated, banks` |
+| `scenario.started` | `seed, mode, duration, simulated, banks, scenario_kind, scenario_note` |
 | `scenario.step` | `key, title, caption` (`call_begins, call_flagged, transfer_held, analyst_confirms, antibody_shared, bank_b_blocks` or `bank_b_misses`, `analyst_released`, `cash_out`, `evidence_sealed`) |
 | `call.chunk` | `call_ref, victim (A/B/null), speaker, text, score, reasons[], lang, channel, model_version`; `score` is the call-guard session risk after this chunk; `text` is the synthetic script line |
 | `call.alert` | `call_ref, victim, score, reasons[], threshold, model_version` |
@@ -117,7 +117,7 @@ ISO timestamp.
 | `geo.point` | `lat, lon, point_kind (scam_call / held_transfer / protected / cash_out), city, state` |
 | `metric.tick` | `counters` (every 30 simulated seconds) |
 | `scenario.finished` | `reason (completed / stopped / error)`; completed adds `ledger_entries, antibody_published, victim_b_protected, latency_ms` |
-| `scenario.state` | snapshot: `status, speed, step, duration, counters, events[]` |
+| `scenario.state` | snapshot: `status, speed, step, duration, counters, scenario_kind, scenario_note, events[]` (plus the `GET /demo/state` fields) |
 
 Deviations from the spec text, both forced by the envelope's own `kind` key: the spec's
 `geo.point.kind` is `point_kind` and `antibody.published.kind` is `antibody_kind`.

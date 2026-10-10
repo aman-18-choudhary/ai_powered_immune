@@ -69,6 +69,11 @@ ANALYST_ACTOR = "analyst-1"
 EVIDENCE_REF = "case-77"
 WORLD_SEED, WORLD_CITIZENS = 5, 600
 SPEED_MIN, SPEED_MAX = 0.25, 20.0
+SCENARIO_KIND = "hero_hard_case"
+SCENARIO_NOTE = (
+    "Constructed hard case: seasoned mule account and a call-guard miss; only the shared threat "
+    "memory saves victim B; simulator data"
+)
 IDLE_STATUSES = ("idle", "finished", "stopped", "error")
 
 COUNTERS = (
@@ -92,11 +97,13 @@ STEPS: dict[str, tuple[str, str]] = {
     ),
     "analyst_confirms": (
         "Analyst confirms the mule",
-        "A human analyst confirms the payee is a mule account and blocks the transfer.",
+        "The analyst step (automatic in this demo unless a person acts) confirms the payee is a "
+        "mule account and blocks the transfer.",
     ),
     "antibody_shared": (
         "Antibody shared with other banks",
-        "A privacy-preserving threat marker for the mule account is published to every bank.",
+        "A privacy-preserving threat marker for the mule account is published to the hub, which "
+        "broadcasts it to every subscribed bank; in this single-process demo Bank B consumes it.",
     ),
     "bank_b_blocks": (
         "Bank B blocks the same mule",
@@ -117,7 +124,8 @@ STEPS: dict[str, tuple[str, str]] = {
     ),
     "evidence_sealed": (
         "Evidence sealed",
-        "Every decision is in the hash-chained ledger; an offline verifier can check the package.",
+        "The decisions of this run are recorded in the hash-chained ledger; an offline verifier "
+        "can check the exported package.",
     ),
 }
 
@@ -181,6 +189,7 @@ class RunState:
             "counters": dict(self.counters), "simulated": True, "mode": self.mode,
             "seed": self.seed, "epoch": self.epoch, "last_event_id": last_id,
             "banks": dict(self.banks), "pacing": self.pacing,
+            "scenario_kind": SCENARIO_KIND, "scenario_note": SCENARIO_NOTE,
             "wall_duration": round(self.wall_duration, 3),
         }  # fmt: skip
 
@@ -714,7 +723,8 @@ class Run:
                 self.emit(
                     "scenario.started", seed=st.seed, mode=st.mode,
                     duration=round(st.duration, 3), simulated=True,
-                    banks=dict(st.banks),
+                    banks=dict(st.banks), scenario_kind=SCENARIO_KIND,
+                    scenario_note=SCENARIO_NOTE,
                 )  # fmt: skip
                 if not self.fast:
                     st.status = "running" if self.running.is_set() else "paused"
