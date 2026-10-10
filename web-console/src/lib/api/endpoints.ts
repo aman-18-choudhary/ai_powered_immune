@@ -55,5 +55,8 @@ export const endpoints = {
     ),
   packageBlob: (caseId: string, signal?: AbortSignal) =>
     api.request<Blob>("GET", `/packages/${encodeURIComponent(caseId)}`, { blob: true, signal }),
+  /** The message goes only in the POST body: never in a URL, never logged or stored client-side. */
+  assess: (message: string, lang: string, signal?: AbortSignal) =>
+    api.post<unknown>("/citizen/assess", { message, lang }, signal),
   verify: (caseId: string) => api.post<VerifyResult>("/verify", { case_id: caseId }),
 };
