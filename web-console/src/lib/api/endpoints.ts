@@ -7,6 +7,7 @@ import type {
   DemoState,
   GeoResponse,
   HoldsResponse,
+  HoldView,
   LedgerHead,
   LoginResponse,
   RingGraph,
@@ -31,7 +32,7 @@ export const endpoints = {
   holds: (state: "open" | "all" = "all", signal?: AbortSignal) =>
     api.get<HoldsResponse>(`/holds?state=${state}`, signal),
   resolveHold: (txnRef: string, action: "release" | "confirm_block", decisionSeq?: number) =>
-    api.post<unknown>(`/holds/${encodeURIComponent(txnRef)}/resolve`, { action, decision_seq: decisionSeq }),
+    api.post<{ hold: HoldView }>(`/holds/${encodeURIComponent(txnRef)}/resolve`, { action, decision_seq: decisionSeq }),
   antibodies: (state: "active" | "all" = "active", signal?: AbortSignal) =>
     api.get<AntibodiesResponse>(`/antibodies?state=${state}`, signal),
   ledgerHead: (signal?: AbortSignal) => api.get<LedgerHead>("/ledger/head", signal),

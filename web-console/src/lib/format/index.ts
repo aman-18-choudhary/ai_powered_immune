@@ -1,3 +1,5 @@
+import { reasonInfo } from "@/lib/reasons";
+
 /** Number, money and label formatters. Money is handled as integer paise: never as floats. */
 
 const DEC = /^-?\d+(\.\d{1,2})?$/;
@@ -131,20 +133,8 @@ export function median(xs: number[]): number | null {
   return s.length % 2 ? hi : ((lo ?? hi) + hi) / 2;
 }
 
-const REASON_LABELS: Record<string, string> = {
-  ANTIBODY_MATCH: "Antibody match",
-  ACTIVE_SCAM_CALL: "Active scam call",
-  AMOUNT_ANOMALY: "Unusual amount",
-  NEW_PAYEE: "New payee",
-  CALL_RISK_AMOUNT_GUARD: "Call-risk amount guard",
-  SCRIPT_CLASSIFIER_MATCH: "Known scam script",
-  LEGAL_THREAT: "Legal threat",
-  AUTHORITY_IMPERSONATION: "Authority impersonation",
-  URGENCY: "Time pressure",
-  NO_RISK_INDICATORS: "No risk cues",
-};
 export function reasonLabel(code: string): string {
-  return REASON_LABELS[code] ?? code.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  return reasonInfo(code).label;
 }
 
 export function bankLabel(bank: string, names?: { bank_a: string; bank_b: string } | null): string {
