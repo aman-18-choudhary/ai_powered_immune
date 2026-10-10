@@ -21,6 +21,8 @@ one non-removable "other victims" source per member.
 """
 
 import itertools
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -37,6 +39,38 @@ S, T = "\x00source", "\x00sink"
 BIG = 10**18
 EXHAUSTIVE_MAX_MEMBERS = 12
 EXHAUSTIVE_MAX_K = 3
+
+
+class Cancelled(Exception):
+    """The deadline passed or the caller gave up: the search stops at the next check."""
+
+
+class CancelToken:
+    """Cooperative cancellation: ``check()`` raises ``Cancelled`` once ``cancel()`` was called or
+    ``deadline_s`` seconds have passed since creation. A thread cannot be killed, so the flow loops
+    poll it between max-flow computations (one computation is the longest uninterruptible step)."""
+
+    def __init__(self, deadline_s: float | None = None) -> None:
+        self._stop = threading.Event()
+        self._deadline = None if deadline_s is None else time.monotonic() + deadline_s
+
+    def cancel(self) -> None:
+        self._stop.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._stop.is_set() or (
+            self._deadline is not None and time.monotonic() >= self._deadline
+        )
+
+    def check(self) -> None:
+        if self.cancelled:
+            raise Cancelled
+
+
+def _check(token: CancelToken | None) -> None:
+    if token is not None:
+        token.check()
 
 
 class TooLarge(ValueError):
@@ -110,29 +144,46 @@ def _net(fi: FlowInput, remove: frozenset[str], horizon_us: int) -> nx.DiGraph:
     def cap(total: int) -> int:
         return total * horizon_us // fi.window_us
 
+    # external payers are not removable and the source edge to them is unbounded, so a payer's
+    # edges can be replaced by source -> member edges of the same capacities (same max flow, a
+    # network with no payer nodes)
+    ingest: dict[str, int] = {}
     for s, d, total in fi.edges:
         if s in remove or d in remove:
             continue
         c = cap(total)
         if c <= 0:
             continue
-        net.add_edge(s, d, capacity=c)
-        if s not in members:
-            net.add_edge(S, s, capacity=BIG)
+        if s in members:
+            net.add_edge(s, d, capacity=c)
+        else:
+            ingest[d] = ingest.get(d, 0) + c
     for m, total in fi.folded:
         if m in remove:
             continue
         c = cap(total)
         if c > 0:
-            net.add_edge(S, m, capacity=c)
+            ingest[m] = ingest.get(m, 0) + c
+    for m, c in ingest.items():
+        net.add_edge(S, m, capacity=c)
     for t in _terminals(fi):
         if t in net and t not in remove:
             net.add_edge(t, T, capacity=BIG)
     return net
 
 
-def harm_paise(fi: FlowInput, remove: frozenset[str], horizon_us: int) -> int:
-    net = _net(fi, remove, horizon_us)
+def harm_paise(
+    fi: FlowInput, remove: frozenset[str], horizon_us: int, token: CancelToken | None = None,
+    base: nx.DiGraph | None = None,
+) -> int:  # fmt: skip
+    """Max flow with ``remove`` deleted. ``base`` (the full network from ``_net``) lets a search
+    evaluate many removal sets on a view instead of rebuilding the network each time."""
+    _check(token)
+    members = set(fi.members)
+    if base is None or any(n not in members for n in remove):  # a payer was named: rebuild
+        net = _net(fi, remove, horizon_us)
+    else:
+        net = nx.restricted_view(base, [n for n in remove if n in base], [])
     if S not in net or T not in net:
         return 0
     return int(nx.maximum_flow_value(net, S, T, flow_func=dinitz))
@@ -140,11 +191,12 @@ def harm_paise(fi: FlowInput, remove: frozenset[str], horizon_us: int) -> int:
 
 def _result(
     fi: FlowInput, remove: list[str], horizon_us: int, before: int | None = None,
-    observed: Decimal | None = None,
+    observed: Decimal | None = None, token: CancelToken | None = None,
 ) -> TakedownResult:  # fmt: skip
     rm = frozenset(remove)
-    b = harm_paise(fi, frozenset(), horizon_us) if before is None else before
-    a = harm_paise(fi, rm, horizon_us)
+    base = _net(fi, frozenset(), horizon_us)
+    b = harm_paise(fi, frozenset(), horizon_us, token, base) if before is None else before
+    a = harm_paise(fi, rm, horizon_us, token, base)
     present = {x for e in fi.edges for x in e[:2]} | set(fi.members)
     cut = sorted({(s, d) for s, d, _ in fi.edges if (s in rm or d in rm)})
     pct = round(100.0 * (b - a) / b, 2) if b > 0 else 0.0
@@ -166,8 +218,10 @@ def simulate_takedown(
     return simulate_flow(extract_flow_input(g, ring, cfg), remove, cfg)
 
 
-def simulate_flow(fi: FlowInput, remove: list[str], cfg: Settings) -> TakedownResult:
-    return _result(fi, remove, horizon_us(cfg))
+def simulate_flow(
+    fi: FlowInput, remove: list[str], cfg: Settings, token: CancelToken | None = None
+) -> TakedownResult:  # fmt: skip
+    return _result(fi, remove, horizon_us(cfg), token=token)
 
 
 def candidates(fi: FlowInput) -> list[str]:
@@ -175,19 +229,48 @@ def candidates(fi: FlowInput) -> list[str]:
     return sorted(fi.members)
 
 
-def best_flow(fi: FlowInput, k: int, cfg: Settings) -> list[str]:
+def restricted_pool(fi: FlowInput, base: nx.DiGraph, hz: int, size: int) -> list[str]:
+    """Greedy candidates on a big ring: members that carry flow in one maximum flow, terminals
+    (cash-outs and dead-end collectors) and articulation points of the flow network first, then by
+    throughput, at most ``size``. A member that carries no flow in a maximum flow cannot lower the
+    first greedy step, so dropping it loses nothing there; later steps are heuristic."""
+    members = set(fi.members)
+    if S not in base or T not in base:
+        return sorted(members)[:size]
+    _, flow = nx.maximum_flow(base, S, T, flow_func=dinitz)
+    through: dict[str, int] = {m: 0 for m in members}
+    for outs in flow.values():
+        for v, f in outs.items():
+            if v in through and f > 0:
+                through[v] += f
+    terminals = _terminals(fi)
+    artic = set(nx.articulation_points(base.to_undirected())) & members
+    pri = {m: 0 if (m in terminals or m in artic) else 1 for m in members}
+    live = [m for m in members if through[m] > 0]
+    live.sort(key=lambda m: (pri[m], -through[m], m))
+    return sorted(live[:size])
+
+
+def best_flow(
+    fi: FlowInput, k: int, cfg: Settings, token: CancelToken | None = None
+) -> list[str]:  # fmt: skip
     """Greedy: repeatedly remove the member whose removal lowers the harm most; ties go to the
-    smallest key. Stops early once nothing improves the harm any further."""
+    smallest key. Stops early once nothing improves the harm any further. Rings of at most
+    ``GRAPH_TAKEDOWN_POOL`` members search every member; bigger rings search the restricted pool
+    (``restricted_pool``). Each step checks ``token``."""
     hz = horizon_us(cfg)
+    base = _net(fi, frozenset(), hz)
     chosen: list[str] = []
-    cur = harm_paise(fi, frozenset(), hz)
+    cur = harm_paise(fi, frozenset(), hz, token, base)
     pool = candidates(fi)
+    if len(pool) > cfg.takedown_pool:
+        pool = restricted_pool(fi, base, hz, cfg.takedown_pool)
     for _ in range(max(0, k)):
         best: tuple[int, str] | None = None
         for c in pool:
             if c in chosen:
                 continue
-            h = harm_paise(fi, frozenset([*chosen, c]), hz)
+            h = harm_paise(fi, frozenset([*chosen, c]), hz, token, base)
             if best is None or (h, c) < best:
                 best = (h, c)
         if best is None or (best[0] >= cur and chosen):
@@ -198,21 +281,24 @@ def best_flow(fi: FlowInput, k: int, cfg: Settings) -> list[str]:
 
 
 def best_takedown(
-    g: nx.DiGraph, ring: Ring, k: int, cfg: Settings | None = None
+    g: nx.DiGraph, ring: Ring, k: int, cfg: Settings | None = None, token: CancelToken | None = None
 ) -> list[str]:  # fmt: skip
     cfg = cfg or Settings()
-    return best_flow(extract_flow_input(g, ring, cfg), k, cfg)
+    return best_flow(extract_flow_input(g, ring, cfg), k, cfg, token)
 
 
-def exhaustive_flow(fi: FlowInput, k: int, cfg: Settings) -> list[str]:
+def exhaustive_flow(
+    fi: FlowInput, k: int, cfg: Settings, token: CancelToken | None = None
+) -> list[str]:  # fmt: skip
     """Optimal k-subset by enumeration (small rings only: <= 12 members, k <= 3)."""
     pool = candidates(fi)
     if len(pool) > EXHAUSTIVE_MAX_MEMBERS or k > EXHAUSTIVE_MAX_K:
         raise ValueError("exhaustive search is limited to <= 12 members and k <= 3")
     hz = horizon_us(cfg)
     best: tuple[int, tuple[str, ...]] | None = None
+    base = _net(fi, frozenset(), hz)
     for combo in itertools.combinations(pool, min(k, len(pool))):
-        h = harm_paise(fi, frozenset(combo), hz)
+        h = harm_paise(fi, frozenset(combo), hz, token, base)
         if best is None or (h, combo) < best:
             best = (h, combo)
     return list(best[1]) if best else []
@@ -262,6 +348,7 @@ def node_flow_ids(fi: FlowInput) -> set[str]:
 
 
 __all__ = [
-    "FlowInput", "TakedownResult", "TooLarge", "best_takedown", "best_takedown_exhaustive",
-    "extract_flow_input", "harm_of", "simulate_takedown", "takedown_timeline",
+    "CancelToken", "Cancelled", "FlowInput", "TakedownResult", "TooLarge", "best_takedown",
+    "best_takedown_exhaustive", "extract_flow_input", "harm_of", "simulate_takedown",
+    "takedown_timeline",
 ]  # fmt: skip

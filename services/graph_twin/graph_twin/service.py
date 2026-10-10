@@ -9,7 +9,8 @@ shared ``svckit.drain.Drainer`` (fire-and-forget, capped, breaker) plus a period
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections import OrderedDict
+from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
 from scam_contracts.models import Antibody, Transaction, TxnDecision
@@ -18,6 +19,7 @@ from svckit.bus import Bus, consume
 from svckit.drain import Drainer
 
 from .model import AuditRow
+from .takedown import CancelToken
 from .twin import GraphTwin
 
 log = logging.getLogger("graph_twin")
@@ -25,6 +27,11 @@ T = TypeVar("T")
 
 GROUP_PREFIX = "graph-twin"
 MAX_BACKGROUND_TASKS = 100
+RESULT_CACHE_SIZE = 256
+
+
+class HeavyBusy(Exception):
+    """The heavy-operation queue (``GRAPH_HEAVY_QUEUE``) is full: the API answers 429."""
 
 
 class NullIdempotencyStore:
@@ -65,6 +72,10 @@ class TwinService:
         self._wake = asyncio.Event()
         self.heavy = asyncio.Semaphore(self.cfg.heavy_concurrency)
         self.heavy_timeouts = 0
+        self.heavy_rejected = 0
+        self._heavy_waiting = 0
+        self._inflight: dict[Hashable, asyncio.Future[Any]] = {}
+        self._results: OrderedDict[Hashable, Any] = OrderedDict()
         self.audit_dropped = 0
         self.audit_sent = 0
         self.detect_errors = 0
@@ -164,22 +175,64 @@ class TwinService:
                 log.warning("maintenance failed (%s)", type(e).__name__)
 
     # --------------------------------------------------------------------- heavy
-    async def run_heavy(self, fn: Callable[[], T]) -> T:
-        """Run a CPU-heavy function off-loop under the heavy-concurrency semaphore and the flow
-        timeout. The semaphore is held until the worker thread really finishes (a timeout cannot
-        kill a thread), so abandoned jobs cannot pile up beyond ``GRAPH_HEAVY_CONCURRENCY``."""
-        await self.heavy.acquire()
-        fut = asyncio.ensure_future(asyncio.to_thread(fn))
+    async def run_heavy(
+        self, fn: Callable[[CancelToken], T], key: Hashable | None = None
+    ) -> T:  # fmt: skip
+        """Run a CPU-heavy function off-loop under the heavy-concurrency semaphore, a bounded wait
+        queue and a deadline (``GRAPH_FLOW_TIMEOUT_S``).
+
+        * At most ``GRAPH_HEAVY_CONCURRENCY`` run and ``GRAPH_HEAVY_QUEUE`` wait; further requests
+          raise ``HeavyBusy`` at once (no unbounded pile-up).
+        * ``fn`` receives a ``CancelToken`` whose deadline is the flow timeout; on timeout the
+          token is cancelled, so an abandoned thread stops at its next check. The semaphore is
+          released only when the thread has really ended.
+        * ``key`` (ring id, ring version, request) enables a small LRU result cache and single
+          flight: identical concurrent requests share one job.
+        """
+        timeout = self.cfg.flow_timeout_s
+        if key is not None:
+            if key in self._results:
+                self._results.move_to_end(key)
+                return self._results[key]  # type: ignore[no-any-return]
+            shared = self._inflight.get(key)
+            if shared is not None:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(shared), timeout)  # type: ignore[no-any-return]
+                except TimeoutError:
+                    self.heavy_timeouts += 1
+                    raise
+        if self.heavy.locked() and self._heavy_waiting >= self.cfg.heavy_queue:
+            self.heavy_rejected += 1
+            raise HeavyBusy
+        self._heavy_waiting += 1
+        try:
+            await asyncio.wait_for(self.heavy.acquire(), timeout)
+        except TimeoutError:
+            self.heavy_timeouts += 1
+            raise
+        finally:
+            self._heavy_waiting -= 1
+        token = CancelToken(timeout)
+        fut: asyncio.Future[T] = asyncio.ensure_future(asyncio.to_thread(fn, token))
+        if key is not None:
+            self._inflight[key] = fut
 
         def _done(f: "asyncio.Future[T]") -> None:
             self.heavy.release()
-            if not f.cancelled():
-                f.exception()  # retrieved: an abandoned job's error is not "never retrieved"
+            if key is not None:
+                self._inflight.pop(key, None)
+            if f.cancelled():
+                return
+            if f.exception() is None and key is not None:  # retrieved either way
+                self._results[key] = f.result()
+                while len(self._results) > RESULT_CACHE_SIZE:
+                    self._results.popitem(last=False)
 
         fut.add_done_callback(_done)
         try:
-            return await asyncio.wait_for(asyncio.shield(fut), self.cfg.flow_timeout_s)
+            return await asyncio.wait_for(asyncio.shield(fut), timeout)
         except TimeoutError:
+            token.cancel()
             self.heavy_timeouts += 1
             raise
 

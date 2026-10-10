@@ -37,6 +37,8 @@ class Settings:
     flow_victim_cap: int = 500  # GRAPH_FLOW_VICTIM_CAP: individually modelled victims per ring
     flow_timeout_s: float = 5.0  # GRAPH_FLOW_TIMEOUT_S
     heavy_concurrency: int = 2  # GRAPH_HEAVY_CONCURRENCY
+    heavy_queue: int = 4  # GRAPH_HEAVY_QUEUE: heavy requests waiting for a slot (more: 429)
+    takedown_pool: int = 40  # GRAPH_TAKEDOWN_POOL: greedy candidates on rings above this size
     future_skew_s: float = 3_600.0  # GRAPH_FUTURE_SKEW_S: events further ahead are rejected
     audit_retention_days: float = 7.0  # GRAPH_AUDIT_RETENTION_DAYS
     audit_sweep_batch: int = 200  # GRAPH_AUDIT_SWEEP_BATCH

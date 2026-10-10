@@ -65,7 +65,7 @@ async def test_simulation_timeout_is_503_and_the_semaphore_follows_the_thread(db
 
     release = __import__("threading").Event()
 
-    def slow(fi, k, cfg):
+    def slow(fi, k, cfg, token=None):
         release.wait(2)
         return []
 

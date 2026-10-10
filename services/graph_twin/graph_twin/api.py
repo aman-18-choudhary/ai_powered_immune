@@ -14,6 +14,7 @@ import os
 import re
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -31,11 +32,16 @@ from . import audit
 from .config import Settings
 from .graph import api_id, paise_str, to_us
 from .model import MODEL_VERSION, Ring
-from .service import TwinService
+from .service import HeavyBusy, TwinService
 from .store import GraphStore
 from .takedown import (
+    EXHAUSTIVE_MAX_K,
+    EXHAUSTIVE_MAX_MEMBERS,
+    Cancelled,
+    CancelToken,
     TooLarge,
     best_flow,
+    exhaustive_flow,
     extract_flow_input,
     node_flow_ids,
     simulate_flow,
@@ -290,6 +296,7 @@ def create_app(
             "audit_sent_total": ("counter", service.audit_sent),
             "audit_dropped_total": ("counter", service.audit_dropped),
             "heavy_timeouts_total": ("counter", service.heavy_timeouts),
+            "heavy_rejected_total": ("counter", service.heavy_rejected),
             "detect_errors_total": ("counter", service.detect_errors),
             "background_tasks": ("gauge", len(service._bg)),
             "drain_tasks": ("gauge", service.drainer.live_tasks),
@@ -352,20 +359,37 @@ def create_app(
 
         return json_resp(await asyncio.to_thread(build), etag)
 
+    flow_cache: OrderedDict[tuple[str, int], Any] = OrderedDict()
+
     async def flow_input(r: Ring):  # type: ignore[no-untyped-def]
+        """The flow network of one ring version, cached (a ring version changes with its edges)."""
+        ck = (r.ring_id, r.version)
+        if ck in flow_cache:
+            flow_cache.move_to_end(ck)
+            return flow_cache[ck]
+
         def build():  # type: ignore[no-untyped-def]
             with twin.lock:
                 return extract_flow_input(twin.tg.g, r, cfg)
 
         try:
-            return await asyncio.to_thread(build)
+            fi = await asyncio.to_thread(build)
         except TooLarge as e:
             raise HTTPException(422, "ring too large to simulate") from e
+        flow_cache[ck] = fi
+        while len(flow_cache) > 16:
+            flow_cache.popitem(last=False)
+        return fi
 
-    async def run_flow(fn):  # type: ignore[no-untyped-def]
+    async def run_flow(fn, key):  # type: ignore[no-untyped-def]
         try:
-            return await service.run_heavy(fn)
-        except TimeoutError as e:
+            return await service.run_heavy(fn, key)
+        except HeavyBusy as e:
+            raise HTTPException(
+                429, "too many simulations in progress",
+                headers={"Retry-After": str(max(1, int(cfg.flow_timeout_s)))},
+            ) from e  # fmt: skip
+        except (TimeoutError, Cancelled) as e:
             raise HTTPException(503, "simulation timed out") from e
 
     def result_body(r: Ring, res, mode: str, selected: list[str]):  # type: ignore[no-untyped-def]
@@ -392,23 +416,33 @@ def create_app(
         r = get_ring(ring_id)
         no_takedown_when_retired(r)
         fi = await flow_input(r)
-        by_id: dict[str, list[str]] = {}
-        for k in node_flow_ids(fi):
-            by_id.setdefault(api_id(k), []).append(k)
         selected: list[str] = []
         if body.k is not None:
             mode = "k"
-            selected = await run_flow(lambda: best_flow(fi, body.k, cfg))  # type: ignore[arg-type]
+            k = body.k
+
+            def job_k(tok: CancelToken):  # type: ignore[no-untyped-def]
+                chosen = best_flow(fi, k, cfg, tok)
+                return chosen, simulate_flow(fi, chosen, cfg, tok)
+
+            selected, res = await run_flow(job_k, ("sim-k", r.ring_id, r.version, k))
             remove = selected
         else:
             mode = "list"
+            by_id: dict[str, list[str]] = {}
+            for key in node_flow_ids(fi):
+                by_id.setdefault(api_id(key), []).append(key)
             remove = []
             for nid in body.remove or []:
                 keys = by_id.get(nid)
                 if not keys or len(keys) != 1:
                     raise HTTPException(422, "unknown node id for this ring")
                 remove.append(keys[0])
-        res = await run_flow(lambda: simulate_flow(fi, remove, cfg))
+            rm = list(remove)
+            res = await run_flow(
+                lambda tok: simulate_flow(fi, rm, cfg, tok),
+                ("sim-list", r.ring_id, r.version, tuple(sorted(set(rm)))),
+            )
         out = result_body(r, res, mode, selected)
         service.audit_takedown(
             audit.takedown_row(
@@ -427,16 +461,25 @@ def create_app(
     @app.get("/rings/{ring_id}/best-takedown")
     async def best_takedown_route(
         ring_id: RingIdPath, p: Annotated[Principal, Depends(principal)],
-        k: Annotated[int, Query(ge=1, le=5)] = 1,
+        k: Annotated[int, Query(ge=1, le=5)] = 1, exact: bool = False,
     ) -> JSONResponse:  # fmt: skip
+        """Greedy best-k removal. ``exact=true`` enumerates every k-subset: only for rings of at
+        most 12 members and k <= 3 (422 otherwise)."""
         need(p, READERS)
         r = get_ring(ring_id)
         no_takedown_when_retired(r)
         fi = await flow_input(r)
-        chosen = await run_flow(lambda: best_flow(fi, k, cfg))
-        res = await run_flow(lambda: simulate_flow(fi, chosen, cfg))
+        if exact and (len(fi.members) > EXHAUSTIVE_MAX_MEMBERS or k > EXHAUSTIVE_MAX_K):
+            raise HTTPException(422, "exact search is limited to rings of <= 12 members and k <= 3")
+
+        def job(tok: CancelToken):  # type: ignore[no-untyped-def]
+            chosen = (exhaustive_flow if exact else best_flow)(fi, k, cfg, tok)
+            return chosen, simulate_flow(fi, chosen, cfg, tok)
+
+        chosen, res = await run_flow(job, ("best", r.ring_id, r.version, k, exact))
         out = result_body(r, res, "k", chosen)
         out["k"] = k
+        out["exact"] = exact
         return JSONResponse(out)
 
     return app
