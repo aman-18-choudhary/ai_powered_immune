@@ -768,6 +768,8 @@ class Run:
                 self.emit("scenario.finished", reason="error")
                 st.status = "error"
         finally:
+            if self.e.run is self:  # a superseded run is finalised by the engine instead
+                self.e._remember()
             self.done.set()
             self.ready.set()
             if self.fast:  # cancelled while replaying: leave subscribers with a coherent state
@@ -973,6 +975,17 @@ class Engine:
         self._run_dir_n += 1
         return self.work_dir / f"run-{self._run_dir_n}"
 
+    def _finalise_record(self, run_id: str | None, status: str) -> None:
+        """After a teardown: a run that had not reached a final status was superseded."""
+        if run_id is None:
+            return
+        final = status if status in ("finished", "stopped", "error") else "superseded"
+        for r in self.runs:
+            if r["run_id"] == run_id:
+                r["status"] = final
+                r["events"] = self.state.next_id - 1
+                return
+
     def _remember(self) -> None:
         st = self.state
         if st.run_id is None:
@@ -1001,7 +1014,9 @@ class Engine:
             raise RuntimeError("engine not started")
         async with self._lock:
             self._remember()
+            prev_id, prev_status = self.state.run_id, self.state.status
             await self._teardown()
+            self._finalise_record(prev_id, prev_status)
             plan = await asyncio.to_thread(build_plan, self.world, seed, mode)
             st = self.state
             st.run_id = uuid.uuid4().hex[:12]
@@ -1093,6 +1108,9 @@ class Engine:
         self._launch(plan, fast_until=t, start_paused=not resume)
         assert self.run is not None
         await asyncio.wait_for(self.run.ready.wait(), 60.0)
+        if t >= st.duration:  # replayed to the very end: let the run seal and finish
+            await asyncio.wait_for(self.run.done.wait(), 60.0)
+            self._remember()
 
     async def join(self, timeout: float | None = None) -> None:
         """Wait until the current run finished, was stopped or failed (tests, graceful close)."""

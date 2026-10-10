@@ -59,6 +59,7 @@ class Settings:
     verify_output_cap: int = 64 * 1024
     work_dir: Path | None = None
     secret_generated: bool = False
+    trust_proxy: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -92,6 +93,7 @@ class Settings:
             max_ws_clients=_int(e, "DEMO_MAX_WS_CLIENTS", 50, 1, 1000),
             work_dir=Path(work) if work else None,
             secret_generated=generated,
+            trust_proxy=e.get("DEMO_TRUST_PROXY") == "1",
         )
 
     def ensure_work_dir(self) -> Path:

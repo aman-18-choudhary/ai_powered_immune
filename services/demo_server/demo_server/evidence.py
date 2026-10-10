@@ -29,7 +29,7 @@ MAX_LINE_CHARS = 300
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _REDACTED = re.compile(r"redacted .*?seqs \[([0-9, ]*)\]")
 _CHAIN = re.compile(r"chain segment (\d+)\.\.(\d+) verified \((\d+) entries")
-_CKPT = re.compile(r"(\d+) checkpoint")
+_CKPT = re.compile(r"verified .*against signed checkpoint")
 
 
 class VerifyError(Exception):
@@ -71,7 +71,8 @@ def _status(code: int) -> str:
 def parse(output: str, code: int) -> dict[str, Any]:
     lines = sanitise(output)
     redacted: list[int] = []
-    entries = checkpoints = None
+    entries = checkpoints = segment_end = None
+    checkpoint_verified = False
     for ln in lines:
         m = _REDACTED.search(ln)
         if m:
@@ -79,19 +80,20 @@ def parse(output: str, code: int) -> dict[str, Any]:
         m = _CHAIN.search(ln)
         if m:
             entries = int(m.group(3))
-        m = _CKPT.search(ln)
-        if m and "chain segment" in ln:
-            checkpoints = int(m.group(1))
+            segment_end = int(m.group(2))
+            checkpoint_verified = bool(_CKPT.search(ln))
     return {
         "exit_code": code, "status": _status(code), "lines": lines,
         "redacted_seqs": redacted, "entries": entries, "checkpoints": checkpoints,
+        "checkpoint_verified": checkpoint_verified, "segment_end": segment_end,
     }  # fmt: skip
 
 
 def _fail(line: str) -> dict[str, Any]:
     return {
         "exit_code": 1, "status": "FAIL", "lines": [line], "redacted_seqs": [],
-        "entries": None, "checkpoints": None,
+        "entries": None, "checkpoints": None, "checkpoint_verified": False,
+        "segment_end": None,
     }  # fmt: skip
 
 

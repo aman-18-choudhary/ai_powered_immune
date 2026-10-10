@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from txn_guard.holds import HoldConflict, HoldNotFound
@@ -64,8 +64,8 @@ class LoginBody(_Body):
 
 
 class StartBody(_Body):
-    seed: int = Field(default=1, ge=0, le=2**31 - 1)
-    speed: float = Field(default=10.0, ge=SPEED_MIN, le=SPEED_MAX)
+    seed: StrictInt = Field(default=1, ge=0, le=2**31 - 1)
+    speed: StrictFloat | StrictInt = Field(default=10.0, ge=SPEED_MIN, le=SPEED_MAX)
     mode: Literal["hero", "hero+noise"] = "hero"
     pacing: Literal["real", "cinematic"] = "real"
 
@@ -187,6 +187,13 @@ def create_app(
         )
 
     # ------------------------------------------------------------------- auth
+    def _client_ip(request: Request) -> str:
+        if cfg.trust_proxy:
+            xff = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            if xff and len(xff) <= 64:
+                return xff
+        return request.client.host if request.client else "unknown"
+
     def _principal(request: Request) -> Principal:
         h = request.headers.get("authorization", "")
         scheme, _, token = h.partition(" ")
@@ -204,7 +211,9 @@ def create_app(
             p = _principal(request)
             if p.role not in allowed:
                 raise _err(403, "forbidden")
-            wait = limiter.check(p.role, p.sub)
+            # a citizen token costs nothing to mint: key by client address, not by `sub`
+            key = f"ip:{_client_ip(request)}" if p.role == "citizen" else p.sub
+            wait = limiter.check(p.role, key)
             if wait is not None:
                 raise ApiError(429, "rate_limited", headers={"Retry-After": str(wait)})
             return p
@@ -229,8 +238,7 @@ def create_app(
 
     @app.post("/api/auth/demo-login")
     async def demo_login(body: LoginBody, request: Request) -> dict[str, Any]:
-        ip = request.client.host if request.client else "unknown"
-        wait = limiter.check("anon", f"login:{ip}")
+        wait = limiter.check("anon", f"login:{_client_ip(request)}")
         if wait is not None:
             raise ApiError(429, "rate_limited", headers={"Retry-After": str(wait)})
         if not code_ok(body.code, cfg.login_code):
@@ -271,16 +279,36 @@ def create_app(
         host = ws.headers.get("host", "")
         return bool(host) and urlsplit(origin).netloc == host
 
+    async def _deny(ws: WebSocket) -> None:
+        """Reject the handshake with security headers where the server supports a denial
+        response; otherwise a plain close (HTTP 403 from the server)."""
+        try:
+            await ws.send_denial_response(
+                Response(
+                    status_code=403,
+                    content=b"",
+                    headers={
+                        "Cache-Control": "no-store",
+                        "X-Content-Type-Options": "nosniff",
+                        "Referrer-Policy": "no-referrer",
+                        "X-Frame-Options": "DENY",
+                        "Content-Security-Policy": "frame-ancestors 'none'",
+                    },
+                )
+            )
+        except Exception:
+            await ws.close(code=1008)
+
     @app.websocket("/api/stream")
     async def stream(ws: WebSocket) -> None:
         token = ws.query_params.get("token", "")
         try:
             decode_token(cfg.jwt_secret, token)
         except AuthError:
-            await ws.close(code=1008)  # rejected before accept (HTTP 403 handshake)
+            await _deny(ws)  # rejected before accept (HTTP 403 handshake)
             return
         if not _origin_ok(ws):
-            await ws.close(code=1008)
+            await _deny(ws)
             return
         await ws.accept()
         sub: Subscriber | None = eng.subscribe()
@@ -320,6 +348,9 @@ def create_app(
             for t in tasks:
                 t.cancel()
             await asyncio.wait(tasks)
+            for t in tasks:  # retrieve the outcome (a send timeout raises in the writer)
+                if not t.cancelled():
+                    t.exception()
             try:
                 await ws.close()
             except Exception:  # already closed
@@ -379,7 +410,12 @@ def create_app(
         r = await ledger_get(run, "/head", p)
         out = r.json()
         sg = run.harness.signer  # type: ignore[union-attr]
-        out.update(public_key_hex=sg.public_raw.hex(), key_id=sg.key_id, algorithm="Ed25519")
+        out.update(
+            public_key_hex=sg.public_raw.hex(),
+            key_id=sg.key_id,
+            algorithm="Ed25519",
+            simulated_clock=True,
+        )
         return out
 
     @app.get("/api/ledger/entries")
@@ -390,7 +426,7 @@ def create_app(
     ) -> dict[str, Any]:
         run = run_or_409()
         r = await ledger_get(run, "/entries", p, from_seq=from_seq, limit=limit)
-        return r.json()
+        return {**r.json(), "simulated_clock": True}
 
     @app.get("/api/ledger/checkpoints/latest")
     async def ledger_checkpoint(p: Principal = Readers) -> dict[str, Any]:
@@ -399,10 +435,10 @@ def create_app(
         assert h is not None
         r = await h.ledger.get("/checkpoints/latest", headers=h.ledger_headers("officer", p.sub))
         if r.status_code == 404:
-            return {"checkpoint": None, "simulated": True}
+            return {"checkpoint": None, "simulated": True, "simulated_clock": True}
         if r.status_code != 200:
             raise _err(502, "ledger_error")
-        return {"checkpoint": r.json(), "simulated": True}
+        return {"checkpoint": r.json(), "simulated": True, "simulated_clock": True}
 
     @app.get("/api/ledger/checkpoints")
     async def ledger_checkpoints(
@@ -410,7 +446,7 @@ def create_app(
     ) -> dict[str, Any]:
         run = run_or_409()
         r = await ledger_get(run, "/checkpoints", p, from_seq=0, limit=limit)
-        return r.json()
+        return {**r.json(), "simulated_clock": True}
 
     # --------------------------------------------------------- cases + packages
     @app.post("/api/cases", status_code=201)
@@ -467,6 +503,24 @@ def create_app(
             },
         )  # fmt: skip
 
+    async def _checkpoint_info(run: Run, res: dict[str, Any], p: Principal) -> dict[str, Any]:
+        """``checkpoints``: signed checkpoints of the ledger at or below the verified segment's
+        last sequence (the verifier prints only that it checked against signed checkpoints)."""
+        h = run.harness
+        assert h is not None
+        end = res.get("segment_end")
+        if res.get("status") == "FAIL" or end is None:
+            return res
+        r = await h.ledger.get(
+            "/checkpoints",
+            params={"from_seq": 0, "limit": 200},
+            headers=h.ledger_headers("officer", p.sub),
+        )
+        if r.status_code == 200:
+            items = r.json().get("items", [])
+            res["checkpoints"] = sum(1 for c in items if int(c.get("seq", 0)) <= int(end))
+        return res
+
     @app.post("/api/verify")
     async def verify(body: VerifyBody, p: Principal = OfficerAdmin) -> dict[str, Any]:
         run = run_or_409()
@@ -480,6 +534,7 @@ def create_app(
             )  # fmt: skip
         except evidence.VerifyError as e:
             raise _err(422, "unverifiable_package", str(e)) from None
+        res = await _checkpoint_info(run, res, p)
         return {
             **res, "case_id": body.case_id, "pinned_key_id": h.signer.key_id,
             "public_key_hex": h.signer.public_raw.hex(), "simulated": True,
@@ -550,8 +605,13 @@ def create_app(
 
     # --------------------------------------------------------- benchmark + citizen
     @app.get("/api/benchmark/summary")
-    async def benchmark_summary(_p: Principal = Any_) -> dict[str, Any]:
-        return await asyncio.to_thread(benchmark.load_summary)
+    async def benchmark_summary(request: Request, _p: Principal = Any_) -> Response:
+        body, etag = await asyncio.to_thread(benchmark.encoded_summary)
+        headers = {"ETag": etag, "Cache-Control": "no-cache"}
+        inm = request.headers.get("if-none-match", "")
+        if etag in {x.strip() for x in inm.split(",")} or inm.strip() == "*":
+            return Response(status_code=304, headers=headers)
+        return Response(body, media_type="application/json", headers=headers)
 
     @app.post("/api/citizen/assess")
     async def assess(body: AssessBody, _p: Principal = Any_) -> dict[str, Any]:
@@ -566,7 +626,12 @@ def create_app(
     static_root = cfg.static_dir.resolve() if cfg.static_dir else None
 
     def _static_file(path: Path) -> Response:
-        return FileResponse(path)
+        try:
+            immutable = path.relative_to(static_root or path).parts[:1] == ("assets",)
+        except ValueError:
+            immutable = False
+        cc = "public, max-age=31536000, immutable" if immutable else "no-cache"
+        return FileResponse(path, headers={"Cache-Control": cc})
 
     @app.get("/{path:path}", include_in_schema=False)
     async def static(path: str) -> Response:

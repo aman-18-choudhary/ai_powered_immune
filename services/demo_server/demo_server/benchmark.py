@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from importlib import resources
@@ -17,3 +18,10 @@ def load_summary() -> dict[str, Any]:
     if not isinstance(data, dict) or data.get("simulated") is not True:
         raise ValueError("benchmark summary must be a simulated-data summary")
     return data
+
+
+@lru_cache(maxsize=1)
+def encoded_summary() -> tuple[bytes, str]:
+    """The summary as compact JSON bytes and a strong ETag (quoted SHA-256 of those bytes)."""
+    body = json.dumps(load_summary(), separators=(",", ":"), sort_keys=True).encode()
+    return body, '"' + hashlib.sha256(body).hexdigest() + '"'

@@ -51,15 +51,18 @@ All routes are under `/api`. Errors are `{"error": code, "detail"?: string}`; va
 (`422`, `error: "invalid_request"`) carry `loc`/`msg`/`type` only, never the submitted value or
 unknown key names. Bodies are capped at 64 KiB (`413`). An unhandled error returns `500 {"error":"internal_error"}` without detail; static paths that cannot be resolved (NUL, over-long, invalid) return `404`. Rate limits are per role per minute
 (citizen 30, analyst/officer 300, admin 600; unauthenticated login 60), fixed window, fail open.
+Citizen and login buckets are keyed by client address (and role), not by token, so logging in
+again does not reset them; `X-Forwarded-For` is used only when `DEMO_TRUST_PROXY=1`. Analyst,
+officer and admin buckets are keyed per token subject.
 
 | Method and path | Roles | Notes |
 |---|---|---|
 | `GET /health` | none | `{"status":"ok","simulated":true}` |
 | `POST /auth/demo-login` `{role, code?}` | none | HS256 JWT, 8 h, claims `sub, role, iat, exp, jti`; no passwords. `DEMO_LOGIN_CODE`, when set, must be supplied as `code` |
-| `POST /demo/start` `{seed?, speed?, mode?, pacing?}` | officer, admin | `seed` 0..2^31-1 (1), `speed` 0.25..20 (10), `mode` `hero` / `hero+noise`, `pacing` `real` (default) / `cinematic`; restarts; returns `{run_id}` |
+| `POST /demo/start` `{seed?, speed?, mode?, pacing?}` | officer, admin | `seed` 0..2^31-1 (1), `speed` 0.25..20 (10), `mode` `hero` / `hero+noise`, `pacing` `real` (default) / `cinematic`; `seed` must be a JSON integer and `speed` a JSON number (strings are `422`); restarts; returns `{run_id}` |
 | `POST /demo/control` `{action, t?, wall?, speed?}` | officer, admin | `pause` / `resume` / `stop` / `seek` (exactly one of `t` simulated seconds or `wall` seconds on the run's pacing timeline, else `422`); `speed` may accompany any action; returns the state |
 | `GET /demo/state` | any | `{run_id, status, t, duration, speed, step, counters, simulated, mode, seed, epoch, last_event_id, banks, pacing, wall_duration, wall_offset}` |
-| `GET /demo/runs` | any | bounded list of recent runs |
+| `GET /demo/runs` | any | bounded list of recent runs; `status` is the final status (`finished`, `stopped`, `error`) or `superseded` for a run replaced before it ended; `events`, `pacing` |
 | `GET /stream` (WebSocket `?token=`) | any | see below |
 | `GET /holds?state=open\|all` | analyst, officer, admin | deadline ascending; exact `amount_inr` as a string |
 | `POST /holds/{txn_ref}/resolve` `{action, decision_seq?}` | analyst, admin | `release` / `confirm_block`; idempotent for the same action, `409` for the other or a stale `decision_seq` |
@@ -74,7 +77,7 @@ unknown key names. Bodies are capped at 64 KiB (`413`). An unhandled error retur
 | `POST /ring/{case_id}/simulate` `{remove: [<=50 node ids]}` or `{k: 1..5}` | analyst, officer, admin | `{harm_before, harm_after, reduction_pct, removed, cut_edges, cut_edge_list}`; money as decimal strings |
 | `GET /ring/{case_id}/best-takedown?k=` | analyst, officer, admin | greedy result and, when the ring has <= 12 members and k <= 3, the optimal one and `gap_pct` |
 | `GET /geo/hotspots` | analyst, officer, admin | cells (city, lat, lon, `count`, `prev_count`, `trend`) and cash-out points |
-| `GET /benchmark/summary` | any | the bundled benchmark JSON |
+| `GET /benchmark/summary` | any | the bundled benchmark JSON; strong `ETag` (SHA-256 of the body), `If-None-Match` gives `304` |
 | `POST /citizen/assess` `{message, lang?}` | any | see Citizen assistant |
 
 Examples:
@@ -96,7 +99,7 @@ The token is validated, and the `Origin` header checked (allowlist `DEMO_CORS_OR
 host equal to the request `Host`; no `Origin` header is accepted), before the handshake is
 accepted. The first message is always a `scenario.state` snapshot: the counters plus the last 200
 events. Live events follow. Client messages are ignored; one over 1 KiB closes with `1009`.
-Close codes: `4429` too slow (per-client queue of 256 overflowed), `4503` connection cap reached.
+Handshake rejections (bad token or origin) answer `403` with the API's security headers where the server supports a denial response. Close codes: `4429` too slow (per-client queue of 256 overflowed), `4503` connection cap reached.
 
 Every event: `{id, t, wall, wall_offset, kind, run_id, ...}`. `id` is a per-run integer, strictly increasing
 with no gaps in the live stream; `t` is simulated seconds since the first call; `wall` is a UTC
@@ -152,7 +155,7 @@ Residual digit runs in a detail are limited to ISO dates and the 8-hex antibody 
 * `ledger.entry` events are emitted at synchronisation points after each scenario step, waiting at
   most 1 s of wall time for the ledger consumer; if the ledger lags more than that, entries
   appear at a later point instead. Scoring, holds and stream events never wait for the ledger.
-* `seek` restarts the run from scratch (same seed, new resources), replays it without pacing to
+* `seek` to `t` at or after the end returns `status: finished`. `seek` restarts the run from scratch (same seed, new resources), replays it without pacing to
   `t`, then continues live (or stays paused if it was paused or finished). The replayed events are
   identical to the original, ids included; manual analyst actions taken earlier are re-applied at
   their recorded simulated time; subscribers receive one `scenario.state` snapshot. A seek costs
@@ -169,10 +172,20 @@ directory and runs the `verify.py` shipped in the package with `python -I -S ver
 20 s timeout, 64 KiB output cap, sanitised and capped output lines. Before running it, the
 server checks that the package's `verify.py` is byte-identical to the ledger's own verifier, so a
 tampered package cannot supply its own. Response: `{exit_code, status, lines, redacted_seqs,
-entries, checkpoints, case_id, pinned_key_id, public_key_hex}`, `status` one of `PASS_PINNED`
+entries, checkpoints, checkpoint_verified, segment_end, case_id, pinned_key_id, public_key_hex}`
+(`checkpoint_verified`: the verifier reported the chain segment verified against signed
+checkpoints; `segment_end`: its last sequence; `checkpoints`: signed ledger checkpoints at or below
+it), `status` one of `PASS_PINNED`
 (exit 0), `INTEGRITY_OK_UNPINNED` (exit 2), `FAIL` (exit 1, timeouts, truncated output). The
 signing key is held by the ledger's `Signer` only; its public half is returned. The signing key is
 generated per process, so packages from one process are not verifiable against another's key.
+
+### Ledger clock
+
+The in-process ledger stamps receipts with a fixed simulated clock: `2026-01-01T00:00:01Z` plus one
+second per entry (case `created_at` follows the same clock), so entry timestamps are deterministic
+and unrelated to the run's wall time or simulated scenario time. Ledger responses carry
+`"simulated_clock": true`.
 
 ### Citizen assistant
 
@@ -204,7 +217,8 @@ simulated citizen is exposed.
 | `DEMO_JWT_SECRET` | random per process (WARNING) | HS256 secret, at least 32 bytes if set |
 | `DEMO_LOGIN_CODE` | unset | optional code required by `demo-login` |
 | `DEMO_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080` | explicit origins for CORS and the WebSocket origin check; `*` is rejected |
-| `DEMO_STATIC_DIR` | unset | directory of the built console to serve |
+| `DEMO_STATIC_DIR` | unset | directory of the built console to serve (`/assets/*`: `Cache-Control: public, max-age=31536000, immutable`; `index.html` and the SPA fallback: `no-cache`) |
+| `DEMO_TRUST_PROXY` | unset | `1`: key citizen/login rate limits on the first `X-Forwarded-For` address |
 | `DEMO_WORK_DIR` | a temp directory | per-run SQLite files; removed at shutdown |
 | `DEMO_HISTORY_SIZE` | 5000 | event ring buffer |
 | `DEMO_CLIENT_QUEUE` | 256 | per-WebSocket queue |
@@ -260,7 +274,7 @@ the file is byte-reproducible for a given seed and code version; with it, `meta.
 ## Tests
 
 ```
-cd services/demo_server && python -m pytest -W error -q     # about 30 s
+cd services/demo_server && python -m pytest -W error -q     # about 45 s
 ruff check . && ruff format --check .
 ```
 

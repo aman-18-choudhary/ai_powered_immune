@@ -46,7 +46,7 @@ def test_unhandled_error_is_generic_500_with_internal_error_body(tmp_path, monke
     def boom():
         raise RuntimeError("secret detail /etc/passwd")
 
-    monkeypatch.setattr(benchmark, "load_summary", boom)
+    monkeypatch.setattr(benchmark, "encoded_summary", boom)
     app = create_app(make_settings(tmp_path))
     with TestClient(app, raise_server_exceptions=False) as c:
         r = c.get("/api/benchmark/summary", headers=login(c, "citizen"))
