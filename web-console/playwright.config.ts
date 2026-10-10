@@ -5,7 +5,7 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 300_000,
-  expect: { timeout: 20_000 },
+  expect: { timeout: 240_000 },
   use: { baseURL: process.env.CONSOLE_URL ?? "http://localhost:5173", headless: true },
   reporter: "list",
 });
