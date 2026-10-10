@@ -39,7 +39,7 @@ export default function App() {
     <ThemeProvider>
       <MotionPrefsProvider>
         <TooltipProvider delayDuration={150}>
-          <BrowserRouter>{token ? <Authed /> : <Splash />}</BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{token ? <Authed /> : <Splash />}</BrowserRouter>
           <Toaster />
         </TooltipProvider>
       </MotionPrefsProvider>

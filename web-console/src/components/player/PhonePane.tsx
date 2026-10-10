@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { PhoneCall, PhoneIncoming, ShieldAlert, ShieldCheck, ShieldQuestion, Signal } from "lucide-react";
 import { Panel } from "@/components/common/Panel";
@@ -45,6 +45,12 @@ export function PhonePane({ run }: Props) {
   const calls = useMemo(() => victimCalls(run, "A"), [run]);
   const items = useMemo(() => calls.flatMap((c) => c.chunks.map((ch) => ({ id: ch.id, text: ch.text }))), [calls]);
   const revealed = useTypedStream(items, reduced);
+  const scroller = useRef<HTMLDivElement>(null);
+  const revealedTotal = Object.values(revealed).reduce((a, b) => a + b, 0);
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [revealedTotal, items.length]);
   const latest = calls[calls.length - 1];
   const alert = calls.find((c) => c.alert)?.alert ?? null;
   const threshold = alert?.threshold ?? THRESHOLD_FALLBACK;
@@ -110,7 +116,7 @@ export function PhonePane({ run }: Props) {
           )}
         </AnimatePresence>
 
-        <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2" aria-live="off" aria-label="Call transcript">
+        <div ref={scroller} className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2" aria-live="off" aria-label="Call transcript">
           {items.length === 0 && (
             <p className="px-1 pt-4 text-center text-[11px] text-subtle">Call transcript appears here as the call unfolds.</p>
           )}

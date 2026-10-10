@@ -18,13 +18,22 @@ export function useTypedStream(items: TypedItem[], instant: boolean, charsPerTic
     if (instant) return;
     const h = setInterval(() => {
       setRevealed((prev) => {
-        for (const it of itemsRef.current) {
-          const have = prev[it.id] ?? 0;
-          if (have < it.text.length) {
-            return { ...prev, [it.id]: Math.min(it.text.length, have + charsPerTick) };
-          }
+        const its = itemsRef.current;
+        let backlog = 0;
+        for (const it of its) backlog += Math.max(0, it.text.length - (prev[it.id] ?? 0));
+        if (backlog === 0) return prev;
+        // Adaptive: a large backlog (late joiner, seek) is cleared in about a second.
+        let budget = backlog > 320 ? Math.max(charsPerTick, Math.ceil(backlog / 30)) : charsPerTick;
+        const next = { ...prev };
+        for (const it of its) {
+          const have = next[it.id] ?? 0;
+          if (have >= it.text.length) continue;
+          const give = Math.min(budget, it.text.length - have);
+          next[it.id] = have + give;
+          budget -= give;
+          if (budget <= 0) break;
         }
-        return prev;
+        return next;
       });
     }, tickMs);
     return () => clearInterval(h);

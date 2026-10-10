@@ -83,8 +83,8 @@
   --flow-soft: color-mix(in srgb, var(--flow) 14%, transparent);
 
   --focus-ring: var(--p-cyan-400);
-  --map-land: color-mix(in srgb, var(--p-slate-400) 12%, transparent);
-  --map-land-stroke: rgb(255 255 255 / 0.14);
+  --map-land: color-mix(in srgb, var(--p-slate-400) 17%, transparent);
+  --map-land-stroke: rgb(255 255 255 / 0.2);
   --grid-line: rgb(255 255 255 / 0.035);
   --aurora-a: var(--p-violet-500);
   --aurora-b: var(--p-cyan-400);
