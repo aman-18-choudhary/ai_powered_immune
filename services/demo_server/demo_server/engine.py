@@ -63,6 +63,7 @@ TICK_S = 30.0
 SLICE_S = 5.0
 LEDGER_WAIT_S = 1.0
 ANTIBODY_WAIT_S = 5.0
+HARNESS_BUILD_WAIT_S = 30.0
 CALL_ALERT_THRESHOLD = 0.7
 ANALYST_ACTOR = "analyst-1"
 EVIDENCE_REF = "case-77"
@@ -202,6 +203,7 @@ class Run:
             engine.state.pacing, [it.t for it in plan.items], plan.duration, TICK_S
         )
         self.harness: Harness | None = None
+        self.harness_future: asyncio.Future[Harness] | None = None
         self.ring = RingGraph()
         self.running = asyncio.Event()
         if not start_paused:
@@ -662,7 +664,10 @@ class Run:
                 self.plan.t0, self.on_hold,
             )  # fmt: skip
 
-        self.harness = await asyncio.to_thread(build)
+        # keep the future on the run: a cancelled setup must still be awaited by teardown, or
+        # the orphaned thread recreates the work dir and stores after they were removed
+        self.harness_future = asyncio.ensure_future(asyncio.to_thread(build))
+        self.harness = await asyncio.shield(self.harness_future)
         await self.harness.open()
         h = self.harness
         sc, meta = self.plan.scenario, self.meta
@@ -942,6 +947,13 @@ class Engine:
         if task is not None:
             task.cancel()
             await asyncio.wait([task])
+        if run is not None and run.harness is None and run.harness_future is not None:
+            try:  # the build thread cannot be cancelled: wait for it, then close what it made
+                run.harness = await asyncio.wait_for(
+                    asyncio.shield(run.harness_future), HARNESS_BUILD_WAIT_S
+                )
+            except Exception as e:
+                log.warning("harness build did not complete (%s)", type(e).__name__)
         if run is not None and run.harness is not None:
             await run.harness.close()
         if run is not None:
