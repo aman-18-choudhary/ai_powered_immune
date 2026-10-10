@@ -53,6 +53,7 @@ from .events import EventLog, Subscriber
 from .harness import Harness, new_gateway_secret
 from .plan import Item, Plan, bank_slot, build_plan
 from .ring import RingGraph
+from .sanitise import sanitise_detail
 
 log = logging.getLogger("demo_server.engine")
 
@@ -127,8 +128,15 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _reasons(rs: list[Any]) -> list[dict[str, Any]]:
-    return [{"code": r.code, "weight": round(float(r.weight), 4), "detail": r.detail} for r in rs]
+def _reasons(rs: list[Any], bucket: str | None = None) -> list[dict[str, Any]]:
+    """Reasons for events and views; exact amounts in the detail text become the bucket label."""
+    return [
+        {
+            "code": r.code, "weight": round(float(r.weight), 4),
+            "detail": sanitise_detail(r.detail, bucket),
+        }
+        for r in rs
+    ]  # fmt: skip
 
 
 class _Stopped(Exception):
@@ -281,7 +289,7 @@ class Run:
             base = {
                 "txn_ref": ref, "bank": slot, "decision": h.decision,
                 "decision_seq": h.decision_seq, "score": round(h.score, 4),
-                "reasons": _reasons(h.reasons), "rail": h.rail,
+                "reasons": _reasons(h.reasons, h.amount_bucket), "rail": h.rail,
                 "amount_bucket": h.amount_bucket, "deadline_t": round(deadline_t, 3),
             }  # fmt: skip
             if kind == "created":
@@ -527,7 +535,8 @@ class Run:
         self.emit(
             "txn.scored", txn_ref=ref, bank=slot, bank_name=self.st.banks.get(slot),
             rail=txn.rail, amount_bucket=amount_bucket(txn.amount_inr), decision=d.decision,
-            score=round(d.score, 4), reasons=_reasons(d.reasons), seq=d.decision_seq,
+            score=round(d.score, 4),
+            reasons=_reasons(d.reasons, amount_bucket(txn.amount_inr)), seq=d.decision_seq,
             victim=who, hero=hero,
         )  # fmt: skip
         meta = self.hold_meta.setdefault(ref, {"txn_id": txn.txn_id, "bank": slot})
@@ -754,7 +763,8 @@ class Run:
         return {
             "txn_ref": ref, "bank": meta["bank"], "bank_name": meta.get("bank_name"),
             "state": hold.state, "decision": hold.decision, "decision_seq": hold.decision_seq,
-            "score": round(hold.score, 4), "reasons": _reasons(hold.reasons), "rail": hold.rail,
+            "score": round(hold.score, 4), "rail": hold.rail,
+            "reasons": _reasons(hold.reasons, hold.amount_bucket),
             "amount_bucket": hold.amount_bucket, "amount_inr": meta.get("amount_inr"),
             "payee_ref": meta.get("payee_ref"), "hero": bool(meta.get("hero")),
             "created_t": meta.get("created_t"),

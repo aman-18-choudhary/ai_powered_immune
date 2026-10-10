@@ -123,8 +123,12 @@ Deviations from the spec text, both forced by the envelope's own `kind` key: the
 `geo.point.kind` is `point_kind` and `antibody.published.kind` is `antibody_kind`.
 
 Reasons are `{code, weight, detail}`; `detail` is the services' own text, built from numbers and
-fixed phrases. Amounts appear on the stream only as buckets. REST views for analyst/officer/admin
-carry the exact INR amount as a decimal string.
+fixed phrases, passed through `demo_server/sanitise.py` before it enters any event or snapshot:
+currency amounts (`Rs`/`INR`/`₹` with Indian or Western grouping), grouped numbers, bare numbers
+of 5+ digits and multiples of 4+ digits are replaced by the event's amount bucket label (or
+`[amount withheld]` when no bucket applies). Amounts appear on the stream only as buckets. REST
+views for analyst/officer/admin carry the exact INR amount as a decimal string (`amount_inr`).
+Residual digit runs in a detail are limited to ISO dates and the 8-hex antibody short id.
 
 ### Playback, time and determinism
 
