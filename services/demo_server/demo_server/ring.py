@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -132,6 +132,17 @@ class RingGraph:
         self._seen: set[str] = set()
         self._seed_order: dict[str, int] = {}  # first time an account became a seed
         self.version = 0
+
+    def frozen(self) -> RingGraph:
+        """An independent copy for computing off the event loop: call it ON the loop (where all
+        mutation happens), hand the copy to a worker thread. Cost is linear in the graph size."""
+        g = RingGraph(self.horizon_days)
+        g._nodes = {k: replace(n) for k, n in self._nodes.items()}
+        g._edges = {k: replace(e, rails=set(e.rails)) for k, e in self._edges.items()}
+        g._seen = set(self._seen)
+        g._seed_order = dict(self._seed_order)
+        g.version = self.version
+        return g
 
     # ------------------------------------------------------------------------------ ingest
     @staticmethod

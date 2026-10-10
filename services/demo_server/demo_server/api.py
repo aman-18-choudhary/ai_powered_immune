@@ -514,11 +514,12 @@ def create_app(
         _snapshot(run, rid)
         if (body.remove is None) == (body.k is None):
             raise _err(422, "invalid_request", "give exactly one of remove or k")
+        ring = run.ring.frozen()  # copied on the loop; the worker thread never sees live state
         try:
             if body.k is not None:
-                res = await asyncio.to_thread(run.ring.best_takedown, body.k, rid)
+                res = await asyncio.to_thread(ring.best_takedown, body.k, rid)
             else:
-                res = await asyncio.to_thread(run.ring.simulate_takedown, body.remove or [], rid)
+                res = await asyncio.to_thread(ring.simulate_takedown, body.remove or [], rid)
         except ValueError:
             raise _err(422, "invalid_request", "unknown or non-removable node id") from None
         return {**res.to_json(), "mode": "k" if body.k is not None else "remove", "simulated": True}
@@ -530,10 +531,11 @@ def create_app(
     ) -> dict[str, Any]:  # fmt: skip
         run, rid = _ring_run(case_id)
         _snapshot(run, rid)
-        greedy = await asyncio.to_thread(run.ring.best_takedown, k, rid)
+        ring = run.ring.frozen()
+        greedy = await asyncio.to_thread(ring.best_takedown, k, rid)
         out: dict[str, Any] = {"greedy": greedy.to_json(), "optimal": None, "simulated": True}
         try:
-            opt = await asyncio.to_thread(run.ring.best_takedown_exhaustive, k, rid)
+            opt = await asyncio.to_thread(ring.best_takedown_exhaustive, k, rid)
             out["optimal"] = opt.to_json()
             out["gap_pct"] = round(opt.reduction_pct - greedy.reduction_pct, 1)
         except ValueError:
