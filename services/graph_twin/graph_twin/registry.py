@@ -123,6 +123,7 @@ class RingRegistry:
         surv.core = frozenset(
             n for n, r in surv.members.items() if r in ("mule", "cash_out") or n in surv.core
         )
+        surv.members = {n: r for n, r in surv.members.items() if n in surv.core}
         ring_stats(g, surv, self.cfg, now_us)
         self._index(surv)
         self._finish(surv, before, before_view, before_status, now_us, events)
@@ -167,6 +168,7 @@ class RingRegistry:
         r.core = frozenset(n for n in r.core if n in alive) | frozenset(
             n for n, role in r.members.items() if role in ("mule", "cash_out")
         )
+        r.members = {n: role for n, role in r.members.items() if n in r.core}
         ring_stats(g, r, self.cfg, now_us)
         self._index(r)
         self._finish(r, before, view, status, now_us, events)

@@ -60,7 +60,9 @@ def window_of(ring: Ring) -> int:
 
 
 def extract_flow_input(g: nx.DiGraph, ring: Ring, cfg: Settings) -> FlowInput:
-    members = ring.members
+    # only core accounts are takedown candidates; non-core ("unknown") accounts that paid into
+    # the ring are modelled as external payers, as in the ring statistics
+    members = {n: r for n, r in ring.members.items() if n in ring.core}
     ext: dict[tuple[str, str], int] = {}
     internal: list[tuple[str, str, int]] = []
     for n in sorted(members):

@@ -35,6 +35,11 @@ def mixed_world():
     return world.start, sorted(txns, key=lambda t: (t.ts, t.txn_id))
 
 
+@pytest.fixture(scope="module")
+def reference(mixed_world):
+    return _run(*mixed_world, every=1)
+
+
 def _run(start, txns, *, every: int | None, order: str = "time") -> set:
     clock = Clock(start)
     tw = GraphTwin(GraphStore("sqlite://"), Settings(), clock)
@@ -97,8 +102,35 @@ def _run(start, txns, *, every: int | None, order: str = "time") -> set:
     ],
     ids=["every-200", "every-500", "final-only", "shuffled-5min", "decisions-last"],
 )
-def test_membership_victims_and_inflow_do_not_depend_on_detection_cadence(mixed_world, variant):
+def test_membership_victims_and_inflow_do_not_depend_on_detection_cadence(
+    mixed_world, reference, variant
+):
     start, txns = mixed_world
-    ref = _run(start, txns, every=1)
-    assert len(ref) == 5  # five campaigns, nothing else
-    assert _run(start, txns, **variant) == ref
+    assert len(reference) == 5  # five campaigns, nothing else
+    assert _run(start, txns, **variant) == reference
+
+
+def test_a_relay_looking_victim_does_not_pull_in_a_legitimate_merchant(twin, clock):
+    """A victim that also forwards a slice to a busy merchant: the merchant (84 payers, a sliver
+    funded by the ring) is no member and adds no victims or inflow, whatever the cadence."""
+    from datetime import timedelta
+
+    from .conftest import T0, decision, h, make_campaign, txn
+
+    make_campaign(twin, clock, victims=6, mules=3)
+    clock.set(T0 + timedelta(hours=2))
+    for i in range(84):
+        twin.apply_txn(txn(h(f"mc{i}"), h("legit-shop"), T0 + timedelta(seconds=5 * i), 700))
+    v = h("cv0")
+    for j in range(2):
+        t = txn(h(f"vin{j}"), v, T0 - timedelta(minutes=10), 30000, age=3)
+        twin.apply_txn(t)
+        if j == 0:
+            twin.apply_decision(decision(t.txn_id, "step_up"))
+    twin.apply_txn(txn(v, h("legit-shop"), T0 + timedelta(minutes=5), 14000))
+    twin.detect_dirty()
+    from graph_twin.graph import account_key
+
+    shop = account_key(h("legit-shop"))
+    for r in twin.registry.rings.values():
+        assert shop not in r.members and r.victims < 30

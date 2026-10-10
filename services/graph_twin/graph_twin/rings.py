@@ -101,11 +101,48 @@ def _device_peers(g: nx.DiGraph, n: str, cfg: Settings) -> list[str]:
     return out
 
 
+def _young(g: nx.DiGraph, n: str) -> bool:
+    return (ns(g, n).age or 10**6) < YOUNG_DAYS
+
+
+def admissible_start(
+    g: nx.DiGraph, idx: RelayIndex, n: str, cfg: Settings, now_us: int
+) -> bool:  # fmt: skip
+    """Only an evidence-bearing pass-through account (or an antibody-named account) may seed or
+    join a ring: an account that merely received a flagged payment (a victim, a merchant with a
+    false positive) never expands the ring."""
+    if n not in g or ns(g, n).kind != ACCOUNT:
+        return False
+    if is_active_antibody(ns(g, n), now_us):
+        return True
+    return idx.is_relay(n) and is_supported(g, n, cfg, now_us)
+
+
+def _admissible_target(
+    g: nx.DiGraph, idx: RelayIndex, m: str, cfg: Settings, now_us: int
+) -> bool:  # fmt: skip
+    """An outflow target must itself look like part of the ring: antibody, an evidence-bearing
+    relay, or an account mostly funded by the ring that is a relay, young or itself flagged. A
+    popular legitimate merchant that received a slice of a relay's outflow is none of these."""
+    if m not in g or ns(g, m).kind != ACCOUNT:
+        return False
+    if admissible_start(g, idx, m, cfg, now_us):
+        return True
+    st = ns(g, m)
+    fed = sum(
+        g.edges[p, m]["s"].total
+        for p in sorted(idx.relay_into.get(m, ()))
+        if admissible_start(g, idx, p, cfg, now_us)
+    )
+    mostly_ring = fed >= cfg.sink_min_share * st.in_tot
+    return mostly_ring and (idx.is_relay(m) or _young(g, m) or st.susp_in > 0)
+
+
 def expand(
     g: nx.DiGraph, idx: RelayIndex, starts: list[str], cfg: Settings, now_us: int
 ) -> set[str]:  # fmt: skip
     members: set[str] = set()
-    q: deque[str] = deque(sorted(starts))
+    q: deque[str] = deque(sorted(s for s in starts if admissible_start(g, idx, s, cfg, now_us)))
     while q and len(members) < cfg.max_component:
         n = q.popleft()
         if n in members or n not in g:
@@ -114,13 +151,22 @@ def expand(
         st = ns(g, n)
         if idx.is_relay(n):
             for m, e in sorted(pay_out(g, n), key=lambda x: x[0]):
-                if m.startswith("a:") and m not in members and _tenth(e.total, st.out_tot):
+                if (
+                    m.startswith("a:")
+                    and m not in members
+                    and _tenth(e.total, st.out_tot)
+                    and _admissible_target(g, idx, m, cfg, now_us)
+                ):
                     q.append(m)
         for p in sorted(idx.relay_into.get(n, ())):
-            if p not in members and _tenth(g.edges[p, n]["s"].total, ns(g, p).out_tot):
+            if (
+                p not in members
+                and _tenth(g.edges[p, n]["s"].total, ns(g, p).out_tot)
+                and admissible_start(g, idx, p, cfg, now_us)
+            ):
                 q.append(p)
         for a in _device_peers(g, n, cfg):
-            if a not in members and (idx.is_relay(a) or is_seed(g, a, now_us)):
+            if a not in members and idx.is_relay(a) and admissible_start(g, idx, a, cfg, now_us):
                 q.append(a)
     return members
 
@@ -173,7 +219,7 @@ def ring_stats(
     g: nx.DiGraph, ring: Ring, cfg: Settings, now_us: int
 ) -> None:  # fmt: skip
     """Recompute the statistics, score and confidence of ``ring`` from the graph."""
-    members = ring.members
+    members = {n: r for n, r in ring.members.items() if n in ring.core}
     ext: dict[str, int] = {}
     truncated = False
     banks: set[str] = set()
@@ -304,6 +350,7 @@ def candidates_from(
             )  # fmt: skip
             if not core:
                 continue
+            roles = {n: r for n, r in roles.items() if n in core}
             ring = Ring(ring_id=make_ring_id(core), members=roles, core=core)
             ring_stats(g, ring, cfg, now_us)
             if _gate(ring, cfg, g, now_us):

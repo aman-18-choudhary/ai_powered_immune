@@ -124,6 +124,7 @@ def test_victims_beyond_the_cap_are_folded_not_dropped(ring_setup):
 
 def test_longer_observed_window_lowers_the_projection(twin, clock):
     c = make_campaign(twin, clock, victims=6, mules=3)
+    twin.detect_dirty()  # the ring exists before the late payment
     # the ring has been active for 3 days: the same totals imply a third of the daily rate
     later = T0 + timedelta(days=3)
     clock.set(later)
