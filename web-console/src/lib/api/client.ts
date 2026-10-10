@@ -66,6 +66,10 @@ export interface RequestOptions {
   body?: unknown;
   /** When true the response is returned as a Blob (package download). */
   blob?: boolean;
+  /** When true the response is returned as `{ data, headers }` (Blob or parsed JSON) so callers can read ETag. */
+  withHeaders?: boolean;
+  /** When true the raw response text is returned (callers that need number source text). */
+  text?: boolean;
   auth?: boolean;
 }
 
@@ -106,6 +110,12 @@ export class ApiClient {
       if (code === "unauthorized" && token) this.opts.onUnauthorized?.();
       throw new ApiError(res.status, code, FRIENDLY[code], serverCode);
     }
+    if (o.withHeaders) {
+      const headers = { etag: res.headers.get("ETag"), contentType: res.headers.get("Content-Type") };
+      const data = o.blob ? await res.blob() : await res.json().catch(() => null);
+      return { data, headers } as T;
+    }
+    if (o.text) return (await res.text()) as T;
     if (o.blob) return (await res.blob()) as T;
     try {
       return (await res.json()) as T;

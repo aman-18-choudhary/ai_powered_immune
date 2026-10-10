@@ -35,7 +35,6 @@ export const endpoints = {
     api.post<{ hold: HoldView }>(`/holds/${encodeURIComponent(txnRef)}/resolve`, { action, decision_seq: decisionSeq }),
   antibodies: (state: "active" | "all" = "active", signal?: AbortSignal) =>
     api.get<AntibodiesResponse>(`/antibodies?state=${state}`, signal),
-  ledgerHead: (signal?: AbortSignal) => api.get<LedgerHead>("/ledger/head", signal),
   geo: (signal?: AbortSignal) => api.get<GeoResponse>("/geo/hotspots", signal),
   ringGraph: (caseId = "current", signal?: AbortSignal) =>
     api.get<RingGraph>(`/ring/${encodeURIComponent(caseId)}/graph`, signal),
@@ -45,6 +44,15 @@ export const endpoints = {
     api.get<BestTakedown>(`/ring/${encodeURIComponent(caseId)}/best-takedown?k=${k}`, signal),
   benchmark: (signal?: AbortSignal) => api.get<BenchmarkSummary>("/benchmark/summary", signal),
   createCase: (body: Record<string, unknown> = {}) => api.post<CaseView>("/cases", body),
+  ledgerHead: (signal?: AbortSignal) => api.get<LedgerHead>("/ledger/head", signal),
+  /** Raw text, so integer-valued floats keep their source form for hash recomputation. */
+  ledgerEntriesText: (fromSeq = 1, limit = 200, signal?: AbortSignal) =>
+    api.request<string>("GET", `/ledger/entries?from_seq=${fromSeq}&limit=${limit}`, { text: true, signal }),
+  checkpoints: (signal?: AbortSignal) => api.get<unknown>("/ledger/checkpoints", signal),
+  packageWithEtag: (caseId: string, signal?: AbortSignal) =>
+    api.request<{ data: Blob; headers: { etag: string | null; contentType: string | null } }>(
+      "GET", `/packages/${encodeURIComponent(caseId)}`, { blob: true, withHeaders: true, signal },
+    ),
   packageBlob: (caseId: string, signal?: AbortSignal) =>
     api.request<Blob>("GET", `/packages/${encodeURIComponent(caseId)}`, { blob: true, signal }),
   verify: (caseId: string) => api.post<VerifyResult>("/verify", { case_id: caseId }),

@@ -2,10 +2,13 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
-afterEach(() => cleanup());
+const hasDom = typeof window !== "undefined";
+afterEach(() => {
+  if (hasDom) cleanup();
+});
 
 // jsdom lacks these; components that observe size or media queries rely on them.
-if (!("ResizeObserver" in globalThis)) {
+if (hasDom && !("ResizeObserver" in globalThis)) {
   class RO {
     observe() {}
     unobserve() {}
@@ -13,7 +16,7 @@ if (!("ResizeObserver" in globalThis)) {
   }
   (globalThis as unknown as { ResizeObserver: typeof RO }).ResizeObserver = RO;
 }
-if (!window.matchMedia) {
+if (hasDom && !window.matchMedia) {
   window.matchMedia = (query: string) =>
     ({
       matches: false,
@@ -26,4 +29,4 @@ if (!window.matchMedia) {
       dispatchEvent: () => false,
     }) as MediaQueryList;
 }
-if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+if (hasDom && !Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
