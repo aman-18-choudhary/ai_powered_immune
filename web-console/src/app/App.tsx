@@ -16,7 +16,7 @@ const Analyst = lazy(() => import("@/routes/Analyst"));
 const Evidence = lazy(() => import("@/routes/Evidence"));
 const Citizen = lazy(() => import("@/routes/Citizen"));
 const Insights = lazy(() => import("@/routes/Insights"));
-const Phase2 = lazy(() => import("@/routes/Phase2"));
+const About = lazy(() => import("@/routes/About"));
 
 function Authed() {
   return (
@@ -29,7 +29,7 @@ function Authed() {
           <Route path="evidence" element={<Evidence />} />
           <Route path="citizen" element={<Citizen />} />
           <Route path="insights" element={<Insights />} />
-          <Route path="about" element={<Phase2 page="about" />} />
+          <Route path="about" element={<About />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
