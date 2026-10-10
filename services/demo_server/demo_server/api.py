@@ -67,11 +67,13 @@ class StartBody(_Body):
     seed: int = Field(default=1, ge=0, le=2**31 - 1)
     speed: float = Field(default=10.0, ge=SPEED_MIN, le=SPEED_MAX)
     mode: Literal["hero", "hero+noise"] = "hero"
+    pacing: Literal["real", "cinematic"] = "real"
 
 
 class ControlBody(_Body):
     action: Literal["pause", "resume", "stop", "seek"]
     t: float | None = Field(default=None, ge=0, le=1e7)
+    wall: float | None = Field(default=None, ge=0, le=1e7)
     speed: float | None = Field(default=None, ge=SPEED_MIN, le=SPEED_MAX)
 
 
@@ -234,13 +236,13 @@ def create_app(
     # ------------------------------------------------------------------- demo
     @app.post("/api/demo/start")
     async def demo_start(body: StartBody, _p: Principal = OfficerAdmin) -> dict[str, Any]:
-        run_id = await eng.start_run(body.seed, body.speed, body.mode)
+        run_id = await eng.start_run(body.seed, body.speed, body.mode, body.pacing)
         return {"run_id": run_id, "simulated": True}
 
     @app.post("/api/demo/control")
     async def demo_control(body: ControlBody, _p: Principal = OfficerAdmin) -> dict[str, Any]:
         try:
-            return await eng.control(body.action, body.t, body.speed)
+            return await eng.control(body.action, body.t, body.speed, body.wall)
         except LookupError:
             raise _err(409, "no_run", "start a scenario first") from None
         except ValueError:

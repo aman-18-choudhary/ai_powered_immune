@@ -56,9 +56,9 @@ unknown key names. Bodies are capped at 64 KiB (`413`). Rate limits are per role
 |---|---|---|
 | `GET /health` | none | `{"status":"ok","simulated":true}` |
 | `POST /auth/demo-login` `{role, code?}` | none | HS256 JWT, 8 h, claims `sub, role, iat, exp, jti`; no passwords. `DEMO_LOGIN_CODE`, when set, must be supplied as `code` |
-| `POST /demo/start` `{seed?, speed?, mode?}` | officer, admin | `seed` 0..2^31-1 (1), `speed` 0.25..20 (10), `mode` `hero` / `hero+noise`; restarts; returns `{run_id}` |
-| `POST /demo/control` `{action, t?, speed?}` | officer, admin | `pause` / `resume` / `stop` / `seek`; `speed` may accompany any action; returns the state |
-| `GET /demo/state` | any | `{run_id, status, t, duration, speed, step, counters, simulated, mode, seed, epoch, last_event_id, banks}` |
+| `POST /demo/start` `{seed?, speed?, mode?, pacing?}` | officer, admin | `seed` 0..2^31-1 (1), `speed` 0.25..20 (10), `mode` `hero` / `hero+noise`, `pacing` `real` (default) / `cinematic`; restarts; returns `{run_id}` |
+| `POST /demo/control` `{action, t?, wall?, speed?}` | officer, admin | `pause` / `resume` / `stop` / `seek` (exactly one of `t` simulated seconds or `wall` seconds on the run's pacing timeline, else `422`); `speed` may accompany any action; returns the state |
+| `GET /demo/state` | any | `{run_id, status, t, duration, speed, step, counters, simulated, mode, seed, epoch, last_event_id, banks, pacing, wall_duration, wall_offset}` |
 | `GET /demo/runs` | any | bounded list of recent runs |
 | `GET /stream` (WebSocket `?token=`) | any | see below |
 | `GET /holds?state=open\|all` | analyst, officer, admin | deadline ascending; exact `amount_inr` as a string |
@@ -98,7 +98,7 @@ accepted. The first message is always a `scenario.state` snapshot: the counters 
 events. Live events follow. Client messages are ignored; one over 1 KiB closes with `1009`.
 Close codes: `4429` too slow (per-client queue of 256 overflowed), `4503` connection cap reached.
 
-Every event: `{id, t, wall, kind, run_id, ...}`. `id` is a per-run integer, strictly increasing
+Every event: `{id, t, wall, wall_offset, kind, run_id, ...}`. `id` is a per-run integer, strictly increasing
 with no gaps in the live stream; `t` is simulated seconds since the first call; `wall` is a UTC
 ISO timestamp.
 
@@ -131,6 +131,17 @@ views for analyst/officer/admin carry the exact INR amount as a decimal string (
 Residual digit runs in a detail are limited to ISO dates and the 8-hex antibody short id.
 
 ### Playback, time and determinism
+
+* Pacing (`POST /demo/start {"pacing": ...}`; the web console passes `"cinematic"`). `real`
+  (default) waits `slice / speed`. `cinematic` maps simulated gaps to wall time with a documented
+  compression (`demo_server/pacing.py`): between consecutive breakpoints (scenario item times,
+  metric ticks, start, end) a gap `g` simulated seconds takes `g` wall seconds at 1x if
+  `g <= 0.5`, else `min(2.2, 0.5 + 0.006 (g - 0.5))`, divided by `speed`. The seed-1 hero run
+  (157 events, 2609 simulated seconds) plays in about 75 s at 1x and about 15 s at 5x.
+  `t` stays simulated time. `wall_offset` is the event's position (seconds at 1x) on the run's
+  timeline (equal to `t` under `real`); `wall_duration` is the timeline's total, so a scrubber can
+  work in compressed time and seek with `{"action":"seek","wall":<seconds>}`. Pacing affects only
+  wall timing: kinds, order, ids, `t` and scores are the same in both modes (tested).
 
 * `t` is simulated time; the engine advances it in slices of at most 5 s and waits
   `slice / speed` wall seconds between slices (`speed` 0.25..20; changing it applies from the next

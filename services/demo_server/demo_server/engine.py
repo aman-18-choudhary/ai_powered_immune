@@ -51,6 +51,7 @@ from . import geo as geomod
 from .config import Settings
 from .events import EventLog, Subscriber
 from .harness import Harness, new_gateway_secret
+from .pacing import Timeline
 from .plan import Item, Plan, bank_slot, build_plan
 from .ring import RingGraph
 from .sanitise import sanitise_detail
@@ -162,6 +163,8 @@ class RunState:
     manual_log: list[dict[str, Any]] = field(default_factory=list)
     started_wall: str | None = None
     banks: dict[str, str] = field(default_factory=dict)
+    pacing: str = "real"
+    wall_duration: float = 0.0
 
     def reset_epoch(self) -> None:
         self.t = 0.0
@@ -176,7 +179,8 @@ class RunState:
             "duration": round(self.duration, 3), "speed": self.speed, "step": self.step,
             "counters": dict(self.counters), "simulated": True, "mode": self.mode,
             "seed": self.seed, "epoch": self.epoch, "last_event_id": last_id,
-            "banks": dict(self.banks),
+            "banks": dict(self.banks), "pacing": self.pacing,
+            "wall_duration": round(self.wall_duration, 3),
         }  # fmt: skip
 
 
@@ -194,6 +198,9 @@ class Run:
         self.fast_until = fast_until
         self.fast = fast_until is not None
         self.workdir = workdir
+        self.timeline = Timeline(
+            engine.state.pacing, [it.t for it in plan.items], plan.duration, TICK_S
+        )
         self.harness: Harness | None = None
         self.ring = RingGraph()
         self.running = asyncio.Event()
@@ -227,7 +234,7 @@ class Run:
         st = self.st
         ev: dict[str, Any] = {
             "id": st.next_id, "t": round(st.t, 3), "wall": _utc_iso(), "kind": kind,
-            "run_id": st.run_id, **fields,
+            "run_id": st.run_id, "wall_offset": round(self.timeline.wall_of(st.t), 3), **fields,
         }  # fmt: skip
         st.next_id += 1
         self._reduce(ev)
@@ -344,7 +351,9 @@ class Run:
             else:
                 await self._gate()
                 nxt = min(target, boundary, st.t + SLICE_S)
-                await self._sleep((nxt - st.t) / max(SPEED_MIN, st.speed))
+                tl = self.timeline
+                dwall = tl.wall_of(nxt) - tl.wall_of(st.t)
+                await self._sleep(dwall / max(SPEED_MIN, st.speed))
                 if self.stop_flag:
                     raise _Stopped
                 if not self.running.is_set():
@@ -904,7 +913,10 @@ class Engine:
         return self.state.next_id - 1
 
     def state_view(self) -> dict[str, Any]:
-        return self.state.view(self.last_id())
+        v = self.state.view(self.last_id())
+        run = self.run
+        v["wall_offset"] = round(run.timeline.wall_of(self.state.t), 3) if run else 0.0
+        return v
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -950,6 +962,7 @@ class Engine:
             "status": st.status,
             "started": st.started_wall,
             "events": st.next_id - 1,
+            "pacing": st.pacing,
         }
         for i, r in enumerate(self.runs):
             if r["run_id"] == st.run_id:
@@ -957,7 +970,9 @@ class Engine:
                 return
         self.runs.append(rec)
 
-    async def start_run(self, seed: int = 1, speed: float = 10.0, mode: str = "hero") -> str:
+    async def start_run(
+        self, seed: int = 1, speed: float = 10.0, mode: str = "hero", pacing: str = "real"
+    ) -> str:
         """(Re)start: any previous run is fully torn down first; concurrent starts serialise and
         the last one wins, so exactly one run (and one task) exists afterwards."""
         if self.world is None:
@@ -969,6 +984,7 @@ class Engine:
             st = self.state
             st.run_id = uuid.uuid4().hex[:12]
             st.seed, st.mode, st.speed = seed, mode, float(speed)
+            st.pacing = pacing if pacing in ("real", "cinematic") else "real"
             st.status, st.step, st.epoch = "starting", None, 0
             st.duration = plan.duration
             st.started_wall = _utc_iso()
@@ -988,12 +1004,16 @@ class Engine:
             self, plan, fast_until=fast_until, start_paused=start_paused, workdir=self._new_dir()
         )
         self.run = run
+        self.state.wall_duration = (
+            run.timeline.end_wall if run.timeline.pacing == "cinematic" else plan.duration
+        )
         self.task = asyncio.create_task(run.execute())
         self.plan = plan
 
     async def control(
-        self, action: str, t: float | None = None, speed: float | None = None
-    ) -> dict[str, Any]:
+        self, action: str, t: float | None = None, speed: float | None = None,
+        wall: float | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
         async with self._lock:
             st, run = self.state, self.run
             if speed is not None:
@@ -1025,8 +1045,12 @@ class Engine:
                     self._remember()
                     self.broadcast_snapshot()
             elif action == "seek":
+                if (t is None) == (wall is None):
+                    raise ValueError("seek needs exactly one of t and wall")
                 if t is None:
-                    raise ValueError("seek needs t")
+                    assert wall is not None
+                    tl = run.timeline  # type: ignore[union-attr]
+                    t = tl.t_of(float(wall))
                 await self._seek(float(t))
             else:
                 raise ValueError("unknown action")
