@@ -7,6 +7,11 @@ ring; if it touches several rings they merge into the OLDEST (``first_detected``
 absorbed ids stay resolvable as aliases (``merged_from``).
 Status. ``new`` at creation; ``growing`` when core members, victims, inflow or edge aggregates
 increase; ``stable`` after ``stable_after_s`` of stream time without growth.
+Retirement. Every refresh re-runs the detection gates on the ring's current evidence. A ring that
+no longer passes (flags downgraded by a later decision, antibody revoked or expired) becomes
+``retired`` unless a member carries an active antibody: it stays resolvable by id (tombstone),
+leaves the default listing and takedown, and emits ``ring.retired`` once. It returns under the
+same id (``growing``) when a later pass finds the evidence again.
 Version. Increments whenever the persisted snapshot (members, roles, statistics, status,
 ``edge_sig``) changes; it keys the ETags.
 """
@@ -19,7 +24,7 @@ import networkx as nx
 from .config import Settings
 from .graph import RelayIndex
 from .model import Ring
-from .rings import classify, make_ring_id, ring_stats
+from .rings import classify, gate, make_ring_id, ring_stats
 
 
 @dataclass
@@ -39,6 +44,14 @@ class RingRegistry:
         self.dropped_total = 0  # candidates refused because GRAPH_MAX_RINGS was reached
 
     # --------------------------------------------------------------------- index
+    @staticmethod
+    def _keep_roles(prev: dict[str, str], roles: dict[str, str], core: frozenset[str]) -> None:
+        """A core member that stopped looking like a relay keeps the role it had: membership does
+        not depend on when the last pass ran."""
+        for n, old in prev.items():
+            if n in core and roles.get(n) == "unknown" and old in ("mule", "cash_out"):
+                roles[n] = old
+
     def _index(self, r: Ring) -> None:
         for n in r.core:
             self.core_index[n] = r.ring_id
@@ -117,13 +130,18 @@ class RingRegistry:
             self.alias[aid] = surv.ring_id
             deleted.add(aid)
             events.append(RingEvent("merged", surv.ring_id, {"absorbed": aid}))
+        prev_roles = dict(surv.members)
         surv.members.update(cand.members)
         surv.core = surv.core | cand.core
         surv.members = classify(g, idx, set(surv.members), self.cfg, now_us)
         surv.core = frozenset(
             n for n, r in surv.members.items() if r in ("mule", "cash_out") or n in surv.core
         )
+        self._keep_roles({**prev_roles, **cand.members}, surv.members, surv.core)
         surv.members = {n: r for n, r in surv.members.items() if n in surv.core}
+        if surv.status == "retired":  # the candidate passed the gates on its own: back again
+            surv.status = "growing"
+            surv.growth_us = now_us
         ring_stats(g, surv, self.cfg, now_us)
         self._index(surv)
         self._finish(surv, before, before_view, before_status, now_us, events)
@@ -139,14 +157,13 @@ class RingRegistry:
     ) -> None:  # fmt: skip
         after = self._growth_key(r)
         grew = any(a > b for a, b in zip(after[:4], before[:4], strict=True))
-        if grew:
+        if grew and r.status != "retired":
             r.growth_us = now_us
             if r.status != "growing":
                 r.status = "growing"
         if r.status != before_status:
-            events.append(
-                RingEvent("status_changed", r.ring_id, {"from": before_status, "to": r.status})
-            )
+            kind = "retired" if r.status == "retired" else "status_changed"
+            events.append(RingEvent(kind, r.ring_id, {"from": before_status, "to": r.status}))
         if r.stats_view() != before_view:
             r.version += 1
             r.updated_us = now_us
@@ -164,12 +181,21 @@ class RingRegistry:
         if not alive:
             return [], False
         self._unindex(r)
+        prev_roles = dict(r.members)
         r.members = classify(g, idx, alive, self.cfg, now_us)
         r.core = frozenset(n for n in r.core if n in alive) | frozenset(
             n for n, role in r.members.items() if role in ("mule", "cash_out")
         )
+        self._keep_roles(prev_roles, r.members, r.core)
         r.members = {n: role for n, role in r.members.items() if n in r.core}
         ring_stats(g, r, self.cfg, now_us)
+        passes = gate(r, self.cfg, g, now_us)
+        if r.status == "retired":
+            if passes:  # the evidence is back: same id, growing again
+                r.status = "growing"
+                r.growth_us = now_us
+        elif not passes and not r.antibody:
+            r.status = "retired"
         self._index(r)
         self._finish(r, before, view, status, now_us, events)
         return events, r.stats_view() != view or r.status != status
@@ -186,7 +212,7 @@ class RingRegistry:
                 self.remove(rid)
                 deleted.add(rid)
                 continue
-            if r.status != "stable" and now_us - r.growth_us >= stable_us:
+            if r.status not in ("stable", "retired") and now_us - r.growth_us >= stable_us:
                 events.append(RingEvent("status_changed", rid, {"from": r.status, "to": "stable"}))
                 r.status = "stable"
                 r.version += 1

@@ -293,7 +293,7 @@ def ring_stats(
     ring.confidence = round(sum(evidence) / len(evidence), 4)
 
 
-def _gate(ring: Ring, cfg: Settings, g: nx.DiGraph, now_us: int) -> bool:
+def gate(ring: Ring, cfg: Settings, g: nx.DiGraph, now_us: int) -> bool:
     core_n = sum(1 for r in ring.members.values() if r in (MULE, CASH_OUT))
     ab_unknown = sum(
         1 for n, r in ring.members.items()
@@ -353,7 +353,7 @@ def candidates_from(
             roles = {n: r for n, r in roles.items() if n in core}
             ring = Ring(ring_id=make_ring_id(core), members=roles, core=core)
             ring_stats(g, ring, cfg, now_us)
-            if _gate(ring, cfg, g, now_us):
+            if gate(ring, cfg, g, now_us):
                 out.append(ring)
     return sorted(out, key=lambda r: r.ring_id)
 

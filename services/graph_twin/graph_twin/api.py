@@ -158,6 +158,11 @@ class BodyLimit:
         await send({"type": "http.response.body", "body": body})
 
 
+def _listed(r: Ring, status: str | None) -> bool:
+    """Retired rings (tombstones) appear only when asked for with ``status=retired``."""
+    return r.status != "retired" if status is None else r.status == status
+
+
 def _etag_matches(request: Request, etag: str) -> bool:
     inm = request.headers.get("if-none-match", "")
     if inm.strip() == "*":
@@ -247,6 +252,10 @@ def create_app(
             raise HTTPException(404, "ring not found")
         return r
 
+    def no_takedown_when_retired(r: Ring) -> None:
+        if r.status == "retired":
+            raise HTTPException(409, "ring retired: its evidence no longer passes the gates")
+
     def not_modified(request: Request, etag: str) -> Response | None:
         if _etag_matches(request, etag):
             return Response(status_code=304, headers={"ETag": etag})
@@ -272,7 +281,7 @@ def create_app(
         for k, v in sorted(st.items()):
             kind = (
                 "gauge"
-                if k in ("nodes", "edges", "rings", "pending_decisions", "dirty")
+                if k in ("nodes", "edges", "rings", "rings_retired", "pending_decisions", "dirty")
                 else "counter"
             )
             lines += [f"# TYPE graph_twin_{k} {kind}", f"graph_twin_{k} {v}"]
@@ -303,12 +312,12 @@ def create_app(
     async def list_rings(
         request: Request,
         p: Annotated[Principal, Depends(principal)],
-        status: Literal["new", "growing", "stable"] | None = None,
+        status: Literal["new", "growing", "stable", "retired"] | None = None,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ) -> Response:
         need(p, READERS)
         rings = sorted(
-            (r for r in twin.published.values() if status in (None, r.status)),
+            (r for r in twin.published.values() if _listed(r, status)),
             key=lambda r: (r.first_detected_us, r.ring_id),
         )[:limit]
         etag = list_etag(rings, status, limit)
@@ -381,6 +390,7 @@ def create_app(
     ) -> JSONResponse:
         need(p, SIMULATORS)
         r = get_ring(ring_id)
+        no_takedown_when_retired(r)
         fi = await flow_input(r)
         by_id: dict[str, list[str]] = {}
         for k in node_flow_ids(fi):
@@ -421,6 +431,7 @@ def create_app(
     ) -> JSONResponse:  # fmt: skip
         need(p, READERS)
         r = get_ring(ring_id)
+        no_takedown_when_retired(r)
         fi = await flow_input(r)
         chosen = await run_flow(lambda: best_flow(fi, k, cfg))
         res = await run_flow(lambda: simulate_flow(fi, chosen, cfg))

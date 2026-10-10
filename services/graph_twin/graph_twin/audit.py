@@ -72,6 +72,9 @@ def ring_event_row(kind: str, ring: Ring, info: dict[str, Any], now_us: int) -> 
         refs.append(ring_ref(info["absorbed"]))
         ph["absorbed_ring_id"] = info["absorbed"]
         dedupe = f"merged:{ring.ring_id}:{info['absorbed']}"
+    elif kind == "retired":
+        body["from_status"], body["to_status"] = info["from"], info["to"]
+        dedupe = f"retired:{ring.ring_id}:{ring.version}"
     else:
         body["from_status"], body["to_status"] = info["from"], info["to"]
         dedupe = f"status:{ring.ring_id}:{info['from']}:{info['to']}:{ring.version}"

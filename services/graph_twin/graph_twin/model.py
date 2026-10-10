@@ -7,7 +7,7 @@ from typing import Any
 MODEL_VERSION = "graph-v1"
 VICTIM, MULE, CASH_OUT, UNKNOWN = "victim_payer", "mule", "cash_out", "unknown"
 ACCOUNT_ROLES = (MULE, CASH_OUT, UNKNOWN)
-STATUSES = ("new", "growing", "stable")
+STATUSES = ("new", "growing", "stable", "retired")
 
 
 @dataclass

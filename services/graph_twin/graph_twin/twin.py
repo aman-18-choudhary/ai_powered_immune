@@ -418,6 +418,8 @@ class GraphTwin:
         g = self.tg.g
         prot: set[str] = set()
         for r in self.registry.rings.values():
+            if r.status == "retired":
+                continue
             for n in r.members:
                 if n in g:
                     prot.add(n)
@@ -524,10 +526,12 @@ class GraphTwin:
     def stats(self) -> dict[str, int]:
         with self.lock:
             g = self.tg.g
+            retired = sum(1 for r in self.registry.rings.values() if r.status == "retired")
             return {
                 "nodes": g.number_of_nodes(),
                 "edges": g.number_of_edges(),
-                "rings": len(self.registry.rings),
+                "rings": len(self.registry.rings) - retired,
+                "rings_retired": retired,
                 "pending_decisions": self.pending_decisions,
                 "dirty": len(self.dirty),
                 "rings_dropped": self.registry.dropped_total,
