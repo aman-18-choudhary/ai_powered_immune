@@ -353,11 +353,7 @@ def create_app(
         if (nm := not_modified(request, etag)) is not None:
             return nm
 
-        def build() -> dict[str, Any]:
-            with twin.lock:
-                return graph_view(twin, r, cfg.max_response_nodes)
-
-        return json_resp(await asyncio.to_thread(build), etag)
+        return json_resp(await asyncio.to_thread(graph_view, twin, r, cfg.max_response_nodes), etag)
 
     flow_cache: OrderedDict[tuple[str, int], Any] = OrderedDict()
 

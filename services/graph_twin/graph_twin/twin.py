@@ -194,6 +194,7 @@ class GraphTwin:
                     if dec and not dec["applied"]:
                         self.store.mark_decision_applied(conn, txn_id)
                         self.pending_decisions = max(0, self.pending_decisions - 1)
+                        self.counters["decisions_applied"] += 1
                     self.tg.add_payment(
                         PaymentRec(
                             src,

@@ -58,38 +58,33 @@ def ring_etag(r: Ring, suffix: str = "") -> str:
 
 def graph_view(twin: GraphTwin, ring: Ring, max_nodes: int) -> dict[str, Any]:
     """Nodes (ring members + their payers, truncated) and the aggregated edges among them.
-    Called with the twin lock held by the caller."""
+
+    Two short critical sections copy plain tuples out of the graph (members and their in-edges;
+    then the shown payers and the edges among the shown nodes); sorting, truncation and building
+    the response happen outside ``twin.lock``. The view is consistent per section, not across
+    both; ``ring.version`` / the ETag identify the ring snapshot it describes."""
     g = twin.tg.g
-    idx = twin.tg.idx
     cfg = twin.cfg
     now_us = to_us(twin.clock())
-    members = {n for n in ring.members if n in g}
-    ext: dict[str, int] = {}
+    # ---- section 1: the members and their in-edges
+    mem_state: dict[str, tuple[Any, ...]] = {}
+    mem_in: dict[str, list[tuple[str, tuple[int, ...]]]] = {}
+    chain: set[str] = set()
     truncated_scan = False
+    with twin.lock:
+        members = {n for n in ring.members if n in g}
+        for n in members:
+            mem_state[n] = _node_tuple(g, n, ring, now_us)
+            pin = pay_in(g, n, cfg.fanin_scan_cap)
+            truncated_scan = truncated_scan or len(pin) >= cfg.fanin_scan_cap
+            mem_in[n] = [(p, _edge_tuple(e)) for p, e in pin]
+            if any(p in members for p in twin.tg.idx.relay_into.get(n, ())):
+                chain.add(n)
+    ext: dict[str, int] = {}
     for n in members:
-        pin = pay_in(g, n, cfg.fanin_scan_cap)
-        truncated_scan = truncated_scan or len(pin) >= cfg.fanin_scan_cap
-        for p, e in pin:
+        for p, e in mem_in[n]:
             if p not in members:
-                ext[p] = ext.get(p, 0) + e.total
-    chain = {n for n in members if any(p in members for p in idx.relay_into.get(n, ()))}
-    nodes: list[dict[str, Any]] = []
-
-    def node(key: str, role: str, tier: int) -> dict[str, Any]:
-        st = ns(g, key)
-        flags = []
-        if is_active_antibody(st, now_us):
-            flags.append("antibody")
-        if st.susp_in > 0:
-            flags.append("flagged_inflow")
-        if key in ring.core:
-            flags.append("core")
-        return {
-            "id": api_id(key), "role": role, "tier": tier, "bank": st.bank,
-            "flags": flags, "first_seen": iso(st.first), "last_seen": iso(st.last),
-            "in_inr": paise_str(st.in_tot), "out_inr": paise_str(st.out_tot),
-        }  # fmt: skip
-
+                ext[p] = ext.get(p, 0) + e[1]
     tier = {CASH_OUT: 3, MULE: 1, UNKNOWN: 1}
     member_rows = []
     for n in sorted(members, key=lambda k: (tier[ring.members[k]], k)):
@@ -101,28 +96,71 @@ def graph_view(twin: GraphTwin, ring: Ring, max_nodes: int) -> dict[str, Any]:
     shown_victims = victim_keys[:room]
     truncated = len(victim_keys) > room or len(member_rows) > max_nodes or truncated_scan
     member_rows = member_rows[:max_nodes]
+    shown = {n for n, _, _ in member_rows} | set(shown_victims)
+    # ---- section 2: the shown payers and the edges among the shown nodes
+    vic_state: dict[str, tuple[Any, ...]] = {}
+    shown_in: dict[str, list[tuple[str, tuple[int, ...]]]] = {
+        n: mem_in[n] for n, _, _ in member_rows
+    }
+    with twin.lock:
+        for p in shown_victims:
+            if p in g:
+                vic_state[p] = _node_tuple(g, p, ring, now_us)
+                shown_in[p] = [
+                    (q, _edge_tuple(e)) for q, e in pay_in(g, p, cfg.fanin_scan_cap) if q in shown
+                ]
     keys: dict[str, str] = {}
+    nodes: list[dict[str, Any]] = []
     for n, role, t in member_rows:
-        nodes.append(node(n, role, t))
+        nodes.append(_node_json(n, mem_state[n], role, t))
         keys[n] = api_id(n)
     for p in shown_victims:
-        nodes.append(node(p, VICTIM, 0))
-        keys[p] = api_id(p)
+        if p in vic_state:
+            nodes.append(_node_json(p, vic_state[p], VICTIM, 0))
+            keys[p] = api_id(p)
     edges = []
     for n in keys:
-        for p, e in pay_in(g, n, cfg.fanin_scan_cap):
+        for p, e in shown_in.get(n, ()):
             if p in keys:
                 edges.append(
                     {
-                        "src": keys[p], "dst": keys[n], "count": e.count,
-                        "total_inr": paise_str(e.total), "first_ts": iso(e.first),
-                        "last_ts": iso(e.last),
-                        "rails": sorted(RAIL_NAME[b] for b in RAIL_NAME if e.rails & b),
-                        "flagged": e.susp,
+                        "src": keys[p], "dst": keys[n], "count": e[0],
+                        "total_inr": paise_str(e[1]), "first_ts": iso(e[2]),
+                        "last_ts": iso(e[3]),
+                        "rails": sorted(RAIL_NAME[b] for b in RAIL_NAME if e[4] & b),
+                        "flagged": e[5],
                     }
                 )  # fmt: skip
     edges.sort(key=lambda e: (e["src"], e["dst"]))
     return {
         "ring_id": ring.ring_id, "version": ring.version, "model_version": MODEL_VERSION,
         "truncated": truncated, "node_count": len(nodes), "nodes": nodes, "edges": edges,
+    }  # fmt: skip
+
+
+def _edge_tuple(e: Any) -> tuple[int, ...]:
+    return (e.count, e.total, e.first, e.last, e.rails, e.susp)
+
+
+def _node_tuple(g: Any, key: str, ring: Ring, now_us: int) -> tuple[Any, ...]:
+    st = ns(g, key)
+    return (
+        st.bank, is_active_antibody(st, now_us), st.susp_in > 0, key in ring.core,
+        st.first, st.last, st.in_tot, st.out_tot,
+    )  # fmt: skip
+
+
+def _node_json(key: str, t: tuple[Any, ...], role: str, tier: int) -> dict[str, Any]:
+    bank, antibody, flagged, core, first, last, in_tot, out_tot = t
+    flags = []
+    if antibody:
+        flags.append("antibody")
+    if flagged:
+        flags.append("flagged_inflow")
+    if core:
+        flags.append("core")
+    return {
+        "id": api_id(key), "role": role, "tier": tier, "bank": bank, "flags": flags,
+        "first_seen": iso(first), "last_seen": iso(last),
+        "in_inr": paise_str(in_tot), "out_inr": paise_str(out_tot),
     }  # fmt: skip
