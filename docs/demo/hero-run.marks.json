@@ -1,0 +1,17 @@
+{
+  "intro": 0,
+  "splash": 3.29,
+  "live_idle": 6.19,
+  "play": 14.01,
+  "finale": 86.74,
+  "verify": 92.6,
+  "command": 100.32,
+  "analyst": 112.73,
+  "evidence": 123.84,
+  "citizen": 136.77,
+  "citizen_en": 143.91,
+  "citizen_ta": 149.69,
+  "insights": 154.8,
+  "outro": 161.93,
+  "end": 165.44
+}
