@@ -7,3 +7,4 @@ node_modules/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+docs/benchmark_report.quick.md

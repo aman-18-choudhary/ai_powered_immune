@@ -90,8 +90,8 @@ stack-hero: ## Start the hero scenario on sim-engine (stack must be up)
 	$(COMPOSE) exec sim-engine python -c "import urllib.request as u; r=u.Request('http://127.0.0.1:8000/scenarios/hero', data=b'{}', headers={'content-type':'application/json'}, method='POST'); print(u.urlopen(r).read().decode())"
 
 # ---- benchmark, evidence, screenshots ----------------------------------------------------------
-bench: ## Quick benchmark (no sensitivity runs, no hero seeds) -> docs/benchmark_report.md
-	$(PY) -m scam_bench.run_benchmark --seed 42 --no-sensitivity --hero-seeds 0 --out docs/benchmark_report.md
+bench: ## Quick benchmark (no sensitivity, no hero seeds) -> docs/benchmark_report.quick.md (the committed docs/benchmark_report.md is the full run)
+	$(PY) -m scam_bench.run_benchmark --seed 42 --no-sensitivity --hero-seeds 0 --out docs/benchmark_report.quick.md
 
 bench-full: ## Full benchmark (default ablations, sensitivity, 40 hero seeds; ~3-4 min) -> docs/benchmark_report.md
 	$(PY) -m scam_bench.run_benchmark --seed 42 --out docs/benchmark_report.md
