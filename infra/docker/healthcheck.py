@@ -11,7 +11,7 @@ import urllib.request
 path = sys.argv[1] if len(sys.argv) > 1 else "/healthz"
 port = os.environ.get("PORT", "8000")
 try:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as r:  # noqa: S310
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as r:
         sys.exit(0 if 200 <= r.status < 300 else 1)
-except Exception:
+except Exception:  # noqa: BLE001 - a healthcheck must report any failure as unhealthy
     sys.exit(1)

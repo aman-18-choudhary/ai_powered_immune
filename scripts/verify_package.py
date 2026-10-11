@@ -30,14 +30,22 @@ async def _instant(_: float) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("seed", nargs="?", type=int, default=1)
-    ap.add_argument("--out", type=Path, default=None, help="also save the package zip here")
+    ap.add_argument(
+        "--out", type=Path, default=None, help="also save the package zip here"
+    )
     a = ap.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
         settings = Settings(jwt_secret="verify-package-" + "x" * 40, work_dir=Path(tmp))
         with TestClient(create_app(settings, sleep=_instant)) as c:
-            tok = c.post("/api/auth/demo-login", json={"role": "officer"}).json()["token"]
+            tok = c.post("/api/auth/demo-login", json={"role": "officer"}).json()[
+                "token"
+            ]
             h = {"Authorization": f"Bearer {tok}"}
-            r = c.post("/api/demo/start", json={"seed": a.seed, "speed": 20, "mode": "hero"}, headers=h)
+            r = c.post(
+                "/api/demo/start",
+                json={"seed": a.seed, "speed": 20, "mode": "hero"},
+                headers=h,
+            )
             r.raise_for_status()
             t0 = time.time()
             while True:
@@ -60,10 +68,16 @@ def main() -> int:
                 a.out.write_bytes(pkg.content)
             v = c.post("/api/verify", json={"case_id": cid}, headers=h)
             body = v.json()
-    print(f"seed {a.seed}: case {cid}, package {len(pkg.content)} bytes, http {v.status_code}")
+    print(
+        f"seed {a.seed}: case {cid}, package {len(pkg.content)} bytes, http {v.status_code}"
+    )
     for k, val in body.items():
         print(f"  {k}: {val}")
-    ok = v.status_code == 200 and body.get("status") == "PASS_PINNED" and body.get("exit_code") == 0
+    ok = (
+        v.status_code == 200
+        and body.get("status") == "PASS_PINNED"
+        and body.get("exit_code") == 0
+    )
     print("RESULT:", "PASS (pinned)" if ok else "FAIL")
     return 0 if ok else 1
 

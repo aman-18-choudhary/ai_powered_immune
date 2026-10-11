@@ -59,13 +59,21 @@ def check(path: Path) -> list[str]:
             if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("<"):
                 continue
             file_part, _, frag = target.partition("#")
-            dest = path if not file_part else (path.parent / unquote(file_part)).resolve()
+            dest = (
+                path if not file_part else (path.parent / unquote(file_part)).resolve()
+            )
             where = f"{path.relative_to(ROOT)}:{lineno}"
             if not dest.exists():
                 errs.append(f"{where}: missing target {target}")
                 continue
-            if frag and dest.suffix == ".md" and slug(unquote(frag)) not in anchors(dest):
-                errs.append(f"{where}: no heading for #{frag} in {dest.relative_to(ROOT)}")
+            if (
+                frag
+                and dest.suffix == ".md"
+                and slug(unquote(frag)) not in anchors(dest)
+            ):
+                errs.append(
+                    f"{where}: no heading for #{frag} in {dest.relative_to(ROOT)}"
+                )
     return errs
 
 
@@ -75,7 +83,10 @@ def main() -> int:
     else:
         files = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
         files += sorted((ROOT / "services").glob("*/README.md"))
-        files += [ROOT / "web-console" / "README.md", ROOT / "tests/e2e/bench/README.md"]
+        files += [
+            ROOT / "web-console" / "README.md",
+            ROOT / "tests/e2e/bench/README.md",
+        ]
     errs: list[str] = []
     n_links = 0
     for f in files:

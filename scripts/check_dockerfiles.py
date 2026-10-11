@@ -23,7 +23,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SECRET_RE = re.compile(r"(SECRET|PASSWORD|TOKEN|PRIVATE_KEY|API_KEY)\w*\s*=\s*\S+", re.I)
+SECRET_RE = re.compile(
+    r"(SECRET|PASSWORD|TOKEN|PRIVATE_KEY|API_KEY)\w*\s*=\s*\S+", re.IGNORECASE
+)
 
 
 def logical_lines(text: str) -> list[str]:
@@ -46,7 +48,11 @@ def ignore_patterns() -> list[str]:
     f = ROOT / ".dockerignore"
     if not f.exists():
         return []
-    return [ln.strip() for ln in f.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    return [
+        ln.strip()
+        for ln in f.read_text().splitlines()
+        if ln.strip() and not ln.startswith("#")
+    ]
 
 
 def ignored(rel: str, patterns: list[str]) -> bool:
@@ -55,7 +61,9 @@ def ignored(rel: str, patterns: list[str]) -> bool:
         pat = pat.rstrip("/")
         if pat.startswith("**/"):
             tail = pat[3:]
-            if any(fnmatch.fnmatch(p, tail) for p in parts) or fnmatch.fnmatch(rel, tail):
+            if any(fnmatch.fnmatch(p, tail) for p in parts) or fnmatch.fnmatch(
+                rel, tail
+            ):
                 return True
         elif fnmatch.fnmatch(rel, pat) or rel == pat or rel.startswith(pat + "/"):
             return True
@@ -73,10 +81,17 @@ def check(path: Path, patterns: list[str]) -> list[str]:
             toks = shlex.split(rest)
             toks = [t for t in toks if not t.startswith("--")]
             image = toks[0]
-            if image.lower() != "scratch" and not (len(toks) > 2 and image in {s["name"] for s in stages}):
-                if ":" not in image.split("/")[-1] or image.endswith(":latest"):
-                    errs.append(f"{name}: FROM {image} is untagged or :latest")
-            stages.append({"name": toks[-1] if len(toks) >= 3 else None, "user": None, "hc": False})
+            is_stage_ref = len(toks) > 2 and image in {s["name"] for s in stages}
+            untagged = ":" not in image.split("/")[-1] or image.endswith(":latest")
+            if image.lower() != "scratch" and not is_stage_ref and untagged:
+                errs.append(f"{name}: FROM {image} is untagged or :latest")
+            stages.append(
+                {
+                    "name": toks[-1] if len(toks) >= 3 else None,
+                    "user": None,
+                    "hc": False,
+                }
+            )
         elif not stages:
             continue
         elif word == "USER":
@@ -95,9 +110,13 @@ def check(path: Path, patterns: list[str]) -> list[str]:
                     continue
                 matches = list(ROOT.glob(src))
                 if not matches:
-                    errs.append(f"{name}: {word} source {src!r} does not exist in the build context")
+                    errs.append(
+                        f"{name}: {word} source {src!r} does not exist in the build context"
+                    )
                 elif ignored(src.rstrip("/"), patterns):
-                    errs.append(f"{name}: {word} source {src!r} is excluded by .dockerignore")
+                    errs.append(
+                        f"{name}: {word} source {src!r} is excluded by .dockerignore"
+                    )
         elif word in ("ENV", "ARG") and SECRET_RE.search(rest):
             errs.append(f"{name}: {word} looks like it embeds a secret: {rest[:40]}")
     if not stages:
@@ -111,7 +130,9 @@ def check(path: Path, patterns: list[str]) -> list[str]:
 
 
 def main() -> int:
-    files = sorted(ROOT.glob("services/*/Dockerfile")) + sorted(ROOT.glob("infra/docker/*Dockerfile*"))
+    files = sorted(ROOT.glob("services/*/Dockerfile")) + sorted(
+        ROOT.glob("infra/docker/*Dockerfile*")
+    )
     if not files:
         print("no Dockerfiles found")
         return 1
