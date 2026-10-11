@@ -11,7 +11,7 @@
 # Profiles (always pass `core` together with `stack`: depends_on crosses them):
 #   core           redpanda, topic bootstrap job, postgres (+postgis image), redis
 #   stack          call-guard, txn-guard x2 (bank A / bank B), antibody-hub, evidence-ledger,
-#                  graph-twin, geo-intel, gateway, sim-engine, demo-server (+ web console)
+#                  graph-twin, geo-intel, citizen-shield, gateway, sim-engine, demo-server (+ web console)
 #   observability  prometheus, grafana
 #
 # Exposure: only the gateway (8000), demo-server (8080) and, for convenience, the core stores are
@@ -106,7 +106,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scam -d scam && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='graph'\" | grep -q 1 && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='geo'\" | grep -q 1"]
+      test: ["CMD-SHELL", "pg_isready -U scam -d scam && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='graph'\" | grep -q 1 && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='geo'\" | grep -q 1 && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='citizen'\" | grep -q 1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -276,6 +276,30 @@ services:
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "0.5", memory: 384M}}}
 
+  # Citizen message checker: asks call-guard (HTTP /score) for a score and localises the verdict;
+  # a call-guard outage yields a degraded "suspicious" verdict, never "safe". /report stores a
+  # keyed hash + category only and emits a `complaints` event for geo-intel. Own database
+  # `citizen` (infra/postgres/init.sql on a fresh volume; an existing volume needs
+  # `CREATE DATABASE citizen;` once).
+  citizen-shield:
+    <<: *service
+    image: scam-immune/citizen-shield:dev
+    build: {context: .., dockerfile: services/citizen_shield/Dockerfile}
+    environment:
+      <<: *kafka-env
+      CALL_GUARD_URL: http://call-guard:8000
+      CITIZEN_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/citizen
+      CITIZEN_REPORT_KEY: ${CITIZEN_REPORT_KEY:?set CITIZEN_REPORT_KEY (>= 16 bytes) in infra/.env (see .env.example)}
+      TRUST_GATEWAY_HEADERS: "1"
+      CITIZEN_METRICS_TOKEN: ${METRICS_TOKEN:-}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      call-guard: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "0.5", memory: 384M}}}
+
   gateway:
     <<: *service
     image: scam-immune/gateway:dev
@@ -288,7 +312,7 @@ services:
       GATEWAY_UPSTREAM_TXN: http://txn-guard-bank-a:8000
       GATEWAY_UPSTREAM_GRAPH: http://graph-twin:8000
       GATEWAY_UPSTREAM_LEDGER: http://evidence-ledger:8000
-      GATEWAY_UPSTREAM_CITIZEN: http://call-guard:8000
+      GATEWAY_UPSTREAM_CITIZEN: http://citizen-shield:8000
       GATEWAY_UPSTREAM_GEO: http://geo-intel:8000
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
@@ -297,6 +321,7 @@ services:
       evidence-ledger: {condition: service_healthy}
       graph-twin: {condition: service_healthy}
       geo-intel: {condition: service_healthy}
+      citizen-shield: {condition: service_healthy}
       call-guard: {condition: service_healthy}
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "0.5", memory: 256M}}}

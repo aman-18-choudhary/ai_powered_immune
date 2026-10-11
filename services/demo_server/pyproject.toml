@@ -9,8 +9,8 @@ description = "Single-process composition of the platform's real service code be
 requires-python = ">=3.11"
 dependencies = [
     "scam-contracts", "svckit", "sim-engine", "call-guard", "txn-guard", "antibody-hub",
-    "evidence-ledger", "geo-intel", "fastapi>=0.110", "uvicorn>=0.29", "websockets>=12",
-    "PyJWT>=2.8", "networkx>=3", "httpx>=0.27",
+    "evidence-ledger", "geo-intel", "citizen-shield", "fastapi>=0.110", "uvicorn>=0.29",
+    "websockets>=12", "PyJWT>=2.8", "networkx>=3", "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -37,4 +37,3 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
-"demo_server/citizen.py" = ["E501"]

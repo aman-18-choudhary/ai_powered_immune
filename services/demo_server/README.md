@@ -34,7 +34,7 @@ are meant to honour.
 
 ```
 pip install -e contracts -e libs/svckit -e services/sim_engine -e services/call_guard \
-    -e services/txn_guard -e services/antibody_hub -e services/evidence_ledger -e services/geo_intel \
+    -e services/txn_guard -e services/antibody_hub -e services/evidence_ledger -e services/geo_intel -e services/citizen_shield \
     -e "services/demo_server[dev]"
 make demo-server                          # PORT (default 8080); python -m demo_server
 DEMO_STATIC_DIR=web-console/dist make demo-server   # also serve the built console (SPA fallback)

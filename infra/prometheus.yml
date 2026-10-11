@@ -25,3 +25,4 @@ scrape_configs:
           - evidence-ledger:8000
           - graph-twin:8000
           - geo-intel:8000
+          - citizen-shield:8000

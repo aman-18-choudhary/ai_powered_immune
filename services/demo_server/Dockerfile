@@ -25,9 +25,10 @@ COPY services/txn_guard ./services/txn_guard
 COPY services/antibody_hub ./services/antibody_hub
 COPY services/evidence_ledger ./services/evidence_ledger
 COPY services/geo_intel ./services/geo_intel
+COPY services/citizen_shield ./services/citizen_shield
 COPY services/demo_server ./services/demo_server
 RUN pip install ./contracts ./libs/svckit ./services/sim_engine ./services/call_guard \
-    ./services/txn_guard ./services/antibody_hub ./services/evidence_ledger ./services/geo_intel ./services/demo_server
+    ./services/txn_guard ./services/antibody_hub ./services/evidence_ledger ./services/geo_intel ./services/citizen_shield ./services/demo_server
 
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH \

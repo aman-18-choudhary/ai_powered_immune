@@ -13,7 +13,7 @@ ENV_FILE := infra/.env
 # Python packages in dependency order (editable installs).
 PY_PKGS := contracts libs/svckit services/sim_engine services/call_guard services/txn_guard \
   services/antibody_hub services/evidence_ledger services/graph_twin services/geo_intel \
-  services/gateway \
+  services/citizen_shield services/gateway \
   tests/e2e/bench tests/e2e/audit services/demo_server
 # Packages whose [postgres] extra is installed too (psycopg2-binary; optional, used by the stack).
 LINT_PKGS := $(PY_PKGS)

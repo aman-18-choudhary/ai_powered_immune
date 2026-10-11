@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "citizen-shield"
+version = "0.1.0"
+description = "Citizen message checker: localised verdicts over the call-guard scorer, and anonymous scam reports"
+requires-python = ">=3.11"
+dependencies = [
+    "scam-contracts", "svckit", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27",
+    "sqlalchemy>=2", "aiokafka>=0.10",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg2-binary>=2.9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "call-guard"]
+
+[tool.setuptools.packages.find]
+include = ["citizen_shield*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"citizen_shield/texts.py" = ["E501"]
