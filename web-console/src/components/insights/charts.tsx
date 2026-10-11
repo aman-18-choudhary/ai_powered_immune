@@ -91,7 +91,7 @@ const SERIES_COLORS = ["var(--intel)", "var(--warn)", "var(--flow)", "var(--safe
 export function GroupedBars({ groups, height = 280 }: { groups: BarGroup[]; height?: number }) {
   const { wrap, show, hide, node } = useTip();
   const W = 720;
-  const m = { l: 40, r: 12, t: 12, b: 44 };
+  const m = { l: 40, r: 12, t: 30, b: 44 };
   const innerW = W - m.l - m.r;
   const innerH = height - m.t - m.b;
   const y = linearScale([0, 1], [m.t + innerH, m.t]);
@@ -182,7 +182,7 @@ export function DelayChart({ rows, height = 300 }: { rows: BenchSensitivity[]; h
   const stop = stopsHelpingAt(pts, none);
   if (pts.length === 0) return <p className="p-4 text-sm text-muted">No sensitivity rows in this benchmark file.</p>;
   const W = 720;
-  const m = { l: 48, r: 20, t: 16, b: 52 };
+  const m = { l: 48, r: 20, t: 32, b: 52 };
   const innerW = W - m.l - m.r;
   const lows = pts.map((p) => p.lo ?? p.recall);
   const floor = Math.min(...lows, none ?? 1);

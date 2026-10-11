@@ -1,9 +1,26 @@
-# ScamShield Immune: web console (phase F1)
+# ScamShield Immune: web console (phase F1 + F2)
 
-Premium, animated frontend for the demo server: the **Live Interception player** (`/`) and the
-**Command Centre** (`/command`). Other routes (`/analyst`, `/evidence`, `/citizen`, `/insights`,
-`/about`) render a polished "coming in phase F2" page in the real layout. Everything on screen is
-simulated; the SIMULATION pill and "About these numbers" popover are always visible.
+Premium, animated frontend for the demo server. Seven pages, all in one shell:
+
+| Route | Page | What it does |
+|---|---|---|
+| `/` | Live Interception | cinematic scenario player (about 75 s at 1x), phone, two bank consoles, map, finale with verify |
+| `/command` | Command Centre | KPIs, India map (size-scaled cells, mule-hop arcs), incident feed, ring takedown simulator |
+| `/analyst` | Analyst Console | deadline-sorted virtualised hold queue, countdown rings, reason meanings, upgrade history, guarded resolve, optimistic UI |
+| `/evidence` | Evidence | animated hash chain, entry inspector (hash recomputed in the browser), case builder, package export (ETag), verify |
+| `/citizen` | Citizen Shield | mobile-first assistant in en / hi / ta / bn, three samples, one verdict card, nothing stored |
+| `/insights` | Insights | benchmark with Wilson CIs, rail table + NEFT callout, ablations, delay sensitivity, hero case, prevalence table |
+| `/about` | About | animated architecture diagram, real vs simulated, limits, how to run, credits |
+
+Everything on screen is simulated; the SIMULATION pill and "About these numbers" popover are always visible.
+
+## Shortcuts
+
+| Where | Keys |
+|---|---|
+| Anywhere | `Ctrl/Cmd + K` command palette (pages, start/pause demo, theme, motion) |
+| Live | `Space` play/pause, `Left/Right` step, `F` fullscreen |
+| Analyst | `J`/`K` move, `C` confirm mule, `R` release (both ask for a reason note), `?` help |
 
 ## Run
 
@@ -30,14 +47,15 @@ Admin can press **Confirm mule**; Citizen is read-only here.
 | `npm run build` | `tsc --noEmit` then production build into `dist/` |
 | `npm run typecheck` / `npm run lint` | strict TS (`noUncheckedIndexedAccess`) / ESLint (typescript-eslint) |
 | `npm test` | Vitest + Testing Library (unit + component, uses the recorded fixture) |
-| `npm run test:e2e` | Playwright smoke against a running console + demo server (`CONSOLE_URL`, default 5173; a full run takes about 2.5 minutes) |
+| `npm run test:e2e` | Playwright against a running console + demo server (`CONSOLE_URL`, default 5173): smoke (golden path, about 75 s) and `pages.spec.ts` (analyst, evidence, citizen, insights, palette, 404, axe-core in dark and light; about 2.5 minutes in all). Any console error or warning fails a test |
+| `node e2e/shots.mjs` | screenshots of every page x 3 viewports x 2 themes into `docs/screenshots/` (`ONLY=`, `THEMES=`, `OUT=`); then `python3 e2e/optimise-shots.py` |
 
 ## Structure
 
 ```
 src/
   app/          App (routes, providers), Shell (rail, top bar), Splash (role cards), SimulationPill
-  routes/       Landing (player), Command, Phase2 (F2 placeholders), NotFound
+  routes/       Landing, Command, Analyst, Evidence, Citizen, Insights, About, NotFound
   components/
     ui/         shadcn-style Radix wrappers: button, dialog, tabs, tooltip, toaster, popover, switch, scroll-area
     player/     PhonePane, BankPane, MapPane, Timeline, Controls, FinaleCard, LedgerChain, notes (static copy)
@@ -90,28 +108,49 @@ the map has well under 150 animated elements.
 * Event store: pure `applyEvents(state, batch)` reducer with bounded lists; derived selectors for KPIs
   and time-to-block. Playback state is `/api/demo/state` polled while running, interpolated at the
   run speed for a smooth scrubber.
-* Speed: 1x/2x/5x/0.5x. With `pacing: "cinematic"` (server feature, detected by trying it and
-  falling back on 422) 1x is server 1x; with real pacing 1x = 4 simulated s per second.
+* Pacing: the console always starts runs with `pacing: "cinematic"` (1x = server 1x, about 75 s for
+  the hero). The scrubber and its labels use the pacing timeline (`wall_offset` / `wall_duration`)
+  and seek by `wall`; the simulated clock is shown beside it. A 422 fallback to real pacing exists
+  only defensively.
+
+## i18n (citizen page)
+
+`src/lib/i18n/citizen.ts` holds a typed table: `en` defines the keys, `hi`, `ta`, `bn` must match
+(compile-time and `citizen.test.ts`, which also checks `{placeholders}` and that nothing is a copy
+of English). To add a language: add the code to `LANGS`, a native name to `LANG_NAMES`, a full
+table, run `npm test`. Verdict reasons and advice are localised by the API (`lang`).
+
+## Notes on the API contract
+
+* The resolve body is `{action, decision_seq}` only. The analyst's reason note is mandatory in the UI
+  (length, no digit runs, no emails) but kept in memory as a **local audit note**; it is not sent.
+* There is no report route: **Report this** shows a local acknowledgement and says nothing is sent.
+* There is no tamper-demo route, so the "try tampering" button is omitted.
+* Ledger entries are fetched as raw text so integer-valued floats keep their source form
+  (`1.0`) and `payload_hash` can be recomputed in the browser exactly as the ledger does.
+* Prevalence-adjusted precision is computed in the browser from the JSON's recall and FPR (the
+  file has no such table) and is labelled as such.
 
 ## Bundle (production build, gzip)
 
 | Chunk | Size |
 |---|---|
-| `index` (app, React, router, Radix) | 127.1 KB |
+| `index` (app, React, router, Radix, palette) | about 123 KB |
 | `motion` (Framer Motion) | 47.9 KB |
-| `Command` route (lazy) | 9.6 KB |
-| `IndiaMap` + `geo` (d3-geo, topojson, bundled outlines; lazy) | 13.3 + 8.4 KB |
-| CSS | 10.5 KB |
-| **Initial JS** | **about 176 KB** (budget 500 KB) |
+| `Command` / `Analyst` / `Evidence` / `Citizen` / `Insights` / `About` (lazy) | 9.4 / 8.7 / 10.0 / 9.7 / 7.7 / 7.1 KB |
+| `IndiaMap` + `geo` (lazy) | 13.8 + 8.4 KB |
+| CSS | 11.6 KB |
+| **Initial JS** | **about 171 KB** (budget 500 KB; each route chunk budget 120 KB) |
 
 Fonts are self-hosted Inter and JetBrains Mono (latin subset woff2). No third-party hosts at runtime.
-India outlines: `geojson-india` (MIT) simplified by `scripts/build-india-topo.mjs` to 28 KB.
 
 ## Known limits
 
-* F2 pages are placeholders. Ring graph and takedown are "computed from this run's transactions".
+* Ring graph and takedown are "computed from this run's transactions".
 * Seeking replays the run server side; markers for future steps appear after a first play (they are
   remembered per seed in sessionStorage).
-* Package size is measured by exporting the package once at the finale (officer/admin).
-* The Confirm mule button needs the analyst or admin role; the automatic confirmation happens 60
-  simulated seconds after the hold otherwise.
+* Hold timeline ledger rows are matched by simulated time window: the stream has no per-entry txn ref.
+* The hash recomputation needs a secure context (`localhost` or https) and a browser with JSON
+  source-text access (current Chrome, Firefox, Safari); otherwise it says it cannot recompute.
+* The resolve note and the citizen message are never persisted or sent beyond what the API takes.
+* Dev server only: Framer Motion warns in the console when the OS asks for reduced motion.
