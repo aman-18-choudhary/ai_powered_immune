@@ -14,6 +14,16 @@ from svckit.health import make_health_router
 from .replay import HeroMetadata, SleepFn, build_hero_scenario, replay
 from .world import World, build_world
 
+
+def banks_from_env() -> int:
+    """``SIM_BANKS`` (default 4, valid 1..8). Bank ids are positional (bank_sbi, bank_hdfc, ...), so
+    the compose stack sets 2 to match its two txn-guard ``TXN_BANK_ID`` values."""
+    raw = os.getenv("SIM_BANKS", "4")
+    if not raw.isdigit() or not 1 <= int(raw) <= 8:
+        raise ValueError("SIM_BANKS must be an integer from 1 to 8")
+    return int(raw)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +52,9 @@ def create_app(
     app = FastAPI(title="sim-engine", lifespan=lifespan)
     app.state.tasks = set()
 
-    the_world = world or build_world(seed, int(os.getenv("SIM_CITIZENS", "2000")))
+    the_world = world or build_world(
+        seed, int(os.getenv("SIM_CITIZENS", "2000")), n_banks=banks_from_env()
+    )
 
     async def ready() -> bool:
         return True

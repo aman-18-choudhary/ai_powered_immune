@@ -25,6 +25,7 @@ repository: every call, customer, account and transaction comes from here.
 | `SIM_SEED` | 1 | world and scenario seed |
 | `SIM_SPEED` | 60 | simulated seconds per wall second |
 | `SIM_CITIZENS` | 2000 | world size |
+| `SIM_BANKS` | 4 | number of banks (1..8); ids are positional (`bank_sbi`, `bank_hdfc`, `bank_icici`, ...); the compose stack sets 2 to match its two txn-guard `TXN_BANK_ID`s |
 | `PORT` | 8000 | listen port |
 
 ## Test

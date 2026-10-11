@@ -337,6 +337,8 @@ services:
       SIM_SEED: ${SIM_SEED:-1}
       SIM_SPEED: ${SIM_SPEED:-60}
       SIM_CITIZENS: ${SIM_CITIZENS:-2000}
+      # Bank ids are positional (bank_sbi, bank_hdfc): 2 banks == the two txn-guard TXN_BANK_IDs.
+      SIM_BANKS: "2"
     depends_on:
       redpanda: {condition: service_healthy}
       topics-init: {condition: service_completed_successfully}

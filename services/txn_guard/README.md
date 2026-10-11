@@ -210,9 +210,10 @@ What is and is not guaranteed:
   event is acked (not retried, not dead-lettered), counted in
   `txn_guard_foreign_bank_events_total`, and is never scored, held, recorded in history or
   written to the pending store. Every `bank_id` that is produced needs a matching instance: an
-  event for a bank with no instance is not scored by anyone (for example the simulator's default
-  four banks against the two-instance compose stack; the hero scenario uses only the two
-  configured banks).
+  event for a bank with no instance is not scored by anyone. The compose stack therefore
+  sets `SIM_BANKS=2` on sim-engine, so the simulator only produces `bank_sbi` and `bank_hdfc`
+  (bank ids are positional; a test checks hero seeds 1-3). With the simulator's default of 4
+  banks, `bank_icici` and `bank_axis` traffic would be unrouted.
 * *Call risk.* `call.risk` is cross-bank by victim token (the payer identity domain), is always
   read from the shared topic, and every instance consumes all of it under its own group, so each
   bank sees every call risk for its own payers' history.
