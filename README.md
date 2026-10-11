@@ -10,8 +10,11 @@ the ring, and seals the case in a tamper-evident ledger an outside expert can ve
 
 ![Live interception: the hero scenario mid-run](docs/screenshots/player-live-1440x900-dark.png)
 
-*A short screen recording (GIF) has not been produced; the stills below are real screenshots of
-the console. See [docs/demo-script.md](docs/demo-script.md) for the narrated 3-minute run.*
+![Hero run preview (45 s GIF)](docs/demo/hero-run.gif)
+
+*45 s preview of the 2:49 screen recording ([webm](docs/demo/hero-run.webm),
+[mp4](docs/demo/hero-run.mp4), [captions](docs/demo/hero-run.vtt); no audio). The voice-over
+script is [docs/demo-script.md](docs/demo-script.md). The stills below are real screenshots.*
 
 | Command centre | Evidence, verified |
 |---|---|
@@ -23,12 +26,25 @@ More: [analyst console](docs/screenshots/analyst-1440x900-dark.png),
 [insights](docs/screenshots/insights-1440x900-dark.png),
 [light theme live view](docs/screenshots/player-live-1440x900-light.png).
 
+## Challenge deliverables
+
+The challenge brief ([docs/challenge-statement.md](docs/challenge-statement.md)) asks for four
+deliverables:
+
+| Deliverable | Where |
+|---|---|
+| Working prototype | this repository, branch `build/implementation` of <https://github.com/aman-18-choudhary/ai_powered_immune>; `make demo` |
+| Architecture diagram | [docs/architecture.md](docs/architecture.md) (context, containers, hero sequence, PII boundaries, audit flow) |
+| Presentation deck | [ScamShield-Immune.pptx](docs/deck/ScamShield-Immune.pptx), [PDF](docs/deck/ScamShield-Immune.pdf), [contact sheet](docs/deck/preview.png), [deck README](docs/deck/README.md) |
+| Demo video | [hero-run.webm](docs/demo/hero-run.webm) (2:49, no audio), [mp4](docs/demo/hero-run.mp4), [GIF preview](docs/demo/hero-run.gif), [notes](docs/demo/README.md) |
+
 ## 60-second quickstart
 
 Needs Python 3.11+ and Node 20+.
 
 ```bash
-git clone <this repository> && cd lastproject
+git clone https://github.com/aman-18-choudhary/ai_powered_immune.git && cd ai_powered_immune
+git checkout build/implementation   # the work is on this branch; main holds only the design docs
 make install        # venv, editable installs of every package, npm ci for the console
 make demo           # builds the console and serves it with the demo-server
 ```
@@ -69,7 +85,10 @@ flowchart LR
   BUS --> GT["graph-twin<br/>rings, takedown"]
   CG & TG & HUB & GT -- "ledger.append" --> LED["evidence-ledger<br/>hash chain + Ed25519"]
   LED --> PKG["signed package + verify.py"]
-  GW["gateway<br/>JWT, RBAC"] --> TG & GT & LED
+  CS["citizen-shield<br/>checker, anonymous reports"] -- "complaints" --> BUS
+  BUS --> GEO["geo-intel<br/>hotspots"]
+  CS -- "assess" --> CG
+  GW["gateway<br/>JWT, RBAC"] --> TG & GT & LED & GEO & CS
   CON["web console"] --> GW
 ```
 
@@ -89,19 +108,21 @@ Two packagings of the same service code:
 |---|---|---|---|---|---|
 | [sim-engine](services/sim_engine) | seeded synthetic world, scam campaigns, hero scenario replay | 8000 | numpy, scipy, FastAPI | [README](services/sim_engine/README.md) | 51 |
 | [call-guard](services/call_guard) | digital-arrest call scoring (rules + TF-IDF/logistic), `call.risk` alerts | 8000 | scikit-learn, Redis | [README](services/call_guard/README.md) | 141 |
-| [txn-guard](services/txn_guard) | per-bank transaction risk: allow / step-up / hold-and-verify, antibody enforcement | 8000 | gradient boosting + policy overlays, Redis | [README](services/txn_guard/README.md) | 320 |
+| [txn-guard](services/txn_guard) | per-bank transaction risk (one instance and consumer group per bank): allow / step-up / hold-and-verify, antibody enforcement | 8000 | gradient boosting + policy overlays, Redis | [README](services/txn_guard/README.md) | 328 |
 | [antibody-hub](services/antibody_hub) | federated threat memory: keyed hashes, TTL, revoke, outbox | 8000 | FastAPI, SQLAlchemy, Postgres | [README](services/antibody_hub/README.md) | 160 (+5 skipped) |
 | [evidence-ledger](services/evidence_ledger) | append-only hash chain, signed checkpoints, evidence packages, `verify.py` | 8000 | Ed25519, SQLAlchemy, Postgres | [README](services/evidence_ledger/README.md) | 184 (+7 skipped) |
 | [graph-twin](services/graph_twin) | ring detection, harm model, takedown simulation | 8000 | networkx, SQLAlchemy | [README](services/graph_twin/README.md) | 122 (+3 skipped) |
-| [geo-intel](services/geo_intel) | complaint hotspots (Poisson z-score), trend, cash-out points, city level | 8000 | FastAPI, SQLAlchemy | [README](services/geo_intel/README.md) | 51 (+1 skipped) |
+| [geo-intel](services/geo_intel) | complaint hotspots (Poisson z-score), trend, cash-out points, city level | 8000 | FastAPI, SQLAlchemy | [README](services/geo_intel/README.md) | 50 (+1 skipped) |
 | [citizen-shield](services/citizen_shield) | citizen message checker (en/hi/ta/bn), degraded mode, anonymous reports | 8000 | FastAPI, SQLAlchemy | [README](services/citizen_shield/README.md) | 55 |
 | [gateway](services/gateway) | JWT auth, RBAC, rate limits, reverse proxy | 8000 (published on 127.0.0.1) | FastAPI, Redis | [README](services/gateway/README.md) | 60 |
-| [demo-server](services/demo_server) | single-process composition behind the console's `/api` + `/api/stream` | 8080 | FastAPI, WebSocket | [README](services/demo_server/README.md) | 182 |
+| [demo-server](services/demo_server) | single-process composition behind the console's `/api` + `/api/stream` | 8080 | FastAPI, WebSocket | [README](services/demo_server/README.md) | 183 |
 | [web-console](web-console) | seven-page React console, light and dark | 5173 (dev) | React, TypeScript, Tailwind, Vite | [README](web-console/README.md) | 172 (vitest) + Playwright e2e |
-| [contracts](contracts), [svckit](libs/svckit) | shared models, topics, keyed hashing; bus, idempotency, drainer, PII guard | n/a | pydantic, aiokafka | in code | 29 + 179 |
+| [contracts](contracts), [svckit](libs/svckit) | shared models, topics, keyed hashing; bus, idempotency, drainer, PII guard | n/a | pydantic, aiokafka | in code | 44 + 179 |
 | [tests/e2e/bench](tests/e2e/bench), [tests/e2e/audit](tests/e2e/audit) | benchmark harness; hero audit-trail end to end | n/a | pytest | [bench README](tests/e2e/bench/README.md), [audit trail](docs/audit-trail.md) | 38 + 27 |
 
-Counts are from `make test-all` (warnings as errors); skipped tests are the opt-in Postgres suites.
+Counts are the latest per-package runs recorded in the build reports (`-W error`); skipped tests are
+the opt-in Postgres suites. The packages that were not changed by the later geo-intel, citizen-shield
+and per-bank routing work keep their counts from the last full `make test-all`.
 
 ## How the evaluation focus is addressed
 
@@ -113,10 +134,11 @@ Counts are from `make test-all` (warnings as errors); skipped tests are the opt-
 | False-positive rate | pooled and per rail, hold and step-up | held benign 0.000% (upper CI 0.018%); step-up or hold 0.097%; NEFT flagged 0.83%, IMPS 0.37%, UPI 0.016%: [report, per-rail](docs/benchmark_report.md) |
 | Auditability | hash-chained ledger, signed checkpoints, offline `verify.py` | [audit trail](docs/audit-trail.md), `make verify-package`, `tests/e2e/audit` |
 | Geography | command-centre map: city cells, trends, cash-out points, mule-hop arcs | `/command` ([screenshot](docs/screenshots/command-1440x900-dark.png)) |
-| Citizen shield | multilingual assistant: one verdict per screen, nothing stored | `/citizen` (en, hi, ta, bn) |
+| Citizen shield | multilingual assistant: one verdict per screen, message text not stored; optional anonymous report keeps a keyed hash and category (citizen-shield) | `/citizen` (en, hi, ta, bn) |
 | Antibody sharing | cross-bank second-victim protection, ablation | victim-transfer recall 94.5% without, 100% with, in this simulator; hero: 40 of 40 seeds held vs 1 of 40 step-up without |
 
-A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-map.md).
+A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-map.md). The challenge facts and the dropped scope are
+in [docs/challenge-statement.md](docs/challenge-statement.md).
 
 ## Honest limitations
 
@@ -143,7 +165,7 @@ A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-
 
 | Item | Status |
 |---|---|
-| `make test-all`: 13 of 13 packages pass (12 Python suites with `-W error`, 172 console unit tests) | exercised |
+| `make test-all` full run: 13 of 13 packages passed (12 Python suites with `-W error`, 172 console unit tests). Run **before** geo-intel, citizen-shield and per-bank routing were added; those and the touched packages (contracts, txn-guard, demo-server, audit, bench) were then run per package and passed, but a full `make test-all` over all 14 Python packages has not been repeated | exercised (see note) |
 | `make lint`: ruff check and format on all packages, eslint and tsc on the console | exercised, clean |
 | Console production build | exercised |
 | `make demo`: console build, demo-server start, `/api/health`, `/`, SPA fallback, a real-time hero run (72.9 s) | exercised |
@@ -155,7 +177,8 @@ A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-
 | Prometheus `http_headers` scrape of token-gated `/metrics`; Grafana | **not exercised** |
 | `make install` from an empty machine (fresh venv, network installs) | **not exercised**; the existing `.venv` and `node_modules` were used |
 | Playwright e2e and screenshots in this delivery pass | not re-run here (screenshots are from the earlier console phase) |
-| Demo video | **not recorded** |
+| Demo video | recorded (`docs/demo/hero-run.webm`, 2:49, frames sampled at 13 points); **no audio narration**; outro card still shows a repository placeholder | exercised, partial |
+| Deck (`docs/deck`) | rendered with LibreOffice and inspected as images; **not opened in PowerPoint** | exercised, partial |
 
 ## Docker stack
 
@@ -184,8 +207,9 @@ tests/e2e/            bench (benchmark harness), audit (hero audit trail end to 
 web-console/          React console (src/, e2e/ Playwright, scripts/)
 infra/                docker-compose.yml, .env.example, postgres/, prometheus.yml, docker/
 scripts/              check_dockerfiles.py, check_links.py, test_all.sh, verify_package.py
-docs/                 architecture, benchmark report, demo script, judging map, audit trail,
-                      screenshots, superpowers/ (specs and plans)
+docs/                 architecture, benchmark report, challenge statement, demo script, judging map,
+                      audit trail, deck/ (pptx, pdf, generator), demo/ (video), screenshots,
+                      superpowers/ (specs and plans)
 Makefile              help install test-all lint demo stack-* bench verify-package check clean
 ```
 
