@@ -106,14 +106,14 @@ Two packagings of the same service code:
 
 | Service | Purpose | Port | Tech | Docs | Tests (passed) |
 |---|---|---|---|---|---|
-| [sim-engine](services/sim_engine) | seeded synthetic world, scam campaigns, hero scenario replay | 8000 | numpy, scipy, FastAPI | [README](services/sim_engine/README.md) | 51 |
+| [sim-engine](services/sim_engine) | seeded synthetic world, scam campaigns, hero scenario replay | 8000 | numpy, scipy, FastAPI | [README](services/sim_engine/README.md) | 56 |
 | [call-guard](services/call_guard) | digital-arrest call scoring (rules + TF-IDF/logistic), `call.risk` alerts | 8000 | scikit-learn, Redis | [README](services/call_guard/README.md) | 141 |
-| [txn-guard](services/txn_guard) | per-bank transaction risk (one instance and consumer group per bank): allow / step-up / hold-and-verify, antibody enforcement | 8000 | gradient boosting + policy overlays, Redis | [README](services/txn_guard/README.md) | 328 |
+| [txn-guard](services/txn_guard) | per-bank transaction risk (one instance and consumer group per bank): allow / step-up / hold-and-verify, antibody enforcement | 8000 | gradient boosting + policy overlays, Redis | [README](services/txn_guard/README.md) | 340 |
 | [antibody-hub](services/antibody_hub) | federated threat memory: keyed hashes, TTL, revoke, outbox | 8000 | FastAPI, SQLAlchemy, Postgres | [README](services/antibody_hub/README.md) | 160 (+5 skipped) |
 | [evidence-ledger](services/evidence_ledger) | append-only hash chain, signed checkpoints, evidence packages, `verify.py` | 8000 | Ed25519, SQLAlchemy, Postgres | [README](services/evidence_ledger/README.md) | 184 (+7 skipped) |
 | [graph-twin](services/graph_twin) | ring detection, harm model, takedown simulation | 8000 | networkx, SQLAlchemy | [README](services/graph_twin/README.md) | 122 (+3 skipped) |
-| [geo-intel](services/geo_intel) | complaint hotspots (Poisson z-score), trend, cash-out points, city level | 8000 | FastAPI, SQLAlchemy | [README](services/geo_intel/README.md) | 50 (+1 skipped) |
-| [citizen-shield](services/citizen_shield) | citizen message checker (en/hi/ta/bn), degraded mode, anonymous reports | 8000 | FastAPI, SQLAlchemy | [README](services/citizen_shield/README.md) | 55 |
+| [geo-intel](services/geo_intel) | complaint hotspots (Poisson z-score), trend, cash-out points, city level | 8000 | FastAPI, SQLAlchemy | [README](services/geo_intel/README.md) | 64 (+1 skipped) |
+| [citizen-shield](services/citizen_shield) | citizen message checker (en/hi/ta/bn), degraded mode, anonymous reports | 8000 | FastAPI, SQLAlchemy | [README](services/citizen_shield/README.md) | 71 |
 | [gateway](services/gateway) | JWT auth, RBAC, rate limits, reverse proxy | 8000 (published on 127.0.0.1) | FastAPI, Redis | [README](services/gateway/README.md) | 60 |
 | [demo-server](services/demo_server) | single-process composition behind the console's `/api` + `/api/stream` | 8080 | FastAPI, WebSocket | [README](services/demo_server/README.md) | 183 |
 | [web-console](web-console) | seven-page React console, light and dark | 5173 (dev) | React, TypeScript, Tailwind, Vite | [README](web-console/README.md) | 172 (vitest) + Playwright e2e |
