@@ -45,3 +45,10 @@ def test_hotspots_windows_and_trend():
     assert geo.hotspots(pts, 1000.0, window_s=600.0) == out
     down = geo.hotspots(pts[:1], 1000.0)
     assert down["hotspots"][0]["trend"] == "down"
+
+
+def test_table_is_the_shared_geo_intel_table():
+    from geo_intel import table
+
+    assert geo.CITIES is table.CITIES
+    assert geo.city_for is table.city_for and geo.nearest_city is table.nearest_city

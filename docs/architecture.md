@@ -81,11 +81,13 @@ Notes on the wiring, all from `infra/docker-compose.yml`:
   Services behind it therefore run with `TRUST_GATEWAY_HEADERS=1` and are reachable only on the
   internal network. The hub is the exception: it is not routed by the gateway, and the txn-guards
   present `HUB_GATEWAY_SECRET` as `X-Gateway-Secret`.
-* `/api/geo` has no standalone upstream (the geographic view is computed inside the demo-server);
-  the compose file leaves `GATEWAY_UPSTREAM_GEO` unset, so the gateway answers 502 there.
-* Both txn-guard instances use the same consumer group (`txn-guard`) on `txn.events` and
-  `call.risk` (service code), so Kafka splits partitions between them; per-bank routing of
-  transaction events is not modelled. Antibody consumption uses one group per bank
+* `/api/geo` is served by the standalone `geo-intel` service in the stack (`GATEWAY_UPSTREAM_GEO`);
+  it is fed by `complaints` events, while the demo-server still computes its own geographic view
+  in process from the simulator's points.
+* Each txn-guard instance consumes `txn.events` and `call.risk` with its own group
+  (`txn-guard-<TXN_BANK_ID>`) and drops transactions whose `bank_id` is another bank's (acked and
+  counted in `txn_guard_foreign_bank_events_total`, never scored or recorded). A bank with no
+  instance is therefore not scored by anyone. Antibody consumption uses one group per bank
   (`txn-guard-antibody-<bank>`), so each bank sees every antibody.
 * Topics are created by the one-shot `topics-init` job: `txn.events`, `call.events`, `call.risk`,
   `txn.decisions`, `antibody.published`, `ledger.append`, `complaints`, each with a `.dlq`.

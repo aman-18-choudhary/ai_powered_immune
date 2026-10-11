@@ -11,7 +11,7 @@
 # Profiles (always pass `core` together with `stack`: depends_on crosses them):
 #   core           redpanda, topic bootstrap job, postgres (+postgis image), redis
 #   stack          call-guard, txn-guard x2 (bank A / bank B), antibody-hub, evidence-ledger,
-#                  graph-twin, gateway, sim-engine, demo-server (+ web console)
+#                  graph-twin, geo-intel, gateway, sim-engine, demo-server (+ web console)
 #   observability  prometheus, grafana
 #
 # Exposure: only the gateway (8000), demo-server (8080) and, for convenience, the core stores are
@@ -106,7 +106,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scam -d scam && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='graph'\" | grep -q 1"]
+      test: ["CMD-SHELL", "pg_isready -U scam -d scam && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='graph'\" | grep -q 1 && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='geo'\" | grep -q 1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -256,6 +256,26 @@ services:
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "1.0", memory: 1G}}}
 
+  # Read model over the `complaints` topic: city-level hotspots, trend and cash-out points served
+  # at /api/geo/* by the gateway. Own database `geo` (created by infra/postgres/init.sql on a fresh
+  # volume; an existing volume needs `CREATE DATABASE geo;` once).
+  geo-intel:
+    <<: *service
+    image: scam-immune/geo-intel:dev
+    build: {context: .., dockerfile: services/geo_intel/Dockerfile}
+    environment:
+      <<: *kafka-env
+      GEO_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/geo
+      GEO_RETENTION_DAYS: ${GEO_RETENTION_DAYS:-30}
+      TRUST_GATEWAY_HEADERS: "1"
+      GEO_METRICS_TOKEN: ${METRICS_TOKEN:-}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "0.5", memory: 384M}}}
+
   gateway:
     <<: *service
     image: scam-immune/gateway:dev
@@ -269,14 +289,14 @@ services:
       GATEWAY_UPSTREAM_GRAPH: http://graph-twin:8000
       GATEWAY_UPSTREAM_LEDGER: http://evidence-ledger:8000
       GATEWAY_UPSTREAM_CITIZEN: http://call-guard:8000
-      # GATEWAY_UPSTREAM_GEO is intentionally unset: no standalone service serves /geo (the
-      # geographic view is computed inside the demo-server); /api/geo answers 502 here.
+      GATEWAY_UPSTREAM_GEO: http://geo-intel:8000
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
       redis: {condition: service_healthy}
       txn-guard-bank-a: {condition: service_healthy}
       evidence-ledger: {condition: service_healthy}
       graph-twin: {condition: service_healthy}
+      geo-intel: {condition: service_healthy}
       call-guard: {condition: service_healthy}
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "0.5", memory: 256M}}}

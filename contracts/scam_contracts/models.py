@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from .canonical import canonical_json
+from .geo import CITY_CODES, STATE_CODES
 
 UPI_LIMIT_INR = Decimal("100000")
 IMPS_LIMIT_INR = Decimal("500000")
@@ -179,3 +180,46 @@ class LedgerEntryIn(_Frozen):
     model_version: str | None = None
     payload: Payload | None = None
     case_refs: Annotated[list[CaseRef], Field(max_length=MAX_CASE_REFS)] = []
+
+
+COMPLAINT_ID_RE = r"^[A-Za-z0-9._:-]{8,64}$"
+AMOUNT_BUCKETS = ("<1k", "1k-10k", "10k-100k", "100k-1m", ">=1m")
+
+
+def _city_code(v: str) -> str:
+    if v not in CITY_CODES:
+        raise ValueError("unknown city_code")
+    return v
+
+
+def _state_code(v: str) -> str:
+    if v not in STATE_CODES:
+        raise ValueError("unknown state_code")
+    return v
+
+
+class Complaint(_Frozen):
+    """A citizen- or officer-reported incident, location coarsened to a fixed enum (topic
+    ``complaints``; additive contract, keyed by ``complaint_id``).
+
+    PII-free by construction: ``complaint_id`` is an opaque producer-chosen id (also the
+    idempotency key: a duplicate id is the same complaint); the location is a ``city_code`` or a
+    ``state_code`` from ``scam_contracts.geo`` (at least one; a city code wins when both are
+    present), never free text, a phone number or a coordinate; ``amount_bucket`` is a coarse class,
+    never an amount; ``case_ref`` is an opaque case reference as used by the ledger. ``ts`` is the
+    event time of the incident (timezone-aware).
+    """
+
+    complaint_id: Annotated[str, Field(pattern=COMPLAINT_ID_RE)]
+    ts: AwareDatetime
+    kind: Literal["scam_call", "held_transfer", "cash_out"]
+    city_code: Annotated[str, AfterValidator(_city_code)] | None = None
+    state_code: Annotated[str, AfterValidator(_state_code)] | None = None
+    amount_bucket: Literal["<1k", "1k-10k", "10k-100k", "100k-1m", ">=1m"] | None = None
+    case_ref: CaseRef | None = None
+
+    @model_validator(mode="after")
+    def _has_location(self) -> "Complaint":
+        if self.city_code is None and self.state_code is None:
+            raise ValueError("a city_code or a state_code is required")
+        return self
