@@ -1,8 +1,22 @@
-# Build from the repository root (the build context must contain contracts/, libs/ and services/):
-#   docker build -f services/demo_server/Dockerfile -t demo-server .
-#   docker run --rm -p 8080:8080 -e DEMO_JWT_SECRET=<32+ bytes> demo-server
-FROM python:3.11-slim
-WORKDIR /app
+# syntax=docker/dockerfile:1
+# Build from the repository root (the context must contain contracts/, libs/, services/, web-console/):
+#   docker build -f services/demo_server/Dockerfile -t scam-demo-server .
+#   docker run --rm -p 127.0.0.1:8080:8080 -e DEMO_JWT_SECRET=<32+ bytes> scam-demo-server
+# Three stages: (1) build the web console with Node 20, (2) build a Python venv with the real
+# service code, (3) a slim runtime that serves the API, the stream and the built console.
+
+FROM node:20-slim AS console
+WORKDIR /console
+COPY web-console/package.json web-console/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web-console/ ./
+RUN npm run build
+
+FROM python:3.11-slim AS builder
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN python -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+WORKDIR /src
 COPY contracts ./contracts
 COPY libs/svckit ./libs/svckit
 COPY services/sim_engine ./services/sim_engine
@@ -11,11 +25,20 @@ COPY services/txn_guard ./services/txn_guard
 COPY services/antibody_hub ./services/antibody_hub
 COPY services/evidence_ledger ./services/evidence_ledger
 COPY services/demo_server ./services/demo_server
-RUN pip install --no-cache-dir ./contracts ./libs/svckit ./services/sim_engine \
-    ./services/call_guard ./services/txn_guard ./services/antibody_hub \
-    ./services/evidence_ledger ./services/demo_server \
- && useradd --create-home --uid 10001 app
+RUN pip install ./contracts ./libs/svckit ./services/sim_engine ./services/call_guard \
+    ./services/txn_guard ./services/antibody_hub ./services/evidence_ledger ./services/demo_server
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH \
+    PORT=8080 DEMO_STATIC_DIR=/app/console
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --create-home --home-dir /home/app app
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=console /console/dist /app/console
+COPY infra/docker/healthcheck.py /usr/local/bin/healthcheck.py
 USER app
-ENV PORT=8080
+WORKDIR /home/app
 EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=4s --start-period=30s --retries=5 \
+  CMD ["python", "/usr/local/bin/healthcheck.py", "/api/health"]
 CMD ["python", "-m", "demo_server"]
