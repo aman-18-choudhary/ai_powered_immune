@@ -151,6 +151,7 @@ A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-
 | Dockerfile static checks (`scripts/check_dockerfiles.py`: COPY sources, non-root user, HEALTHCHECK, pinned tags) | exercised |
 | `docker build` of any image; `docker compose up`; Kafka/Postgres/Redis in containers | **not exercised** |
 | Prometheus `http_headers` scrape of token-gated `/metrics`; Grafana | **not exercised** |
+| `make install` from an empty machine (fresh venv, network installs) | **not exercised**; the existing `.venv` and `node_modules` were used |
 | Playwright e2e and screenshots in this delivery pass | not re-run here (screenshots are from the earlier console phase) |
 | Demo video | **not recorded** |
 

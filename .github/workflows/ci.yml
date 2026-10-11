@@ -20,3 +20,16 @@ jobs:
             pip install -e "$d[dev]"
             (cd "$d" && ruff check . && python -m pytest -q)
           done
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Dockerfile and markdown link checks
+        run: |
+          python scripts/check_dockerfiles.py
+          python scripts/check_links.py
+      - name: Compose config with the example env
+        run: docker compose -f infra/docker-compose.yml --env-file infra/.env.example --profile core --profile stack --profile observability config -q
