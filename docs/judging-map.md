@@ -5,6 +5,18 @@ are simulator-only (seed 42 unless stated); the sources are
 [docs/benchmark_report.md](benchmark_report.md) and
 `services/demo_server/demo_server/data/benchmark_summary.json`.
 
+## Deliverables
+
+| Challenge deliverable | Where |
+|---|---|
+| Working prototype | [README](../README.md) quickstart (`make demo`); repository <https://github.com/aman-18-choudhary/ai_powered_immune>, branch `build/implementation` |
+| Architecture diagram | [architecture.md](architecture.md) |
+| Presentation deck | [deck/ScamShield-Immune.pptx](deck/ScamShield-Immune.pptx), [PDF](deck/ScamShield-Immune.pdf), [preview](deck/preview.png) |
+| Demo video | [demo/hero-run.webm](demo/hero-run.webm) (2:49, no audio), [mp4](demo/hero-run.mp4), [GIF](demo/hero-run.gif), [notes](demo/README.md) |
+
+The brief, its evaluation focus and the dropped counterfeit scope are in
+[challenge-statement.md](challenge-statement.md).
+
 ## Innovation (25)
 
 | Claim | Evidence | Caveat |
@@ -31,7 +43,7 @@ are simulator-only (seed 42 unless stated); the sources are
 
 | Claim | Evidence | Caveat |
 |---|---|---|
-| Large automated test base | About 1,490 Python tests passing across 12 packages (contracts 29, svckit 179, sim-engine 51, call-guard 141, txn-guard 320, hub 160, ledger 184, graph-twin 122, gateway 60, demo-server 182, audit 27, bench 38) plus 172 console unit tests and Playwright specs; `make test-all` (13 of 13 pass) | 15 Postgres tests are opt-in and skipped without a database |
+| Large automated test base | About 1,620 Python tests passing across 14 packages (contracts 44, svckit 179, sim-engine 51, call-guard 141, txn-guard 328, hub 160, ledger 184, graph-twin 122, geo-intel 50, citizen-shield 55, gateway 60, demo-server 183, audit 27, bench 38; the sum of the latest per-package runs) plus 172 console unit tests and Playwright specs; the last full `make test-all` (13 of 13 pass) predates geo-intel and citizen-shield | 16 Postgres tests are opt-in and skipped without a database |
 | Adversarial review of every service | SDD ledger: each task reviewed by an independent reviewer with fix rounds until findings closed; findings turned into regression tests (ledger attack campaign of about 15,000 mutations, none passing a pinned verify) | the review ledger is a working file under `.superpowers/` (git-ignored) |
 | Correctness under at-least-once delivery | idempotent replays republish identical decisions; per-payer ordering contract; parity tests (0 differences, 1,586 transactions); outbox + breaker for audit | not exercised against a real Kafka cluster |
 | Reproducible benchmark | deterministic JSON (byte-identical for a seed), disjoint train/calibration/eval seeds enforced, ablations, Wilson intervals, sensitivity sweep | simulator-only; same generators as training |
@@ -42,7 +54,7 @@ are simulator-only (seed 42 unless stated); the sources are
 
 | Claim | Evidence | Caveat |
 |---|---|---|
-| Partitioning designed for per-payer order | keying contract in `contracts/scam_contracts/topics.py`; [architecture, Deployment notes](architecture.md#7-deployment-notes) | not load-tested; both bank instances in the compose file share a consumer group, so per-bank routing of transaction events is not modelled |
+| Partitioning designed for per-payer order | keying contract in `contracts/scam_contracts/topics.py`; [architecture, Deployment notes](architecture.md#7-deployment-notes) | not load-tested; txn-guard uses one consumer group and a foreign-bank filter per bank instance (a bank with no instance is not scored by anyone) |
 | Stateless scorers, state in Redis; replicated hub and ledger over Postgres | `services/txn_guard/README.md`, `services/antibody_hub/README.md` (Operations), `infra/docker-compose.yml` | graph-twin is a single replica (no sharding) |
 | Bounded work everywhere | graph-twin bounds and eviction (`GRAPH_MAX_NODES` 200,000, heavy-job queue, deadlines); drainer concurrency caps; body and response caps | measured on simulator-scale graphs only |
 | Latency | consumer-path p50 about 7 ms, p99 about 14 ms per transaction with fakeredis stores (txn-guard README); target p99 under 300 ms | in-process figure, not a load test |
@@ -53,7 +65,7 @@ are simulator-only (seed 42 unless stated); the sources are
 | Claim | Evidence | Caveat |
 |---|---|---|
 | Three audiences, seven pages | `/` live interception, `/command`, `/analyst`, `/evidence`, `/citizen`, `/insights`, `/about` ([README](../README.md)); [screenshots](screenshots/) at 1440, 1024 and 390 px in light and dark | n/a |
-| Cinematic hero player with honest labelling | 71 s at 1x; SIMULATION pill and constructed-case label always visible; [demo script](demo-script.md) | the demo video is not recorded |
+| Cinematic hero player with honest labelling | 71 s at 1x; SIMULATION pill and constructed-case label always visible; [demo video](demo/hero-run.webm) ([GIF preview](demo/hero-run.gif)), [demo script](demo-script.md), [deck](deck/ScamShield-Immune.pptx) | the video has no audio; the deck was not opened in PowerPoint |
 | Accessibility | WCAG AA tokens, axe-core checks in both themes (Playwright `pages.spec.ts`), keyboard shortcuts and command palette (Ctrl/Cmd+K), motion toggle, risk never by colour alone | axe covers automated rules only; e2e was not re-run in this delivery pass |
 | Analyst workflow | deadline-sorted hold queue with countdown rings, reason meanings, guarded resolve with a note ([screenshot](screenshots/analyst-1440x900-dark.png)) | demo analyst is auto-confirming unless a human acts |
 | Citizen flow | mobile-first, one verdict per screen, explicit uncertainty, nothing stored ([screenshot](screenshots/citizen-verdict-ta-390x844-dark.png)) | four languages, not twelve |

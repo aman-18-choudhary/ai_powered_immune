@@ -22,7 +22,7 @@ verification, and a tour of the command centre, analyst console, evidence page, 
 | 1:27 | finale card, **Verify offline**, result `PASS_PINNED` |
 | 1:40 | `/command` (about 12 s), `/analyst` (about 11 s), `/evidence` build, export and verify (about 13 s) |
 | 2:17 | `/citizen`: sample digital-arrest message, verdict in English, then Tamil |
-| 2:35 | `/insights` scroll, then outro card: `make demo` and a repository placeholder |
+| 2:35 | `/insights` scroll, then outro card: `make demo` and a repository placeholder (see Honest notes) |
 
 Exact segment times are in `hero-run.marks.json`; `hero-run.vtt` is built from them and the seed-1
 step offsets measured in [../demo-script.md](../demo-script.md). The console already shows step
@@ -30,6 +30,9 @@ captions on the player; the caption track adds the talk-track gist.
 
 ## Honest notes
 
+* **Known cosmetic gap:** the outro card in the recording still shows a repository placeholder
+  instead of the real URL (<https://github.com/aman-18-choudhary/ai_powered_immune>, branch
+  `build/implementation`). It was not re-recorded; the deck and README carry the real URL.
 * **No audio narration was recorded.** The voice-over script is in
   [../demo-script.md](../demo-script.md) for a human to read over this video (or a re-take).
 * The recording is of the static console build (`web-console/dist`) served by the demo server,

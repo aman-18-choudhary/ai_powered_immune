@@ -1,8 +1,10 @@
 # Demo script (3 minutes)
 
 A narrated walkthrough synchronised to the console's cinematic pacing. Everything on screen is
-simulated, and the script says so. This repository cannot record the video: the checklist at the
-end is for whoever does.
+simulated, and the script says so. A silent (no-audio) screen recording of the hero run exists:
+[demo/hero-run.webm](demo/hero-run.webm) (2:49, 1440x900; also mp4, a 45 s GIF and a caption
+track, see [demo/README.md](demo/README.md)). This script is the voice-over for it, or for a
+live or re-recorded take; the checklist at the end is for a re-take.
 
 ## Setup (before recording)
 
@@ -114,4 +116,5 @@ a restart.
       case" sentence and the "simulated" sentence in the final cut.
 - [ ] Export 1080p H.264, check the verify PASS frame is legible.
 
-Known gap: the video has not been recorded; no recording exists in this repository.
+Known gap: the existing recording has no audio narration; a voice-over still has to be read over it
+using the script above.
