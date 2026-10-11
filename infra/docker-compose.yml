@@ -1,73 +1,377 @@
+# ScamShield Immune: multi-service stack.
+#
+# NOT EXERCISED: this file has been validated with `docker compose config` only. The machine it was
+# written on had no Docker daemon, so no image was built and no container was started. See
+# README.md ("What was and was not exercised"). The verified one-command path is `make demo`.
+#
+#   cp infra/.env.example infra/.env   # then edit the DEMO-ONLY values
+#   make stack-up                      # = compose --profile core --profile stack up -d --build
+#   make stack-hero                    # trigger the hero scenario on sim-engine
+#
+# Profiles (always pass `core` together with `stack`: depends_on crosses them):
+#   core           redpanda, topic bootstrap job, postgres (+postgis image), redis
+#   stack          call-guard, txn-guard x2 (bank A / bank B), antibody-hub, evidence-ledger,
+#                  graph-twin, gateway, sim-engine, demo-server (+ web console)
+#   observability  prometheus, grafana
+#
+# Exposure: only the gateway (8000), demo-server (8080) and, for convenience, the core stores are
+# published, all on 127.0.0.1. Every service sits on one internal bridge network (`scam`).
+#
+# Neo4j from the earlier skeleton is removed: graph-twin persists through SQLAlchemy (Postgres here).
 name: scam-immune-system
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-service: &service
+  restart: unless-stopped
+  logging: *logging
+  networks: [scam]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  profiles: [stack]
+
+x-health: &health
+  test: ["CMD", "python", "/usr/local/bin/healthcheck.py", "/healthz"]
+  interval: 10s
+  timeout: 4s
+  retries: 12
+  start_period: 30s
+
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP: redpanda:29092
+
 services:
+  # ---------------------------------------------------------------- core
   redpanda:
     image: redpandadata/redpanda:v24.1.7
     command:
       - redpanda
       - start
       - --smp=1
-      - --memory=512M
+      - --memory=768M
+      - --reserve-memory=0M
       - --overprovisioned
       - --node-id=0
       - --check=false
       - --kafka-addr=INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
       - --advertise-kafka-addr=INTERNAL://redpanda:29092,EXTERNAL://localhost:9092
     ports: ["127.0.0.1:9092:9092"]
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    logging: *logging
+    networks: [scam]
+    profiles: [core]
+    deploy: {resources: {limits: {memory: 1G}}}
+
+  # One-shot: create every topic (and its .dlq) before any service starts. Idempotent: an
+  # already-existing topic is checked with `describe` instead of failing.
+  topics-init:
+    image: redpandadata/redpanda:v24.1.7
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for t in txn.events call.events call.risk txn.decisions antibody.published ledger.append complaints; do
+          for name in "$$t" "$$t.dlq"; do
+            rpk topic create "$$name" --brokers redpanda:29092 --partitions 3 --replicas 1 \
+              || rpk topic describe "$$name" --brokers redpanda:29092 >/dev/null
+          done
+        done
+        rpk topic list --brokers redpanda:29092
+    depends_on:
+      redpanda: {condition: service_healthy}
+    restart: "no"
+    logging: *logging
+    networks: [scam]
+    profiles: [core]
+
   postgres:
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: scam
-      POSTGRES_PASSWORD: scam
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env (see .env.example)}
       POSTGRES_DB: scam
     ports: ["127.0.0.1:5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scam -d scam"]
+      test: ["CMD-SHELL", "pg_isready -U scam -d scam && psql -U scam -d scam -tAc \"select 1 from pg_database where datname='graph'\" | grep -q 1"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    logging: *logging
+    networks: [scam]
+    profiles: [core]
+    deploy: {resources: {limits: {memory: 512M}}}
+
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     ports: ["127.0.0.1:6379:6379"]
+    volumes: ["redis-data:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
-  neo4j:
-    image: neo4j:5-community
+    restart: unless-stopped
+    logging: *logging
+    networks: [scam]
+    profiles: [core]
+    deploy: {resources: {limits: {memory: 384M}}}
+
+  # ---------------------------------------------------------------- stack
+  # One-shot: generate the ledger's Ed25519 signing key into a named volume (0600 PEM, never
+  # overwritten), then hand the directory to the service uid (10001).
+  ledger-keygen:
+    <<: *service
+    image: scam-immune/evidence-ledger:dev
+    build: {context: .., dockerfile: services/evidence_ledger/Dockerfile}
+    user: "0:0"
+    cap_drop: []
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        [ -f /keys/ledger_signing_key.pem ] || python -m evidence_ledger.keygen /keys/ledger_signing_key.pem
+        chown -R 10001:10001 /keys
+        chmod 700 /keys
+        chmod 600 /keys/ledger_signing_key.pem
+    volumes: ["ledger-keys:/keys"]
+    restart: "no"
+    healthcheck: {disable: true}
+
+  call-guard:
+    <<: *service
+    image: scam-immune/call-guard:dev
+    build: {context: .., dockerfile: services/call_guard/Dockerfile}
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-scampassword}
-    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
-    volumes: ["neo4jdata:/data"]
+      <<: *kafka-env
+      REDIS_URL: redis://redis:6379/3
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "1.0", memory: 768M}}}
+
+  # Two bank instances of the same image. Distinct TXN_BANK_ID (antibody consumer group and Redis
+  # key prefix) and distinct Redis DB indexes.
+  txn-guard-bank-a: &txn-guard
+    <<: *service
+    image: scam-immune/txn-guard:dev
+    build: {context: .., dockerfile: services/txn_guard/Dockerfile}
+    environment: &txn-env
+      <<: *kafka-env
+      TXN_BANK_ID: bank_sbi
+      REDIS_URL: redis://redis:6379/1
+      HUB_URL: http://antibody-hub:8000
+      HUB_GATEWAY_SECRET: ${HUB_GATEWAY_SECRET:?set HUB_GATEWAY_SECRET in infra/.env (see .env.example)}
+      HOLD_DEADLINE_S: ${HOLD_DEADLINE_S:-120}
+      # The gateway forwards X-Principal-* but does not inject a per-service secret, so the
+      # services behind it trust those headers and are reachable only on the internal network.
+      TRUST_GATEWAY_HEADERS: "1"
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      antibody-hub: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "1.0", memory: 1G}}}
+
+  txn-guard-bank-b:
+    <<: *txn-guard
+    environment:
+      <<: *txn-env
+      TXN_BANK_ID: bank_hdfc
+      REDIS_URL: redis://redis:6379/2
+
+  antibody-hub:
+    <<: *service
+    image: scam-immune/antibody-hub:dev
+    build: {context: .., dockerfile: services/antibody_hub/Dockerfile}
+    environment:
+      <<: *kafka-env
+      HUB_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/hub
+      HUB_BANKS: bank_sbi,bank_hdfc
+      HUB_GATEWAY_SECRET: ${HUB_GATEWAY_SECRET:?set HUB_GATEWAY_SECRET}
+      HUB_METRICS_TOKEN: ${METRICS_TOKEN:-}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "0.5", memory: 512M}}}
+
+  evidence-ledger:
+    <<: *service
+    image: scam-immune/evidence-ledger:dev
+    build: {context: .., dockerfile: services/evidence_ledger/Dockerfile}
+    environment:
+      <<: *kafka-env
+      LEDGER_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ledger
+      LEDGER_SIGNING_KEY_FILE: /keys/ledger_signing_key.pem
+      LEDGER_RETIRED_PUBKEYS: ${LEDGER_RETIRED_PUBKEYS:-}
+      TRUST_GATEWAY_HEADERS: "1"
+      LEDGER_METRICS_TOKEN: ${METRICS_TOKEN:-}
+    volumes: ["ledger-keys:/keys:ro"]
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      ledger-keygen: {condition: service_completed_successfully}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "0.5", memory: 512M}}}
+
+  graph-twin:
+    <<: *service
+    image: scam-immune/graph-twin:dev
+    build: {context: .., dockerfile: services/graph_twin/Dockerfile}
+    environment:
+      <<: *kafka-env
+      GRAPH_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/graph
+      TRUST_GATEWAY_HEADERS: "1"
+      GRAPH_METRICS_TOKEN: ${METRICS_TOKEN:-}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "1.0", memory: 1G}}}
+
+  gateway:
+    <<: *service
+    image: scam-immune/gateway:dev
+    build: {context: .., dockerfile: services/gateway/Dockerfile}
+    environment:
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET (>= 32 bytes) in infra/.env}
+      GATEWAY_DEMO_USERS: "1"
+      GATEWAY_DEMO_PASSWORD: ${GATEWAY_DEMO_PASSWORD:?set GATEWAY_DEMO_PASSWORD in infra/.env}
+      GATEWAY_REDIS_URL: redis://redis:6379/0
+      GATEWAY_UPSTREAM_TXN: http://txn-guard-bank-a:8000
+      GATEWAY_UPSTREAM_GRAPH: http://graph-twin:8000
+      GATEWAY_UPSTREAM_LEDGER: http://evidence-ledger:8000
+      GATEWAY_UPSTREAM_CITIZEN: http://call-guard:8000
+      # GATEWAY_UPSTREAM_GEO is intentionally unset: no standalone service serves /geo (the
+      # geographic view is computed inside the demo-server); /api/geo answers 502 here.
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      redis: {condition: service_healthy}
+      txn-guard-bank-a: {condition: service_healthy}
+      evidence-ledger: {condition: service_healthy}
+      graph-twin: {condition: service_healthy}
+      call-guard: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "0.5", memory: 256M}}}
+
+  # Hero scenario replay. Starts idle; `make stack-hero` POSTs /scenarios/hero (one run at a time;
+  # a repeat needs a new seed because the same seed re-emits the same idempotency keys).
+  sim-engine:
+    <<: *service
+    image: scam-immune/sim-engine:dev
+    build: {context: .., dockerfile: services/sim_engine/Dockerfile}
+    environment:
+      <<: *kafka-env
+      SIM_SEED: ${SIM_SEED:-1}
+      SIM_SPEED: ${SIM_SPEED:-60}
+      SIM_CITIZENS: ${SIM_CITIZENS:-2000}
+    depends_on:
+      redpanda: {condition: service_healthy}
+      topics-init: {condition: service_completed_successfully}
+      call-guard: {condition: service_healthy}
+      txn-guard-bank-a: {condition: service_healthy}
+      txn-guard-bank-b: {condition: service_healthy}
+      evidence-ledger: {condition: service_healthy}
+      graph-twin: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "1.0", memory: 768M}}}
+
+  # The verified demo path packaged as a container: real service code in ONE process over an
+  # in-memory bus, serving the built console. Independent of the Kafka/Postgres services above.
+  demo-server:
+    <<: *service
+    image: scam-immune/demo-server:dev
+    build: {context: .., dockerfile: services/demo_server/Dockerfile}
+    environment:
+      DEMO_JWT_SECRET: ${DEMO_JWT_SECRET:?set DEMO_JWT_SECRET (>= 32 bytes) in infra/.env}
+      DEMO_STATIC_DIR: /app/console
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports: ["127.0.0.1:8080:8080"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      test: ["CMD", "python", "/usr/local/bin/healthcheck.py", "/api/health"]
       interval: 10s
-      timeout: 5s
+      timeout: 4s
       retries: 12
+      start_period: 30s
+    deploy: {resources: {limits: {cpus: "1.0", memory: 1G}}}
+
+  # ---------------------------------------------------------------- observability
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    configs:
+      - source: metrics_token
+        target: /etc/prometheus/metrics_token
     ports: ["127.0.0.1:9090:9090"]
-    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 6
+    restart: unless-stopped
+    logging: *logging
+    networks: [scam]
+    profiles: [observability]
+
   grafana:
     image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in infra/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes: ["grafana-data:/var/lib/grafana"]
     ports: ["127.0.0.1:3000:3000"]
-    depends_on: [prometheus]
+    depends_on:
+      prometheus: {condition: service_healthy}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 6
+    restart: unless-stopped
+    logging: *logging
+    networks: [scam]
+    profiles: [observability]
+
+configs:
+  metrics_token:
+    content: ${METRICS_TOKEN:-unset}
+
+networks:
+  scam:
+    driver: bridge
+
 volumes:
+  redpanda-data:
   pgdata:
-  neo4jdata:
+  redis-data:
+  ledger-keys:
+  prometheus-data:
+  grafana-data:

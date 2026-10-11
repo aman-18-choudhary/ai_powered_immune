@@ -1,6 +1,26 @@
+# Used by the `observability` profile. Services gate /metrics behind X-Metrics-Token (or gateway
+# trust), so the token is read from a file that compose renders from $METRICS_TOKEN (see
+# `configs:` in docker-compose.yml). `http_headers` needs Prometheus >= 2.55.
 global:
   scrape_interval: 15s
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  - job_name: call-guard            # /metrics is unauthenticated (internal network only)
+    static_configs:
+      - targets: ["call-guard:8000"]
+
+  - job_name: scam-services         # token-gated
+    http_headers:
+      X-Metrics-Token:
+        files: ["/etc/prometheus/metrics_token"]
+    static_configs:
+      - targets:
+          - txn-guard-bank-a:8000
+          - txn-guard-bank-b:8000
+          - antibody-hub:8000
+          - evidence-ledger:8000
+          - graph-twin:8000
