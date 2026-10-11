@@ -83,6 +83,7 @@ class TxnGuardService:
         clock: Callable[[], datetime] | None = None,
         antibodies: AntibodyLookup | None = None,
         max_pending_scan: int = MAX_PENDING_SCAN,
+        bank_id: str | None = None,
     ) -> None:
         self.scorer, self.history, self.holds = scorer, history, holds
         self.bus, self.idem = bus, idem
@@ -90,10 +91,16 @@ class TxnGuardService:
         self.antibodies = antibodies
         self.max_pending_scan = max_pending_scan
         self.antibody_scan_truncated = 0
+        self.bank_id = bank_id or None  # when set, consumers drop other banks' transactions
+        self.foreign_bank_events = 0
         self.hold_deadline = timedelta(seconds=hold_deadline_s)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self.handled = 0  # handler invocations completed (observability / tests)
+
+    def is_foreign(self, txn: Transaction) -> bool:
+        """True when a bank is configured and the transaction belongs to another bank."""
+        return self.bank_id is not None and txn.bank_id != self.bank_id
 
     def _lock(self, payer: str) -> asyncio.Lock:
         lock = self._locks.get(payer)

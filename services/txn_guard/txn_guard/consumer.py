@@ -10,8 +10,15 @@ from svckit.idempotency import IdempotencyStore
 
 from .service import TxnGuardService
 
-GROUP = "txn-guard"
+GROUP = "txn-guard"  # single-instance dev/test group (no bank configured)
+BANK_GROUP_PREFIX = "txn-guard"  # + "-" + bank id: one consumer group per bank instance
 ANTIBODY_GROUP_PREFIX = "txn-guard-antibody"  # + bank id: every bank instance sees every event
+
+
+def group_for(bank_id: str | None) -> str:
+    """Consumer group of the TXN_EVENTS / CALL_RISK consumers: per bank when a bank is configured
+    (every bank's instance then receives the whole topic and filters), else the shared ``GROUP``."""
+    return f"{BANK_GROUP_PREFIX}-{bank_id}" if bank_id else GROUP
 
 
 def run_consumers(
@@ -21,8 +28,18 @@ def run_consumers(
     max_retries: int = 3,
     backoff_s: float = 0.0,
     bank_id: str | None = None,
+    txn_topic: str = Topics.TXN_EVENTS,
 ) -> list[asyncio.Task[None]]:
+    """``service.bank_id`` (the configured TXN_BANK_ID) selects the per-bank consumer group and
+    the foreign-bank filter; ``bank_id`` only enables the antibody consumer. ``txn_topic`` allows a
+    per-bank topic (``TXN_EVENTS_TOPIC``); CALL_RISK always stays on the shared topic (cross-bank
+    by victim)."""
+    group = group_for(service.bank_id)
+
     async def on_txn(txn: Transaction) -> None:
+        if service.is_foreign(txn):  # acked (handler returns), counted, never scored/recorded
+            service.foreign_bank_events += 1
+            return
         await service.handle_txn(txn)
 
     async def on_risk(risk: CallRisk) -> None:
@@ -30,12 +47,10 @@ def run_consumers(
 
     tasks = [
         asyncio.create_task(
-            consume(
-                bus, Topics.TXN_EVENTS, GROUP, Transaction, on_txn, store, max_retries, backoff_s
-            )
+            consume(bus, txn_topic, group, Transaction, on_txn, store, max_retries, backoff_s)
         ),
         asyncio.create_task(
-            consume(bus, Topics.CALL_RISK, GROUP, CallRisk, on_risk, store, max_retries, backoff_s)
+            consume(bus, Topics.CALL_RISK, group, CallRisk, on_risk, store, max_retries, backoff_s)
         ),
     ]
     if bank_id and service.antibodies is not None:

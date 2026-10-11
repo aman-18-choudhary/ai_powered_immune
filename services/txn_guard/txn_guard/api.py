@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
+from scam_contracts.topics import Topics
 from svckit.bus import Bus
 from svckit.health import make_health_router
 from svckit.idempotency import IdempotencyStore, InMemoryIdempotencyStore
@@ -93,6 +94,7 @@ def create_app(
     bootstrap_fn: Callable[[], Awaitable[int]] | None = None,
     bank_id: str | None = None,
     rebootstrap_interval_s: float | None = None,
+    txn_topic: str | None = None,
 ) -> FastAPI:
     scorer = scorer or (service.scorer if service else Scorer())
     clock = clock or (lambda: datetime.now(UTC))
@@ -136,7 +138,13 @@ def create_app(
                 log.warning("startup step failed", exc_info=True)  # never crash on the hub
         if service is not None and bus is not None:
             tasks.extend(
-                run_consumers(bus, service, idem or InMemoryIdempotencyStore(), bank_id=bank_id)
+                run_consumers(
+                    bus,
+                    service,
+                    idem or InMemoryIdempotencyStore(),
+                    bank_id=bank_id,
+                    txn_topic=txn_topic or Topics.TXN_EVENTS,
+                )  # fmt: skip
             )
         if sweep_interval_s > 0:
             tasks.append(asyncio.create_task(sweeper()))
@@ -211,6 +219,7 @@ def create_app(
             f"txn_guard_holds_open {await holds.count_open()}\n"  # type: ignore[union-attr]
             "# TYPE txn_guard_holds_overdue gauge\n"
             f"txn_guard_holds_overdue {await holds.count_overdue()}\n"  # type: ignore[union-attr]
+            + _routing_metrics(service)
             + _antibody_metrics(service)
             + "# TYPE txn_guard_holds_overdue_total counter\n"
             f"txn_guard_holds_overdue_total {await holds.overdue_total()}\n"  # type: ignore[union-attr]
@@ -283,6 +292,15 @@ def create_app(
     return app
 
 
+def _routing_metrics(service: TxnGuardService | None) -> str:
+    if service is None:
+        return ""
+    return (
+        "# TYPE txn_guard_foreign_bank_events_total counter\n"
+        f"txn_guard_foreign_bank_events_total {service.foreign_bank_events}\n"
+    )
+
+
 def _antibody_metrics(service: TxnGuardService | None) -> str:
     look = getattr(service, "antibodies", None)
     if look is None:
@@ -342,6 +360,7 @@ def create_service_app() -> FastAPI:
         Scorer(), RedisHistoryStore(hist_client), holds, bus, idem, antibodies=lookup,
         pending=RedisPendingStore(aredis),
         hold_deadline_s=float(os.getenv("HOLD_DEADLINE_S", str(DEFAULT_HOLD_DEADLINE_S))),
+        bank_id=os.getenv("TXN_BANK_ID") or None,  # None: no filter, shared group (dev/test)
     )  # fmt: skip
     startup: list[Callable[[], Awaitable[Any]]] = []
     bootstrap_fn = None
@@ -379,6 +398,7 @@ def create_service_app() -> FastAPI:
         startup=startup,
         bootstrap_fn=bootstrap_fn,
         bank_id=bank_id,
+        txn_topic=os.getenv("TXN_EVENTS_TOPIC") or None,
     )
 
 

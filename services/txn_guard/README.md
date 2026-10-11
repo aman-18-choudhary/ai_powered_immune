@@ -147,7 +147,7 @@ booster ignores it: retrain with antibody-labelled data.
 ## Hold-and-verify service (Task 9)
 
 Modules: `service.py` (workflow), `consumer.py` (svckit `consume` on `txn.events` and
-`call.risk`, group `txn-guard`), `holds.py` (HoldStore protocol, in-memory + Redis, audit outbox),
+`call.risk`; group `txn-guard-<TXN_BANK_ID>`, or `txn-guard` when no bank is configured), `holds.py` (HoldStore protocol, in-memory + Redis, audit outbox),
 `redis_history.py` (Redis `HistoryStore`, atomic Lua update), `pending.py` (durable record of what
 was decided), `api.py` (HTTP).
 
@@ -197,7 +197,27 @@ What is and is not guaranteed:
   cross-partition reordering of different payers' events (irrelevant to per-payer features) or
   the scorer's own model quality.
 
-Env: `REDIS_URL` (required), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
+**Per-bank routing contract.** Each bank runs its own instance with a distinct `TXN_BANK_ID`:
+
+* *Consumer groups.* `txn.events` and `call.risk` are consumed with group `txn-guard-<bank_id>`
+  (antibodies: `txn-guard-antibody-<bank_id>`), so every bank instance receives the whole topic
+  instead of splitting it with the other bank. With `TXN_BANK_ID` unset (single-instance dev/test)
+  the shared group `txn-guard` is used and nothing is filtered.
+* *Transactions.* Producers either (a) publish all banks on `txn.events` keyed by `payer_token`
+  (default); each instance then drops any `Transaction` whose `bank_id != TXN_BANK_ID`, or
+  (b) publish per-bank topics and set `TXN_EVENTS_TOPIC` on each instance (default stays
+  `txn.events`; the filter still applies, so a mis-routed event is dropped, not scored). A dropped
+  event is acked (not retried, not dead-lettered), counted in
+  `txn_guard_foreign_bank_events_total`, and is never scored, held, recorded in history or
+  written to the pending store. Every `bank_id` that is produced needs a matching instance: an
+  event for a bank with no instance is not scored by anyone (for example the simulator's default
+  four banks against the two-instance compose stack; the hero scenario uses only the two
+  configured banks).
+* *Call risk.* `call.risk` is cross-bank by victim token (the payer identity domain), is always
+  read from the shared topic, and every instance consumes all of it under its own group, so each
+  bank sees every call risk for its own payers' history.
+
+Env: `REDIS_URL` (required), `TXN_BANK_ID`, `TXN_EVENTS_TOPIC` (optional), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
 consumers run), `HOLD_DEADLINE_S`, `AUDIT_DRAIN_INTERVAL_S`, `GATEWAY_SHARED_SECRET`,
 `TRUST_GATEWAY_HEADERS`, `METRICS_TOKEN`, `PORT`. Run: `python -m txn_guard`. The Scorer runs in a
 worker thread (`asyncio.to_thread`); measured consumer-path latency with fakeredis stores is

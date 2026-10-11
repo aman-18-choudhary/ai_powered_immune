@@ -169,8 +169,10 @@ services:
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "1.0", memory: 768M}}}
 
-  # Two bank instances of the same image. Distinct TXN_BANK_ID (antibody consumer group and Redis
-  # key prefix) and distinct Redis DB indexes.
+  # Two bank instances of the same image. Distinct TXN_BANK_ID (txn.events / call.risk / antibody
+  # consumer groups `txn-guard-<bank>`, Redis key prefix, and the filter that drops other banks'
+  # transactions) and distinct Redis DB indexes. Producers key txn.events by payer_token; set
+  # TXN_EVENTS_TOPIC per instance only when producers publish per-bank topics.
   txn-guard-bank-a: &txn-guard
     <<: *service
     image: scam-immune/txn-guard:dev
