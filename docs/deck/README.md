@@ -20,14 +20,14 @@ contact sheet: `preview.png`). Everything in it is simulator data and says so in
 | 11 | Three audiences | Command centre, analyst, citizen (4 languages), accessibility |
 | 12 | Scalability and ops | Partition keys, latency, compose profiles, what was not run |
 | 13 | Limits and next steps | Honest limits, pilot path |
-| 14 | Close | `make demo`, repository placeholder |
+| 14 | Close | `make demo`, repository URL (branch `build/implementation`) |
 
 ## Speaker notes policy
 
 Every slide has speaker notes with (1) the talk track and (2) the source file for each number or
 claim. Slide bodies are kept to about 40 words or fewer. The two challenge-statement figures on
-slide 2 are quoted from the brief and are not in the repository's files; the notes say so. Replace the
-repository URL placeholder on slide 14 before sharing.
+slide 2 are quoted from the brief and are not in the repository's files; the notes say so (see
+[../challenge-statement.md](../challenge-statement.md)). Slide 14 carries the repository URL.
 
 ## How it was generated
 

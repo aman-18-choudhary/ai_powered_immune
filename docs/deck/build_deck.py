@@ -622,7 +622,7 @@ s.card(MX, 3.35, 4.2, 0.9, fill=CARD, line=EMERALD, lw=1.25)
 s.text(MX + 0.3, 3.62, 3.7, 0.5, "make demo", 24, EMERALD, bold=True, mono=True, count=False)
 s.text(MX, 4.5, 7.0, 1.4, [
     "Open http://localhost:8080, choose Officer, press Play.",
-    "Repository: <repo URL placeholder>",
+    "github.com/aman-18-choudhary/ai_powered_immune (branch build/implementation)",
 ], 15, MUTED, count=False, after=8)
 s.text(MX, 5.9, 6.0, 0.6, "Thank you", 28, VIOLET, bold=True, count=False)
 s.chip(MX, 6.55, 2.35, 0.36, "SIMULATED DATA", AMBER, 10)
@@ -630,7 +630,7 @@ s.image("evidence-verified-1440x900-dark.png", 7.7, 1.5, 5.05, 3.2)
 s.notes(
     "Close: one detection, every bank protected, every action auditable. Everything is simulated and says so. "
     "make demo builds the console and serves it at http://localhost:8080 (README quickstart). A recorded hero run with captions is in docs/demo/ (no narration; the script is docs/demo-script.md). "
-    "Repository URL is a placeholder to fill in before sharing.\n\n"
+    "The repository is https://github.com/aman-18-choudhary/ai_powered_immune; the work is on branch build/implementation, main holds only the design docs.\n\n"
     "Sources: README.md (60-second quickstart), docs/demo-script.md, docs/demo/README.md."
 )
 
