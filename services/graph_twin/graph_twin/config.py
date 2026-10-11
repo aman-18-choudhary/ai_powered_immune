@@ -23,6 +23,8 @@ class Settings:
     relay_min_payers: int = 2  # GRAPH_RELAY_MIN_PAYERS: distinct payers of a pass-through account
     relay_min_inr: int = 10_000  # GRAPH_RELAY_MIN_INR: smaller pass-through flows are not relays
     min_flagged_share: float = 0.10  # GRAPH_MIN_FLAGGED_SHARE: flagged / distinct payers of a mule
+    retire_grace_s: float = 600.0  # GRAPH_RETIRE_GRACE_S: evidence must stay lost this long
+    retire_passes: int = 2  # GRAPH_RETIRE_PASSES: consecutive failing refresh passes
     min_mules: int = 2  # GRAPH_MIN_MULES: pass-through accounts per ring (antibody rings exempt)
     sink_min_share: float = 0.3  # GRAPH_SINK_MIN_SHARE: inflow share from ring relays of a cash-out
     device_max_accounts: int = 20  # GRAPH_DEVICE_MAX_ACCOUNTS: busier devices are ignored

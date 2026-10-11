@@ -7,11 +7,15 @@ ring; if it touches several rings they merge into the OLDEST (``first_detected``
 absorbed ids stay resolvable as aliases (``merged_from``).
 Status. ``new`` at creation; ``growing`` when core members, victims, inflow or edge aggregates
 increase; ``stable`` after ``stable_after_s`` of stream time without growth.
-Retirement. Every refresh re-runs the detection gates on the ring's current evidence. A ring that
-no longer passes (flags downgraded by a later decision, antibody revoked or expired) becomes
-``retired`` unless a member carries an active antibody: it stays resolvable by id (tombstone),
-leaves the default listing and takedown, and emits ``ring.retired`` once. It returns under the
-same id (``growing``) when a later pass finds the evidence again.
+Retirement. The gates (including the flagged share of each mule) are ADMISSION gates. A ring is
+retired only by LOSS OF EVIDENCE: fewer than ``min_signalled_payers`` distinct payers whose latest
+decision is flagged AND no member with an active antibody (flags cleared by later decisions,
+antibody revoked or expired). Dilution by unflagged payers never retires a ring. Hysteresis: the
+evidence must be missing on ``retire_passes`` consecutive refresh passes spanning at least
+``retire_grace_s`` of stream time; the episode's start is persisted with the ring. A retired ring
+stays resolvable by id (tombstone), leaves the default listing and takedown, and emits
+``ring.retired`` once. It returns under the same id (``growing``) immediately when a pass sees
+the evidence again.
 Version. Increments whenever the persisted snapshot (members, roles, statistics, status,
 ``edge_sig``) changes; it keys the ETags.
 """
@@ -24,7 +28,7 @@ import networkx as nx
 from .config import Settings
 from .graph import RelayIndex
 from .model import Ring
-from .rings import classify, gate, make_ring_id, ring_stats
+from .rings import classify, make_ring_id, ring_stats
 
 
 @dataclass
@@ -139,7 +143,8 @@ class RingRegistry:
         )
         self._keep_roles({**prev_roles, **cand.members}, surv.members, surv.core)
         surv.members = {n: r for n, r in surv.members.items() if n in surv.core}
-        if surv.status == "retired":  # the candidate passed the gates on its own: back again
+        surv.fail_since_us = surv.fail_passes = 0  # the candidate passed the gates itself
+        if surv.status == "retired":  # back again
             surv.status = "growing"
             surv.growth_us = now_us
         ring_stats(g, surv, self.cfg, now_us)
@@ -189,16 +194,26 @@ class RingRegistry:
         self._keep_roles(prev_roles, r.members, r.core)
         r.members = {n: role for n, role in r.members.items() if n in r.core}
         ring_stats(g, r, self.cfg, now_us)
-        passes = gate(r, self.cfg, g, now_us)
-        if r.status == "retired":
-            if passes:  # the evidence is back: same id, growing again
+        fail_before = (r.fail_since_us, r.fail_passes)
+        if r.antibody or r.victims_signalled >= self.cfg.min_signalled_payers:
+            r.fail_since_us = r.fail_passes = 0
+            if r.status == "retired":  # the evidence is back: same id, growing again
                 r.status = "growing"
                 r.growth_us = now_us
-        elif not passes and not r.antibody:
-            r.status = "retired"
+        elif r.status != "retired":
+            if r.fail_passes == 0:
+                r.fail_since_us = now_us
+            r.fail_passes = min(r.fail_passes + 1, self.cfg.retire_passes)
+            waited = now_us - r.fail_since_us >= int(self.cfg.retire_grace_s * 1_000_000)
+            if r.fail_passes >= self.cfg.retire_passes and waited:
+                r.status = "retired"
         self._index(r)
         self._finish(r, before, view, status, now_us, events)
-        return events, r.stats_view() != view or r.status != status
+        return events, (
+            r.stats_view() != view
+            or r.status != status
+            or (r.fail_since_us, r.fail_passes) != fail_before
+        )
 
     def tick(self, now_us: int) -> tuple[list[RingEvent], set[str], set[str]]:
         """Stream-time lifecycle: new/growing -> stable; expired rings leave the registry."""

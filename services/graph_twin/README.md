@@ -106,14 +106,22 @@ candidate needs a SIGNAL.
    `growing` when core, victims, inflow or members increase -> `stable` after
    `GRAPH_STABLE_AFTER_S` (1800) without growth (stream time = the injected clock). A ring leaves
    the registry when its last activity is older than the retention window.
-   **Retirement**: every refresh re-runs the gates on the ring's current evidence. A ring that no
-   longer passes (flags cleared by a later `decision_seq`, antibody revoked or expired) and has no
-   member with an active antibody becomes `retired`: it stays resolvable by id (tombstone,
-   persisted), leaves `GET /rings` unless `?status=retired`, is refused by simulate and
-   best-takedown (409), is not protected from eviction, and emits one `ring.retired` ledger entry.
-   It returns under the same id with status `growing` when the evidence comes back. A core member
-   that later stops looking like a relay (for example one late payment) keeps its role in a ring
-   that already exists; a fresh pass over the final graph would not admit it (see Limitations).
+   **Retirement**: the gates above (including the flagged share of each mule) decide ADMISSION
+   only. A ring is retired by loss of evidence, exactly: (a) fewer than 2 distinct payers whose
+   latest decision is `step_up` / `hold_verify` (`GRAPH_MIN_SIGNALLED_PAYERS`; all flags cleared by
+   later `decision_seq` values is the extreme case) AND no member with an active, non-revoked
+   antibody (revoked or expired antibodies no longer count). Dilution by unflagged payers is NOT a
+   cause: a campaign whose later victims the model allowed stays active as long as >= 2 flagged
+   payers remain. Hysteresis: the evidence must be missing on `GRAPH_RETIRE_PASSES` (2) consecutive
+   refresh passes spanning at least `GRAPH_RETIRE_GRACE_S` (600 s) of stream time; the episode
+   start is stored with the ring, so a restart does not reset it. A retired ring stays
+   resolvable by id (tombstone, persisted), leaves `GET /rings` unless `?status=retired`, is
+   refused by simulate and best-takedown (409), is not protected from eviction, and emits one
+   `ring.retired` ledger entry. It returns under the same id with status `growing` immediately
+   when a pass sees the evidence again, so a flapping signal produces at most one retirement per
+   grace window. A core member that later stops looking like a relay (for example one late
+   payment) keeps its role in a ring that already exists; a fresh pass over the final graph would
+   not admit it (see Limitations).
 9. **Incremental**: a detection pass starts from the touched nodes, finds nearby seeds through the
    relay index and re-expands those plus the cores of the rings it touches. Cost is O(touched
    neighbourhood), not O(graph) (6,000-payer merchant: detect 8 ms, event + detect 1.4 ms).
@@ -205,6 +213,7 @@ between the response and the background write. Dedupe keys: `detected:<ring>`, `
 | Variable | Default | |
 |---|---|---|
 | `GRAPH_DATABASE_URL` | `sqlite://` | SQLAlchemy URL (Postgres: `postgresql+psycopg2://...`) |
+| `GRAPH_RETIRE_GRACE_S`, `_RETIRE_PASSES` | 600, 2 | retirement hysteresis (see Detection, step 8) |
 | `KAFKA_BOOTSTRAP` | unset | set to start the three consumers on KafkaBus (in-memory bus otherwise) |
 | `GRAPH_GATEWAY_SECRET`, `TRUST_GATEWAY_HEADERS`, `GRAPH_METRICS_TOKEN` | unset | trust and metrics gates |
 | `GRAPH_CREATE_SCHEMA` | `1` | `0` after `python -m graph_twin.migrate` |
@@ -219,6 +228,20 @@ between the response and the background write. Dedupe keys: `detected:<ring>`, `
 | `GRAPH_MAX_RINGS`, `_MAX_DIRTY`, `_MAX_RING_NODES`, `_FLOW_VICTIM_CAP`, `_FLOW_TIMEOUT_S`, `_HEAVY_CONCURRENCY`, `_HEAVY_QUEUE`, `_TAKEDOWN_POOL` | 1000, 100000, 2000, 500, 5, 2, 4, 40 | bounds for rings, work queue, flows and the greedy pool |
 | `GRAPH_DETECT_INTERVAL_S`, `_MAINTENANCE_INTERVAL_S`, `_STABLE_AFTER_S`, `_FUTURE_SKEW_S` | 0.2, 60, 1800, 3600 | timing |
 | `LEDGER_DRAIN_CONCURRENCY`, `LEDGER_EMIT_TIMEOUT_S`, `LEDGER_BREAKER_COOLDOWN_S` | 8, 0.5, 10 | `svckit.Drainer` |
+
+## Schema migration (existing Postgres databases)
+
+The schema is created with `create_all` only; there is no in-place migration. The `bank` columns
+were widened from 64 to 128 characters (the longest bank id the twin accepts). A database created
+before that change needs, once:
+
+```sql
+ALTER TABLE gt_txns ALTER COLUMN bank TYPE varchar(128);
+ALTER TABLE gt_nodes ALTER COLUMN bank TYPE varchar(128);
+```
+
+New ring snapshot fields (`fail_since_us`, `fail_passes`) live inside the JSON body of
+`gt_rings`; older snapshots load with zeros.
 
 ## Bounds and eviction
 
@@ -317,9 +340,12 @@ about 8 statements per event.
   (this also delays detection), and a long-lived account that mixes legitimate and mule traffic
   can look like a non-relay.
 * Rings need >= 2 flagged payers (or an antibody) and >= 2 mules whose flagged payer share is at
-  least `GRAPH_MIN_FLAGGED_SHARE`; a campaign with one flagged victim stays invisible, and a mule
-  that mixes a few victims into heavy legitimate traffic (share below 10%) is not recognised
-  without an antibody. Accounts without `payer_account_ref` cannot be linked as mules.
+  least `GRAPH_MIN_FLAGGED_SHARE` to be ADMITTED; a campaign with one flagged victim stays
+  invisible, and a mule that mixes a few victims into heavy legitimate traffic (share below 10%)
+  is not recognised without an antibody. Once admitted, a ring is not retired by dilution, so a
+  ring that stays flagged by >= 2 old payers remains listed even when the model allows all later
+  victims; it is retired only when evidence is lost for the grace period. A retired ring that
+  keeps receiving unflagged payments is not re-admitted until two flagged payers return. Accounts without `payer_account_ref` cannot be linked as mules.
 * Relay status is an aggregate over the whole retained history of an account. A mule that makes
   one payment hours after its sweeps stops being a relay: a ring that already contains it keeps
   it, a fresh pass over the same final graph would not admit it. The registry therefore depends

@@ -34,6 +34,8 @@ class Ring:
     score: float = 0.0
     confidence: float = 0.0
     merged_from: tuple[str, ...] = ()
+    fail_since_us: int = 0  # first refresh pass of the current loss-of-evidence episode
+    fail_passes: int = 0  # consecutive refresh passes without evidence (capped at the setting)
     edge_sig: str = ""  # digest of the aggregated in-edges of the members (drives the ETag)
 
     def roles_count(self) -> dict[str, int]:
@@ -65,12 +67,16 @@ class Ring:
             "confidence": round(self.confidence, 4),
             "merged_from": list(self.merged_from),
             "edge_sig": self.edge_sig,
+            "fail_since_us": self.fail_since_us,
+            "fail_passes": self.fail_passes,
         }
 
     def stats_view(self) -> tuple[Any, ...]:
         """What counts as a change for the version counter (excludes timestamps of the run)."""
         s = self.snapshot()
         s.pop("growth_us")
+        s.pop("fail_since_us")
+        s.pop("fail_passes")
         return tuple(sorted((k, repr(v)) for k, v in s.items()))
 
     @classmethod
@@ -84,7 +90,8 @@ class Ring:
             last_seen_us=s["last_seen_us"], banks=tuple(s["banks"]), antibody=s["antibody"],
             shared_device=s["shared_device"], passthrough_share=s["passthrough_share"],
             score=s["score"], confidence=s["confidence"], merged_from=tuple(s["merged_from"]),
-            edge_sig=s.get("edge_sig", ""),
+            edge_sig=s.get("edge_sig", ""), fail_since_us=s.get("fail_since_us", 0),
+            fail_passes=s.get("fail_passes", 0),
         )  # fmt: skip
 
 
