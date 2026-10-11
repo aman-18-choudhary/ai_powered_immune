@@ -12,9 +12,32 @@ repository. This page paraphrases the brief briefly; it is not a verbatim reprod
 * Digital-arrest scam losses were over Rs 1,776 crore in the first nine months of 2024.
 * The RBI Annual Report 2025 flagged record seizures of fake Indian currency notes (FICN).
 
-The brief lists five example problem areas. Their wording is **not reproduced here**: the text
-of those five items was not available in this repository when this page was written, and they
-are not guessed. Paste them from the brief if this page is used outside the repository.
+The brief lists five example problem areas (stated as illustrative only):
+
+1. **Digital Arrest Scam Detection and Alerting.** A real-time classifier over call-flow sequences,
+   number-spoofing signatures, script templates and video-call metadata that flags active scam
+   sessions to telecom providers and potential victims before a financial transfer occurs, with
+   automated MHA alert generation.
+2. **Counterfeit Currency Identification Agent.** Computer vision deployable on mobile devices,
+   bank counting machines and point-of-sale terminals (microprint, security thread, serial-number
+   patterns, UV feature simulation) across all denominations. *Deliberately not built here; see the
+   mapping table below.*
+3. **Fraud Network Graph Intelligence.** A graph agent over transaction metadata, call records,
+   device fingerprints and account linkages that maps coordinated fraud campaigns, clustering
+   victim reports, scammer infrastructure and money-mule networks into intelligence packages that
+   link across jurisdictions and can be submitted as court-admissible evidence.
+4. **Geospatial Crime Pattern Intelligence.** A geospatial layer mapping fraud complaint
+   locations, counterfeit seizure points and cybercrime hotspots for patrol prioritisation,
+   resource deployment and inter-district intelligence sharing through a command-centre interface.
+5. **Citizen Fraud Shield (multi-channel).** Conversational AI via WhatsApp, IVR and a mobile app
+   that walks citizens through real-time fraud-risk assessment of suspicious calls, payment
+   requests or messages, with instant verdicts, guided reporting and advisory in 12 regional
+   languages.
+
+Suggested technologies named in the brief: computer vision, graph AI and network analysis,
+NLP/LLMs for scam-script classification, geospatial intelligence, speech AI for voice spoofing,
+and agentic AI for multi-source fusion. Expected deliverables: working prototype, architecture
+diagram, presentation deck, demo video.
 
 ## Evaluation focus (as stated in the brief)
 
