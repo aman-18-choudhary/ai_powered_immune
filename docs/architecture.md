@@ -51,8 +51,10 @@ flowchart TB
     HUB["antibody-hub"]
     LED["evidence-ledger<br/>Ed25519 key in volume"]
     GT["graph-twin"]
+    GEO["geo-intel<br/>complaint hotspots"]
+    CS["citizen-shield<br/>message checker, reports"]
     K[("Redpanda")]
-    PG[("Postgres<br/>hub, ledger, graph DBs")]
+    PG[("Postgres<br/>hub, ledger, graph, geo, citizen DBs")]
     R[("Redis")]
   end
   SIM -- "call.events, txn.events" --> K
@@ -68,11 +70,17 @@ flowchart TB
   HUB --- PG
   LED --- PG
   GT --- PG
+  GEO --- PG
+  CS --- PG
+  CS -- "complaints" --> K
+  K -- "complaints" --> GEO
+  CS -- "POST /assess" --> CG
   CG & TA & TB & GW --- R
   GW -- "/api/txn" --> TA
   GW -- "/api/graph" --> GT
   GW -- "/api/ledger" --> LED
-  GW -- "/api/citizen" --> CG
+  GW -- "/api/citizen" --> CS
+  GW -- "/api/geo" --> GEO
 ```
 
 Notes on the wiring, all from `infra/docker-compose.yml`:
@@ -241,7 +249,7 @@ separate from the database; rotate with `LEDGER_RETIRED_PUBKEYS`.
 | Ledger content | PII guard, quarantine entries, 4 KiB payload cap | `services/evidence_ledger/README.md` (PII guard) |
 | Graph poisoning | gates reduce accidental rings, not deliberate injection; producers must be authenticated | `services/graph_twin/README.md` (Threat model) |
 | Demo server | origin-checked WebSocket, capped bodies, log redaction, isolated `-I -S` verifier with timeout and output cap | `services/demo_server/README.md` |
-| Citizen assistant | scored in memory by the real call-guard scorer, not stored, logged or echoed; static advice texts in en/hi/ta/bn; no LLM | `services/demo_server/README.md` (Citizen assistant) |
+| Citizen assistant | in the demo-server: scored in memory by the real call-guard scorer; in the stack the standalone `citizen-shield` service calls call-guard over HTTP and keeps only keyed-hash anonymous reports; not stored, logged or echoed; static advice texts in en/hi/ta/bn; no LLM | `services/demo_server/README.md` (Citizen assistant) |
 
 ## 9. Decisions log
 
