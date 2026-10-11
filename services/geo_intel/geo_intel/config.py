@@ -16,9 +16,8 @@ class Settings:
     z_threshold: float = 3.0  # GEO_Z_THRESHOLD
     min_count: int = 3  # GEO_MIN_COUNT: a hotspot needs at least this many in the window
     min_rate: float = 0.5  # GEO_MIN_RATE: floor of the baseline rate per window (Poisson mean)
-    future_skew_s: float = (
-        3600.0  # GEO_FUTURE_SKEW_S: events further ahead of the clock are dropped
-    )
+    # GEO_FUTURE_SKEW_S: events further ahead of the clock are dropped (never move `as_of`)
+    future_skew_s: float = 300.0
     default_limit: int = 100  # GEO_DEFAULT_LIMIT
     max_limit: int = 500  # GEO_MAX_LIMIT
     max_body_bytes: int = 16_384  # GEO_MAX_BODY_BYTES
@@ -34,6 +33,12 @@ class Settings:
             raise ValueError("invalid geo-intel settings")
         if not 1 <= self.default_limit <= self.max_limit:
             raise ValueError("invalid geo-intel settings")
+        # the baseline (B windows) plus the current window must fit the retention: clamp the cap
+        fit = self.retention_s / (self.baseline_windows + 1)
+        if self.max_window_s > fit:
+            object.__setattr__(self, "max_window_s", fit)
+        if self.window_s > self.max_window_s:
+            raise ValueError("GEO_WINDOW_S does not fit GEO_RETENTION_DAYS with the baseline")
 
     @property
     def retention_s(self) -> float:

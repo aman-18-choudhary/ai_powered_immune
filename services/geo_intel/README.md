@@ -37,19 +37,21 @@ HTTP (FastAPI, gateway trust) ── /hotspots /points /cities ─────�
   (default 6) windows before it, floored at `GEO_MIN_RATE` (0.5). `z = (count - lambda) /
   sqrt(lambda)`; a hotspot needs `z >= 3.0` and `count >= 3`. `trend` compares the last two
   windows. Cash-out points are listed separately (retained total and current-window count).
-* **`as_of`.** Defaults to the newest accepted complaint time (so a replayed simulation reads as of
-  its own clock, and output is a pure function of stored data); `?at=` (timezone-aware ISO-8601)
-  replays an earlier moment. The response carries `as_of`, so a client can see how stale it is.
+* **`as_of`.** Defaults to `min(newest accepted complaint time, service clock)`: a replayed
+  simulation in the past reads as of its own clock, while a complaint dated slightly ahead (within
+  `GEO_FUTURE_SKEW_S`, default 300 s) is stored but cannot move the read time and hide the current
+  window. `?at=` (timezone-aware ISO-8601, 1970-01-01 to 2100-01-01, else 422) replays another
+  moment. The response carries `as_of`, so a client can see how stale it is.
 
 ## API (all JSON; everything except the probes needs gateway trust and role officer/analyst/admin)
 
 | Route | Notes |
 |---|---|
-| `GET /hotspots?window=1h&at=` | `window` is `<n>[smhd]`, 60 s to 7 d (default `GEO_WINDOW_S`); cells sorted hotspots first, then by z, count, city code; weak `ETag`, `If-None-Match` gives 304 |
+| `GET /hotspots?window=1h&at=` | `window` is `<n>[smhd]`, 60 s up to `retention / (baseline_windows + 1)` (about 4.3 d with the defaults; the cap is clamped at startup so the baseline always fits the retention; default `GEO_WINDOW_S`); cells sorted hotspots first, then by z, count, city code; weak `ETag`, `If-None-Match` gives 304 |
 | `GET /points?since=&before=&limit=` | newest first; `before` is the previous page's `next_before` cursor; `limit` 1..`GEO_MAX_LIMIT` (500, larger values are clamped, 0 is 422); items omit `complaint_id` and `case_ref` |
 | `GET /cities` | the static table with codes and weights |
 | `GET /healthz`, `/readyz` | liveness; readiness pings the database (503 when it fails) |
-| `GET /metrics` | `GEO_METRICS_TOKEN` (`X-Metrics-Token`) or gateway trust with a reader role; counters for ingested, duplicates, dropped (old, future, location), pruned, store errors and the row gauge |
+| `GET /metrics` | `GEO_METRICS_TOKEN` (`X-Metrics-Token`) or gateway trust with role `admin` (other roles 403, no principal 401); counters for ingested, duplicates, dropped (old, future, location), pruned, store errors and the row gauge |
 
 Through the gateway these are `/api/geo/hotspots`, `/api/geo/points`, `/api/geo/cities`.
 
@@ -58,7 +60,7 @@ Through the gateway these are `/api/geo/hotspots`, `/api/geo/points`, `/api/geo/
 `GEO_DATABASE_URL` (default in-memory SQLite), `GEO_CREATE_SCHEMA`, `KAFKA_BOOTSTRAP` (the consumer
 runs only when set), `GEO_GATEWAY_SECRET` or `TRUST_GATEWAY_HEADERS=1`, `GEO_METRICS_TOKEN`,
 `GEO_RETENTION_DAYS` (30), `GEO_WINDOW_S` (3600), `GEO_BASELINE_WINDOWS` (6), `GEO_Z_THRESHOLD`
-(3.0), `GEO_MIN_COUNT` (3), `GEO_MIN_RATE` (0.5), `GEO_FUTURE_SKEW_S` (3600), `GEO_MAX_LIMIT`
+(3.0), `GEO_MIN_COUNT` (3), `GEO_MIN_RATE` (0.5), `GEO_FUTURE_SKEW_S` (300), `GEO_MAX_LIMIT`
 (500), `GEO_MAX_BODY_BYTES` (16384), `GEO_PRUNE_INTERVAL_S`, `GEO_MAX_RETRIES`. Run:
 `python -m geo_intel` (uvicorn, `access_log=False`).
 
@@ -66,9 +68,11 @@ runs only when set), `GEO_GATEWAY_SECRET` or `TRUST_GATEWAY_HEADERS=1`, `GEO_MET
 
 * **Idempotent ingestion.** The unique `complaint_id` makes redelivery a no-op; for a repeated id
   with different content the first writer wins (the later one is counted as a duplicate).
-* **Out-of-order tolerant.** Events are stored by event time; arrival order does not change any
-  aggregate (tested). An event older than the retention window behind the newest accepted one, or
-  more than `GEO_FUTURE_SKEW_S` ahead of the service clock, is dropped and counted, never retried.
+* **Out-of-order tolerant.** Events are stored by event time, so for the events that are accepted
+  the arrival order does not change any aggregate (tested). Which events are accepted does depend
+  on arrival order and the clock: an event older than the retention window behind the newest
+  accepted one (`dropped_old`), or more than `GEO_FUTURE_SKEW_S` ahead of the service clock
+  (`dropped_future`), is dropped and counted, never retried.
 * **Bounded storage.** Rows older than the retention window (relative to the newest accepted
   event) are pruned in batches; reads aggregate in SQL, so response size is bounded by the number
   of table cities (27) and the page limit.

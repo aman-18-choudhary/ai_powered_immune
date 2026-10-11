@@ -157,16 +157,24 @@ def _parse_window(raw: str | None, cfg: Settings) -> float:
     return float(secs)
 
 
+MIN_TS = datetime(1970, 1, 1, tzinfo=UTC)
+MAX_TS = datetime(2100, 1, 1, tzinfo=UTC)
+
+
 def _parse_ts(raw: str | None, name: str) -> datetime | None:
+    """Timezone-aware ISO-8601 within 1970-01-01..2100-01-01 (UTC); anything else is a 422."""
     if raw is None:
         return None
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+        if dt.tzinfo is None or dt.utcoffset() is None:
+            raise HTTPException(422, f"{name} must carry a timezone")
+        out = dt.astimezone(UTC)
+    except (ValueError, OverflowError, OSError):
         raise HTTPException(422, f"{name} must be an ISO-8601 timestamp") from None
-    if dt.tzinfo is None or dt.utcoffset() is None:
-        raise HTTPException(422, f"{name} must carry a timezone")
-    return dt.astimezone(UTC)
+    if not MIN_TS <= out <= MAX_TS:
+        raise HTTPException(422, f"{name} out of range")
+    return out
 
 
 def create_app(
@@ -260,8 +268,10 @@ def create_app(
     async def as_of_for(at: datetime | None) -> datetime:
         if at is not None:
             return at
+        now = aware(service.clock())
         mark = await db(service.watermark)
-        return mark if mark is not None else aware(service.clock())
+        # the watermark can sit up to the skew ahead of the clock: it never moves the read time
+        return min(mark, now) if mark is not None else now
 
     @app.get("/hotspots")
     async def hotspots(
@@ -326,7 +336,11 @@ def create_app(
         if not ok:
             if not _trusted(request):
                 raise HTTPException(401, "metrics require GEO_METRICS_TOKEN or gateway trust")
-            if request.headers.get("x-principal-role", "") not in READERS:
+            if not request.headers.get("x-principal-role") or not request.headers.get(
+                "x-principal-sub"
+            ):
+                raise HTTPException(401, "missing principal")
+            if request.headers.get("x-principal-role", "").strip() != "admin":
                 raise HTTPException(403, "role not permitted")
         try:
             rows = await asyncio.to_thread(store.count)

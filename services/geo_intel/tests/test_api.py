@@ -214,11 +214,15 @@ async def test_metrics_are_gated(make_app, monkeypatch):
     assert "geo_intel_rows 2" in r.text and weird.status_code == 401
 
 
-async def test_metrics_via_gateway_trust_needs_a_reader_role(make_app):
+async def test_metrics_via_gateway_trust_is_admin_only(make_app):
     async with client(make_app()) as c:
-        assert (await c.get("/metrics", headers=HDR)).status_code == 200
-        r = await c.get("/metrics", headers={**HDR, "X-Principal-Role": "citizen"})
-    assert r.status_code == 403
+        for role in ("analyst", "officer", "citizen"):
+            r = await c.get("/metrics", headers={**HDR, "X-Principal-Role": role})
+            assert r.status_code == 403, role
+        assert (
+            await c.get("/metrics", headers={**HDR, "X-Principal-Role": "admin"})
+        ).status_code == 200
+        assert (await c.get("/metrics")).status_code == 401  # no principal at all
 
 
 # ------------------------------------------------------------------ failure injection / loop
@@ -286,3 +290,74 @@ def test_settings_reject_nonsense():
     with pytest.raises(ValueError):
         Settings(window_s=10, min_window_s=60)
     assert create_app and GeoStore
+
+
+# ------------------------------------------------------------------- fix round 1
+@pytest.mark.parametrize(
+    "at",
+    [
+        "0001-01-01T00:00:00Z",
+        "0001-01-01T00:00:00+14:00",
+        "9999-12-31T23:59:59-14:00",
+        "1969-12-31T23:59:59Z",
+        "2100-01-01T00:00:01Z",
+        "2026-03-10T12:00:00",
+        "garbage",
+        "0000-00-00T00:00:00Z",
+    ],
+)
+async def test_extreme_or_malformed_timestamps_are_422_never_500(make_app, at):
+    async with client(make_app()) as c:
+        for path in ("/hotspots", "/points"):
+            key = "at" if path == "/hotspots" else "since"
+            r = await c.get(path, params={key: at}, headers=HDR)
+            assert r.status_code == 422, (path, at, r.status_code)
+            assert at not in r.text
+
+
+async def test_boundary_timestamps_are_accepted(make_app):
+    async with client(make_app()) as c:
+        a = await c.get("/hotspots", params={"at": "1970-01-01T00:00:00Z"}, headers=HDR)
+        b = await c.get(
+            "/hotspots", params={"at": "2099-12-31T23:59:59Z", "window": "1d"}, headers=HDR
+        )
+    assert a.status_code == 200 and b.status_code == 200
+
+
+async def test_future_dated_complaint_within_skew_cannot_move_as_of(make_app):
+    app = make_app()  # clock = T0 = 12:00
+    seed(app, [complaint(T0 - timedelta(minutes=m), "MUM") for m in (1, 2, 3, 4, 5)])
+    seed(app, [complaint(T0 + timedelta(minutes=4), "DEL")])  # inside the 300 s default skew
+    assert app.state.service.counters["dropped_future"] == 0
+    async with client(app) as c:
+        body = (await c.get("/hotspots?window=1h", headers=HDR)).json()
+    assert body["as_of"] == T0.isoformat()
+    assert {x["city_code"]: x["count"] for x in body["hotspots"]}["MUM"] == 5
+
+
+async def test_one_hour_skew_setting_still_cannot_hide_hotspots(make_app):
+    app = make_app(settings=Settings(future_skew_s=3600, min_count=3))
+    seed(app, [complaint(T0 - timedelta(minutes=m), "MUM") for m in (1, 2, 3, 4, 5)])
+    seed(app, [complaint(T0 + timedelta(minutes=59), "DEL")])
+    async with client(app) as c:
+        body = (await c.get("/hotspots?window=1h", headers=HDR)).json()
+    assert body["as_of"] == T0.isoformat()
+    assert {x["city_code"]: x["count"] for x in body["hotspots"]}["MUM"] == 5
+
+
+def test_default_future_skew_is_five_minutes():
+    assert Settings().future_skew_s == 300.0
+
+
+def test_window_cap_is_clamped_so_the_baseline_fits_the_retention():
+    cfg = Settings(retention_days=30, baseline_windows=6)
+    assert cfg.max_window_s * (cfg.baseline_windows + 1) <= cfg.retention_s
+    with pytest.raises(ValueError):
+        Settings(retention_days=1, baseline_windows=6, window_s=20_000)  # window too big
+
+
+async def test_window_above_the_clamped_cap_is_422(make_app):
+    app = make_app(settings=Settings(retention_days=7, baseline_windows=6))
+    async with client(app) as c:
+        assert (await c.get("/hotspots?window=1d", headers=HDR)).status_code == 200
+        assert (await c.get("/hotspots?window=2d", headers=HDR)).status_code == 422
