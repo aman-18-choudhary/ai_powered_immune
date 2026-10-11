@@ -68,3 +68,22 @@ def normalise_for_scoring(message: str) -> tuple[str, bool]:
     if len(text) > MAX_CHARS:
         text, truncated = text[:MAX_CHARS], True
     return text, truncated
+
+
+COVERED_SCRIPTS = frozenset({"LATIN", "DEVANAGARI"})  # scripts call-guard's rules were written for
+PARTIAL_SHARE = 0.20  # uncovered letters above this share of all letters => partial coverage
+
+
+def script_coverage(text: str) -> str:
+    """``"partial"`` when more than 20% of the letters are in a script call-guard has no rules for
+    (Tamil, Bengali, Gujarati, Telugu, Arabic, Han, Cyrillic, ...), else ``"full"``. Text without
+    letters (digits, symbols, emoji) is ``"full"``. Run on the NFKC text."""
+    letters = uncovered = 0
+    for ch in text:
+        if not unicodedata.category(ch).startswith("L"):
+            continue
+        letters += 1
+        script = unicodedata.name(ch, "UNKNOWN").split(" ", 1)[0]
+        if script not in COVERED_SCRIPTS:
+            uncovered += 1
+    return "partial" if letters and uncovered / letters > PARTIAL_SHARE else "full"

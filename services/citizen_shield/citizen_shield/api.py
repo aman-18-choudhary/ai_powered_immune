@@ -374,7 +374,11 @@ def create_app(
         if not ok:
             if not _trusted(request):
                 raise HTTPException(401, "metrics require CITIZEN_METRICS_TOKEN or gateway trust")
-            if request.headers.get("x-principal-role", "") not in ROLES:
+            if not request.headers.get("x-principal-role") or not request.headers.get(
+                "x-principal-sub"
+            ):
+                raise HTTPException(401, "missing principal")
+            if request.headers.get("x-principal-role", "").strip() != "admin":
                 raise HTTPException(403, "role not permitted")
         lines: list[str] = []
         for k, v in sorted(counters.items()):

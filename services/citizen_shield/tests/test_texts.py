@@ -43,10 +43,12 @@ def test_every_call_guard_reason_code_has_text_in_every_language():
 
 
 def test_no_stale_codes_and_all_tables_complete():
-    assert set(REASON_TEXT) <= guard_codes()  # a removed rule leaves no orphan text
+    assert (
+        set(REASON_TEXT) - {"COVERAGE_PARTIAL"} <= guard_codes()
+    )  # a removed rule leaves no orphan text
     for table in (GENERIC_REASON, TOO_LONG_NOTICE, LANGUAGE_NAMES):
         assert set(table) == set(SUPPORTED) and all(v.strip() for v in table.values())
-    for key in ("likely_scam", "suspicious", "safe", "no_input", "degraded"):
+    for key in ("likely_scam", "suspicious", "safe", "no_input", "degraded", "partial_coverage"):
         for lang in SUPPORTED:
             steps = ADVICE[key][lang]
             assert steps and all(s.strip() for s in steps)

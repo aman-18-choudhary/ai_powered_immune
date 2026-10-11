@@ -29,9 +29,18 @@ POST /report ─> keyed hash + category (+ city/state code) ─> cs_reports ─>
   `label: suspicious`, `uncertain: true`, `degraded: true`, `model_version: "unavailable"`, no
   reasons and advice key `degraded` ("could not be checked; do not share an OTP, PIN or password;
   verify with a number you look up; call 1930"). The numeric `score` is the 0.35 threshold as a
-  placeholder so existing clients that require a number keep working: it is not a model output;
-  read `degraded`. After 5 consecutive failures calls are skipped for 10 s (breaker) so a dead
+  placeholder so existing clients that require a number keep working: it is not a model output
+  (`score_is_placeholder: true`); a client must read `degraded` and not display a percentage. After 5 consecutive failures calls are skipped for 10 s (breaker) so a dead
   scorer does not add its timeout to each request. A `safe` verdict is never produced by a failure.
+* **Script coverage.** call-guard's rules cover English, Hinglish and Devanagari. When more than
+  20% of the (NFKC) message's letters are in another script (Tamil, Bengali, Gujarati, Telugu,
+  Arabic, Han, Cyrillic, ...), the verdict carries `coverage: "partial"`, `uncertain: true`, is
+  never `safe` (a would-be `safe` becomes `suspicious` with `score_is_placeholder: true`, advice
+  key `partial_coverage`), the neutral reason `COVERAGE_PARTIAL` replaces "no scam cues", and the
+  first advice step says the language is not fully checked (do not share OTP/PIN, do not pay, call
+  1930). Benign Tamil or Bengali text therefore also comes back `suspicious`: an accepted
+  tradeoff, because the scorer has no basis to call it safe. Numbers, symbols and emoji have no
+  letters and stay `full`.
 * **Input handling.** Strip, cap the raw input at 4,000 characters, NFKC-normalise (full-width
   letters and digits, ligatures), strip, cap again; more than 4,000 characters scores the first
   4,000 and sets `uncertain` with a notice as the first advice step. Blank or format-characters-only
@@ -63,13 +72,13 @@ POST /report ─> keyed hash + category (+ city/state code) ─> cs_reports ─>
 | `POST /report {...}` | `{accepted, report_id, duplicate, emitted}` |
 | `GET /languages` | `{default, supported[{code,name}]}` |
 | `GET /healthz`, `/readyz` | readiness follows the report database only (the service answers in degraded mode without call-guard); the body shows the breaker state |
-| `GET /metrics` | `CITIZEN_METRICS_TOKEN` or gateway trust with a reader role: verdict counts by label, degraded, reports, duplicates, emit failures, rate-limited, scorer calls/failures/skipped, limiter errors |
+| `GET /metrics` | `CITIZEN_METRICS_TOKEN`, or gateway trust with role `admin` (other roles 403, no principal 401): verdict counts by label, degraded, reports, duplicates, emit failures, rate-limited, scorer calls/failures/skipped, limiter errors |
 
 Through the gateway: `/api/citizen/assess`, `/api/citizen/report`, `/api/citizen/languages`.
 
 ## Configuration
 
-`CALL_GUARD_URL`, `CITIZEN_CALL_GUARD_TIMEOUT_S` (1.5), `CITIZEN_BREAKER_FAILURES` (5),
+`CALL_GUARD_URL`, `CITIZEN_CALL_GUARD_TIMEOUT_S` (1.5; the TOTAL deadline of one scorer call, response capped at 64 KiB), `CITIZEN_BREAKER_FAILURES` (5),
 `CITIZEN_BREAKER_OPEN_S` (10), `CITIZEN_DATABASE_URL` (default in-memory SQLite),
 `CITIZEN_REPORT_KEY` (required by `create_service_app`, >= 16 bytes), `KAFKA_BOOTSTRAP` (report
 events are published only when set), `CITIZEN_GATEWAY_SECRET` or `TRUST_GATEWAY_HEADERS=1`,
@@ -108,4 +117,6 @@ that no orphan code remains.
 * NFKC removes full-width and compatibility tricks, not homoglyphs (Cyrillic look-alikes), zero-width
   characters inside words or leetspeak.
 * Localised texts are static and have not been reviewed by native speakers; the helpline number (1930) and portal named in them are India-specific.
+* Coverage is by script, not by language: Hinglish in Latin letters is `full` but only as well as
+  the rules know it, and a scam in a Latin-script language the rules do not know scores `safe`.
 * The breaker and rate limiter are per process. Not load-tested.

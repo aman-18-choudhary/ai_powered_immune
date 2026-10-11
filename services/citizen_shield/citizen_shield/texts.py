@@ -216,3 +216,27 @@ ADVICE["degraded"] = {
         "টাকা পাঠিয়ে ফেললে এখনই 1930-এ কল করুন।",
     ],
 }
+
+# Shown when the message is mostly in a script call-guard has no rules for (see policy.coverage):
+# the check is partial, so it is never reported as safe.
+PARTIAL_NOTICE = {
+    "en": "This language is not fully checked by the automatic scorer; do not share an OTP or PIN, do not pay, and call 1930 if in doubt.",
+    "hi": "यह भाषा स्वचालित जांच में पूरी तरह शामिल नहीं है; OTP या पिन साझा न करें, भुगतान न करें और शक होने पर 1930 पर कॉल करें।",
+    "ta": "இந்த மொழி தானியங்கி சோதனையில் முழுமையாக உள்ளடக்கப்படவில்லை; OTP அல்லது PIN பகிர வேண்டாம், பணம் செலுத்த வேண்டாம், சந்தேகம் இருந்தால் 1930 அழைக்கவும்.",
+    "bn": "এই ভাষা স্বয়ংক্রিয় যাচাইয়ে পুরোপুরি অন্তর্ভুক্ত নয়; OTP বা পিন শেয়ার করবেন না, টাকা দেবেন না, সন্দেহ হলে 1930-এ কল করুন।",
+}
+REASON_TEXT["COVERAGE_PARTIAL"] = {
+    "en": "This message could not be fully checked: its language is not covered by the automatic rules.",
+    "hi": "इस संदेश की पूरी जांच नहीं हो सकी: इसकी भाषा स्वचालित नियमों में शामिल नहीं है।",
+    "ta": "இந்தச் செய்தியை முழுமையாகச் சோதிக்க முடியவில்லை: இதன் மொழி தானியங்கி விதிகளில் இல்லை.",
+    "bn": "এই বার্তাটি পুরোপুরি যাচাই করা যায়নি: এর ভাষা স্বয়ংক্রিয় নিয়মের আওতায় নেই।",
+}
+ADVICE["partial_coverage"] = {
+    lang: [
+        PARTIAL_NOTICE[lang],
+        ADVICE["suspicious"][lang][1],
+        ADVICE["suspicious"][lang][2],
+        ADVICE["suspicious"][lang][3],
+    ]
+    for lang in SUPPORTED
+}

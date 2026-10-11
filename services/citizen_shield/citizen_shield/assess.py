@@ -21,8 +21,9 @@ from .policy import (
     is_blank,
     label_for,
     normalise_for_scoring,
+    script_coverage,
 )
-from .texts import ADVICE, GENERIC_REASON, REASON_TEXT, TOO_LONG_NOTICE
+from .texts import ADVICE, GENERIC_REASON, PARTIAL_NOTICE, REASON_TEXT, TOO_LONG_NOTICE
 
 THRESHOLDS = {"suspicious": SUSPICIOUS, "likely_scam": LIKELY_SCAM}
 RULES_ONLY_PREFIX = "rules"  # call-guard's RULES_VERSION ("rules-v1"): classifier unavailable
@@ -40,12 +41,15 @@ class Verdict:
     uncertain: bool
     model_version: str
     degraded: bool = False
+    coverage: str = "full"  # "partial": mostly a script the scorer has no rules for
+    score_is_placeholder: bool = False  # score is a floor/placeholder, not a model output
 
     def to_json(self) -> dict[str, Any]:
         return {
             "label": self.label, "score": self.score, "reasons": self.reasons,
             "advice": self.advice, "lang": self.lang, "uncertain": self.uncertain,
             "model_version": self.model_version, "degraded": self.degraded,
+            "coverage": self.coverage, "score_is_placeholder": self.score_is_placeholder,
             "thresholds": THRESHOLDS,
         }  # fmt: skip
 
@@ -64,12 +68,14 @@ async def assess(guard: CallGuardClient, message: str, requested_lang: str | Non
     text, truncated = normalise_for_scoring(message.encode("utf-8", "replace").decode("utf-8"))
     if is_blank(text):
         return Verdict("safe", 0.0, [], _advice("no_input", lang), lang, True, "none")
+    coverage = script_coverage(text)
+    partial = coverage == "partial"
     try:
         got = await guard.score(text)
     except GuardDown:
         return Verdict(
             "suspicious", DEGRADED_SCORE, [], _advice("degraded", lang, truncated), lang, True,
-            DEGRADED_VERSION, degraded=True,
+            DEGRADED_VERSION, degraded=True, coverage=coverage, score_is_placeholder=True,
         )  # fmt: skip
     label = label_for(got.score)
     shown: list[dict[str, Any]] = []
@@ -80,12 +86,27 @@ async def assess(guard: CallGuardClient, message: str, requested_lang: str | Non
         shown.append(
             {"code": code, "text": (row or GENERIC_REASON)[lang], "weight": round(float(weight), 3)}
         )
-    if label != "safe":
+    if label != "safe" or partial:
         shown = [x for x in shown if x["code"] != "NO_RISK_INDICATORS"]
+    score, placeholder = round(got.score, 4), False
+    if partial:
+        # no rules exist for this script: "no cues found" means nothing, so never report safe
+        shown.append({"code": "COVERAGE_PARTIAL", "text": REASON_TEXT["COVERAGE_PARTIAL"][lang],
+                      "weight": 0.0})  # fmt: skip
+        if label == "safe":
+            label, score, placeholder = "suspicious", max(score, SUSPICIOUS), True
+            advice = _advice("partial_coverage", lang, truncated)
+        else:
+            advice = _advice(label, lang, truncated)
+            advice["steps"].insert(0, PARTIAL_NOTICE[lang])
+    else:
+        advice = _advice(label, lang, truncated)
     near = any(abs(got.score - th) < BORDER for th in (SUSPICIOUS, LIKELY_SCAM))
     rules_only = got.model_version.startswith(RULES_ONLY_PREFIX)
-    uncertain = truncated or unsupported or near or len(text.split()) < MIN_WORDS or rules_only
+    uncertain = (
+        truncated or unsupported or near or len(text.split()) < MIN_WORDS or rules_only or partial
+    )
     return Verdict(
-        label, round(got.score, 4), shown, _advice(label, lang, truncated), lang, uncertain,
-        got.model_version,
+        label, score, shown, advice, lang, uncertain, got.model_version,
+        coverage=coverage, score_is_placeholder=placeholder,
     )  # fmt: skip
