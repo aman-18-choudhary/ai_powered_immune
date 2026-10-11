@@ -31,7 +31,7 @@ are simulator-only (seed 42 unless stated); the sources are
 
 | Claim | Evidence | Caveat |
 |---|---|---|
-| Large automated test base | About 1,500 Python tests collected across 12 packages (contracts 29, svckit 179, sim-engine 51, call-guard 141, txn-guard 320, hub 165, ledger 191, graph-twin 125, gateway 60, demo-server 182, audit 27, bench 38) plus 26 console test files and Playwright specs; `make test-all` | counts are `--collect-only`; a few Postgres tests are opt-in |
+| Large automated test base | About 1,490 Python tests passing across 12 packages (contracts 29, svckit 179, sim-engine 51, call-guard 141, txn-guard 320, hub 160, ledger 184, graph-twin 122, gateway 60, demo-server 182, audit 27, bench 38) plus 172 console unit tests and Playwright specs; `make test-all` (13 of 13 pass) | 15 Postgres tests are opt-in and skipped without a database |
 | Adversarial review of every service | SDD ledger: each task reviewed by an independent reviewer with fix rounds until findings closed; findings turned into regression tests (ledger attack campaign of about 15,000 mutations, none passing a pinned verify) | the review ledger is a working file under `.superpowers/` (git-ignored) |
 | Correctness under at-least-once delivery | idempotent replays republish identical decisions; per-payer ordering contract; parity tests (0 differences, 1,586 transactions); outbox + breaker for audit | not exercised against a real Kafka cluster |
 | Reproducible benchmark | deterministic JSON (byte-identical for a seed), disjoint train/calibration/eval seeds enforced, ablations, Wilson intervals, sensitivity sweep | simulator-only; same generators as training |

@@ -85,22 +85,21 @@ Two packagings of the same service code:
 
 ## Services
 
-| Service | Purpose | Port | Tech | Docs | Tests (collected) |
+| Service | Purpose | Port | Tech | Docs | Tests (passed) |
 |---|---|---|---|---|---|
 | [sim-engine](services/sim_engine) | seeded synthetic world, scam campaigns, hero scenario replay | 8000 | numpy, scipy, FastAPI | [README](services/sim_engine/README.md) | 51 |
 | [call-guard](services/call_guard) | digital-arrest call scoring (rules + TF-IDF/logistic), `call.risk` alerts | 8000 | scikit-learn, Redis | [README](services/call_guard/README.md) | 141 |
 | [txn-guard](services/txn_guard) | per-bank transaction risk: allow / step-up / hold-and-verify, antibody enforcement | 8000 | gradient boosting + policy overlays, Redis | [README](services/txn_guard/README.md) | 320 |
-| [antibody-hub](services/antibody_hub) | federated threat memory: keyed hashes, TTL, revoke, outbox | 8000 | FastAPI, SQLAlchemy, Postgres | [README](services/antibody_hub/README.md) | 165 |
-| [evidence-ledger](services/evidence_ledger) | append-only hash chain, signed checkpoints, evidence packages, `verify.py` | 8000 | Ed25519, SQLAlchemy, Postgres | [README](services/evidence_ledger/README.md) | 191 |
-| [graph-twin](services/graph_twin) | ring detection, harm model, takedown simulation | 8000 | networkx, SQLAlchemy | [README](services/graph_twin/README.md) | 125 |
+| [antibody-hub](services/antibody_hub) | federated threat memory: keyed hashes, TTL, revoke, outbox | 8000 | FastAPI, SQLAlchemy, Postgres | [README](services/antibody_hub/README.md) | 160 (+5 skipped) |
+| [evidence-ledger](services/evidence_ledger) | append-only hash chain, signed checkpoints, evidence packages, `verify.py` | 8000 | Ed25519, SQLAlchemy, Postgres | [README](services/evidence_ledger/README.md) | 184 (+7 skipped) |
+| [graph-twin](services/graph_twin) | ring detection, harm model, takedown simulation | 8000 | networkx, SQLAlchemy | [README](services/graph_twin/README.md) | 122 (+3 skipped) |
 | [gateway](services/gateway) | JWT auth, RBAC, rate limits, reverse proxy | 8000 (published on 127.0.0.1) | FastAPI, Redis | [README](services/gateway/README.md) | 60 |
 | [demo-server](services/demo_server) | single-process composition behind the console's `/api` + `/api/stream` | 8080 | FastAPI, WebSocket | [README](services/demo_server/README.md) | 182 |
-| [web-console](web-console) | seven-page React console, light and dark | 5173 (dev) | React, TypeScript, Tailwind, Vite | [README](web-console/README.md) | 26 test files + Playwright e2e |
+| [web-console](web-console) | seven-page React console, light and dark | 5173 (dev) | React, TypeScript, Tailwind, Vite | [README](web-console/README.md) | 172 (vitest) + Playwright e2e |
 | [contracts](contracts), [svckit](libs/svckit) | shared models, topics, keyed hashing; bus, idempotency, drainer, PII guard | n/a | pydantic, aiokafka | in code | 29 + 179 |
 | [tests/e2e/bench](tests/e2e/bench), [tests/e2e/audit](tests/e2e/audit) | benchmark harness; hero audit-trail end to end | n/a | pytest | [bench README](tests/e2e/bench/README.md), [audit trail](docs/audit-trail.md) | 38 + 27 |
 
-Test counts are `pytest --collect-only` totals at the time of writing; a few Postgres tests are
-opt-in and skip without a database.
+Counts are from `make test-all` (warnings as errors); skipped tests are the opt-in Postgres suites.
 
 ## How the evaluation focus is addressed
 
@@ -142,8 +141,9 @@ A mapping to the five judging criteria is in [docs/judging-map.md](docs/judging-
 
 | Item | Status |
 |---|---|
-| Unit and integration suites of every Python package (`make test-all`, warnings as errors) | exercised, see the run below |
-| Console unit tests (vitest), type-check, build | exercised |
+| `make test-all`: 13 of 13 packages pass (12 Python suites with `-W error`, 172 console unit tests) | exercised |
+| `make lint`: ruff check and format on all packages, eslint and tsc on the console | exercised, clean |
+| Console production build | exercised |
 | `make demo`: console build, demo-server start, `/api/health`, `/`, SPA fallback, a real-time hero run (72.9 s) | exercised |
 | `make verify-package` (hero package through the demo-server code path, pinned `verify.py`) | exercised, PASS |
 | Benchmark: full run, seed 42; JSON equals the bundled `benchmark_summary.json` except `meta` | exercised |
