@@ -295,10 +295,18 @@ def create_app(
 def _routing_metrics(service: TxnGuardService | None) -> str:
     if service is None:
         return ""
-    return (
-        "# TYPE txn_guard_foreign_bank_events_total counter\n"
-        f"txn_guard_foreign_bank_events_total {service.foreign_bank_events}\n"
-    )
+    out = ""
+    for name, v in (
+        ("routed_events", service.routed_events),
+        ("foreign_bank_events", service.foreign_bank_events),
+        ("unattributed_events", service.unattributed_events),
+        ("unknown_bank_events", service.unknown_bank_events),
+    ):
+        out += f"# TYPE txn_guard_{name}_total counter\ntxn_guard_{name}_total {v}\n"
+    out += "# TYPE txn_guard_foreign_bank_events_by_bank_total counter\n"
+    for bank, n in sorted(service.foreign_by_bank.items()):
+        out += f'txn_guard_foreign_bank_events_by_bank_total{{bank_id="{bank}"}} {n}\n'
+    return out
 
 
 def _antibody_metrics(service: TxnGuardService | None) -> str:
@@ -361,6 +369,11 @@ def create_service_app() -> FastAPI:
         pending=RedisPendingStore(aredis),
         hold_deadline_s=float(os.getenv("HOLD_DEADLINE_S", str(DEFAULT_HOLD_DEADLINE_S))),
         bank_id=os.getenv("TXN_BANK_ID") or None,  # None: no filter, shared group (dev/test)
+        accept_unattributed=os.getenv("TXN_ACCEPT_UNATTRIBUTED") == "1",
+        known_banks=frozenset(
+            x.strip() for x in os.getenv("KNOWN_BANKS", "").split(",") if x.strip()
+        )
+        or None,
     )  # fmt: skip
     startup: list[Callable[[], Awaitable[Any]]] = []
     bootstrap_fn = None

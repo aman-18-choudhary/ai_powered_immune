@@ -23,10 +23,10 @@ def scorer():
     return Scorer()
 
 
-def _svc(scorer, bus, bank_id):
+def _svc(scorer, bus, bank_id, **kw):
     return TxnGuardService(
         scorer, InMemoryHistoryStore(), InMemoryHoldStore(audit=InMemoryAuditSink()), bus,
-        InMemoryIdempotencyStore(), bank_id=bank_id,
+        InMemoryIdempotencyStore(), bank_id=bank_id, **kw,
     )  # fmt: skip
 
 
@@ -162,3 +162,90 @@ def test_service_app_reads_env(monkeypatch):
     api.create_service_app()
     assert captured["service"].bank_id == "bank_z"
     assert captured["txn_topic"] == "txn.events.bank_z"
+
+
+# ------------------------------------------------------- normalisation and visibility (fix 2)
+def _route(scorer, make_txn, bank, env="bank_a", **kw):
+    s = _svc(scorer, InMemoryBus(), env, **kw)
+    return s, s.route(_t(make_txn, bank))
+
+
+@pytest.mark.parametrize("bank", ["Bank_A", "bank_a ", " BANK_A", "BANK_A"])
+def test_case_and_whitespace_variants_are_the_same_bank(scorer, make_txn, bank):
+    assert _route(scorer, make_txn, bank)[1] == "accept"
+    assert _route(scorer, make_txn, "bank_a", env=" Bank_A ")[1] == "accept"
+
+
+@pytest.mark.parametrize("bank", ["", "   ", "\t"])
+def test_empty_bank_id_is_unattributed_not_foreign(scorer, make_txn, bank):
+    s, r = _route(scorer, make_txn, bank)
+    assert r == "unattributed"
+    assert s.foreign_bank_events == 0
+
+
+def test_accept_unattributed_scores_them(scorer, make_txn):
+    assert _route(scorer, make_txn, "", accept_unattributed=True)[1] == "accept"
+
+
+def test_known_banks_turn_unknown_ids_into_unknown_bank(scorer, make_txn):
+    kb = frozenset({"bank_a", "bank_b"})
+    assert _route(scorer, make_txn, "bank_z", known_banks=kb)[1] == "unknown_bank"
+    assert _route(scorer, make_txn, "bank_b", known_banks=kb)[1] == "foreign"
+    assert _route(scorer, make_txn, "bank_z")[1] == "foreign"  # no KNOWN_BANKS: plain foreign
+
+
+async def test_counters_labels_and_metrics(scorer, make_txn, monkeypatch):
+    from txn_guard.api import create_app
+
+    monkeypatch.setenv("TRUST_GATEWAY_HEADERS", "1")
+    monkeypatch.delenv("GATEWAY_SHARED_SECRET", raising=False)
+    bus = InMemoryBus()
+    s = _svc(scorer, bus, "bank_a", known_banks=frozenset({"bank_a", "bank_b"}))
+    tasks = run_consumers(bus, s, InMemoryIdempotencyStore())
+    evs = [("bank_a", 2), ("Bank_B", 3), ("", 1), ("bank_zzz", 2)]
+    n = 0
+    for bank, k in evs:
+        for _ in range(k):
+            t = _t(make_txn, bank, payer=f"p{n}")
+            n += 1
+            await bus.publish(Topics.TXN_EVENTS, t.payer_token, t)
+    await _until(lambda: s.routed_events == 2 and s.foreign_bank_events == 3)
+    await _until(lambda: s.unattributed_events == 1 and s.unknown_bank_events == 2)
+    for x in tasks:
+        x.cancel()
+    app = create_app(service=s, sweep_interval_s=0)
+    h = {"X-Principal-Role": "admin", "X-Principal-Sub": "root"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        text = (await c.get("/metrics", headers=h)).text
+    assert "txn_guard_routed_events_total 2" in text
+    assert "txn_guard_unattributed_events_total 1" in text
+    assert "txn_guard_unknown_bank_events_total 2" in text
+    assert "txn_guard_foreign_bank_events_total 3" in text
+    assert 'txn_guard_foreign_bank_events_by_bank_total{bank_id="bank_b"} 3' in text
+
+
+def test_foreign_label_set_is_bounded_and_valid(scorer, make_txn):
+    s = _svc(scorer, InMemoryBus(), "bank_a")
+    for i in range(200):
+        s.route(_t(make_txn, f"bank_{i}"))
+    s.route(_t(make_txn, 'evil"}\nx{y="1'))
+    labels = set(s.foreign_by_bank)
+    assert len(labels) <= 22 and "other" in labels and "invalid" in labels
+    assert sum(s.foreign_by_bank.values()) == s.foreign_bank_events == 201
+
+
+def test_warning_once_per_distinct_value_per_hour(scorer, make_txn, caplog):
+    import logging
+    from datetime import UTC, datetime, timedelta
+
+    now = {"t": datetime(2026, 1, 1, tzinfo=UTC)}
+    s = _svc(scorer, InMemoryBus(), "bank_a", clock=lambda: now["t"])
+    caplog.set_level(logging.WARNING, logger="txn_guard")
+    for _ in range(5):
+        s.route(_t(make_txn, ""))
+    s.route(_t(make_txn, "x" * 80))  # not a valid slug: logged as invalid, never verbatim
+    msgs = [r.getMessage() for r in caplog.records]
+    assert len(msgs) == 2 and "x" * 80 not in " ".join(msgs)
+    now["t"] += timedelta(hours=1, seconds=1)
+    s.route(_t(make_txn, ""))
+    assert len(caplog.records) == 3

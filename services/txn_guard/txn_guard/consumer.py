@@ -37,8 +37,7 @@ def run_consumers(
     group = group_for(service.bank_id)
 
     async def on_txn(txn: Transaction) -> None:
-        if service.is_foreign(txn):  # acked (handler returns), counted, never scored/recorded
-            service.foreign_bank_events += 1
+        if service.route(txn) != "accept":  # acked (handler returns), counted, never scored
             return
         await service.handle_txn(txn)
 

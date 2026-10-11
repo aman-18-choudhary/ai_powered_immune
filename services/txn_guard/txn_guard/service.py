@@ -27,6 +27,7 @@ Guarantees (and their limits):
 import asyncio
 import hashlib
 import logging
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -52,7 +53,15 @@ log = logging.getLogger("txn_guard")
 DEFAULT_HOLD_DEADLINE_S = 120.0
 LATE_CODE = "LATE_CALL_RISK_POST_SETTLEMENT"
 LATE_ANTIBODY_CODE = "LATE_ANTIBODY_POST_SETTLEMENT"
+BANK_SLUG_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+MAX_BANK_LABELS = 20  # distinct foreign bank ids exposed as metric labels; the rest are "other"
+_WARN_EVERY = timedelta(hours=1)
 _NO_ANTIBODY = {"payee_in_antibody": 0.0, "antibody_id_prefix": 0.0, "antibody_expires_ts": 0.0}
+
+
+def norm_bank(value: str | None) -> str:
+    """Bank ids compare case-insensitively with surrounding whitespace removed."""
+    return (value or "").strip().casefold()
 
 
 def _payee_ref(payee_hash: str) -> str:
@@ -84,6 +93,8 @@ class TxnGuardService:
         antibodies: AntibodyLookup | None = None,
         max_pending_scan: int = MAX_PENDING_SCAN,
         bank_id: str | None = None,
+        accept_unattributed: bool = False,
+        known_banks: frozenset[str] | None = None,
     ) -> None:
         self.scorer, self.history, self.holds = scorer, history, holds
         self.bus, self.idem = bus, idem
@@ -91,16 +102,71 @@ class TxnGuardService:
         self.antibodies = antibodies
         self.max_pending_scan = max_pending_scan
         self.antibody_scan_truncated = 0
-        self.bank_id = bank_id or None  # when set, consumers drop other banks' transactions
+        # when set (strip + casefold), consumers drop other banks' transactions
+        self.bank_id = norm_bank(bank_id) or None
+        self.accept_unattributed = accept_unattributed
+        self.known_banks = (
+            frozenset(norm_bank(b) for b in known_banks) if known_banks else None
+        )  # fmt: skip
+        self.routed_events = 0
         self.foreign_bank_events = 0
+        self.unattributed_events = 0
+        self.unknown_bank_events = 0
+        self.foreign_by_bank: dict[str, int] = {}
+        self._warned: dict[str, datetime] = {}
         self.hold_deadline = timedelta(seconds=hold_deadline_s)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self.handled = 0  # handler invocations completed (observability / tests)
 
-    def is_foreign(self, txn: Transaction) -> bool:
-        """True when a bank is configured and the transaction belongs to another bank."""
-        return self.bank_id is not None and txn.bank_id != self.bank_id
+    def route(self, txn: Transaction) -> str:
+        """Classify and count one transaction: ``accept`` (score it), ``foreign`` (another bank's),
+        ``unattributed`` (empty bank id; dropped unless ``accept_unattributed``) or
+        ``unknown_bank`` (not in ``KNOWN_BANKS``; alert-worthy). Only ``accept`` is scored."""
+        if self.bank_id is None:
+            self.routed_events += 1
+            return "accept"
+        b = norm_bank(txn.bank_id)
+        if not b:
+            self.unattributed_events += 1
+            self._warn("unattributed", b)
+            if self.accept_unattributed:
+                self.routed_events += 1
+                return "accept"
+            return "unattributed"
+        if b == self.bank_id:
+            self.routed_events += 1
+            return "accept"
+        if self.known_banks is not None and b not in self.known_banks:
+            self.unknown_bank_events += 1
+            self._warn("unknown_bank", b)
+            return "unknown_bank"
+        self.foreign_bank_events += 1
+        label = b if BANK_SLUG_RE.match(b) else "invalid"
+        if label == "invalid":
+            self._warn("invalid_bank_id", b)
+        slugs = [k for k in self.foreign_by_bank if k not in ("invalid", "other")]
+        if (
+            label not in ("invalid", "other")
+            and label not in slugs
+            and len(slugs) >= MAX_BANK_LABELS
+        ):
+            label = "other"
+        self.foreign_by_bank[label] = self.foreign_by_bank.get(label, 0) + 1
+        return "foreign"
+
+    def _warn(self, kind: str, bank: str) -> None:
+        """One WARNING per distinct (kind, value) per hour; only slug-shaped values are logged."""
+        shown = bank if BANK_SLUG_RE.match(bank) else ("empty" if not bank else "invalid")
+        key = f"{kind}:{shown}"
+        now = self._clock()
+        last = self._warned.get(key)
+        if last is not None and now - last < _WARN_EVERY:
+            return
+        if len(self._warned) >= 256:
+            self._warned.clear()
+        self._warned[key] = now
+        log.warning("transaction not routed to this bank (%s, bank_id=%s)", kind, shown)
 
     def _lock(self, payer: str) -> asyncio.Lock:
         lock = self._locks.get(payer)

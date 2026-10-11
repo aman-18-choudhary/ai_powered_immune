@@ -208,17 +208,28 @@ What is and is not guaranteed:
   (b) publish per-bank topics and set `TXN_EVENTS_TOPIC` on each instance (default stays
   `txn.events`; the filter still applies, so a mis-routed event is dropped, not scored). A dropped
   event is acked (not retried, not dead-lettered), counted in
-  `txn_guard_foreign_bank_events_total`, and is never scored, held, recorded in history or
+  `txn_guard_foreign_bank_events_total` (and per bank in
+  `txn_guard_foreign_bank_events_by_bank_total{bank_id}`: the first 20 distinct slug-shaped ids,
+  then `other`; non-slug ids are `invalid`), and is never scored, held, recorded in history or
   written to the pending store. Every `bank_id` that is produced needs a matching instance: an
   event for a bank with no instance is not scored by anyone. The compose stack therefore
   sets `SIM_BANKS=2` on sim-engine, so the simulator only produces `bank_sbi` and `bank_hdfc`
   (bank ids are positional; a test checks hero seeds 1-3). With the simulator's default of 4
   banks, `bank_icici` and `bank_axis` traffic would be unrouted.
+* *Normalisation and unrouted traffic.* `TXN_BANK_ID` and `Transaction.bank_id` are compared after
+  strip and casefold (`Bank_A ` equals `bank_a`). An empty or whitespace `bank_id` is not foreign:
+  it is counted in `txn_guard_unattributed_events_total` and dropped, unless
+  `TXN_ACCEPT_UNATTRIBUTED=1` (then it is scored by every instance that receives it). With
+  `KNOWN_BANKS=a,b,c` set, an id outside that set is counted in
+  `txn_guard_unknown_bank_events_total` (alert-worthy: a bank nobody serves) instead of foreign.
+  `txn_guard_routed_events_total` counts the events an instance scored. One WARNING per distinct
+  unattributed / unknown / non-slug value per hour; only ids matching `^[a-z0-9_-]{1,64}$` are
+  logged verbatim, others as `invalid`.
 * *Call risk.* `call.risk` is cross-bank by victim token (the payer identity domain), is always
   read from the shared topic, and every instance consumes all of it under its own group, so each
   bank sees every call risk for its own payers' history.
 
-Env: `REDIS_URL` (required), `TXN_BANK_ID`, `TXN_EVENTS_TOPIC` (optional), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
+Env: `REDIS_URL` (required), `TXN_BANK_ID`, `TXN_EVENTS_TOPIC`, `TXN_ACCEPT_UNATTRIBUTED`, `KNOWN_BANKS` (optional), `KAFKA_BOOTSTRAP` (without it an in-process bus is used and no
 consumers run), `HOLD_DEADLINE_S`, `AUDIT_DRAIN_INTERVAL_S`, `GATEWAY_SHARED_SECRET`,
 `TRUST_GATEWAY_HEADERS`, `METRICS_TOKEN`, `PORT`. Run: `python -m txn_guard`. The Scorer runs in a
 worker thread (`asyncio.to_thread`); measured consumer-path latency with fakeredis stores is
