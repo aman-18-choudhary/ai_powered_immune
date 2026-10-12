@@ -9,7 +9,7 @@ are simulator-only (seed 42 unless stated); the sources are
 
 | Challenge deliverable | Where |
 |---|---|
-| Working prototype | [README](../README.md) quickstart (`make demo`); repository <https://github.com/aman-18-choudhary/ai_powered_immune>, branch `build/implementation` |
+| Working prototype | [README](../README.md) quickstart (`make demo`); repository <https://github.com/aman-18-choudhary/ai_powered_immune>, branch `main` |
 | Architecture diagram | [architecture.md](architecture.md) |
 | Presentation deck | [deck/ScamShield-Immune.pptx](deck/ScamShield-Immune.pptx), [PDF](deck/ScamShield-Immune.pdf), [preview](deck/preview.png) |
 | Demo video | [demo/hero-run.webm](demo/hero-run.webm) (2:49, no audio), [mp4](demo/hero-run.mp4), [GIF](demo/hero-run.gif), [notes](demo/README.md) |

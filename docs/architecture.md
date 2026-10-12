@@ -268,4 +268,4 @@ Rulings made during the build (from the SDD ledger). Each has a stated cost-if-w
 | Demo packaging | one process over an in-memory bus (`demo-server`) is the verified path; the compose stack is the production-shaped packaging | a Docker daemon was not available to run the stack |
 | Python version | developed on 3.13, packages target `>=3.11`, images use `python:3.11-slim` | plan said 3.11 |
 | Gateway-to-service trust | `TRUST_GATEWAY_HEADERS=1` on the internal network instead of per-service shared secrets (the gateway does not inject one) | smallest change that works with the gateway as built; documented in the compose file |
-| Push policy | no push until the user confirms; work stays on `build/implementation` | user ruling |
+| Push policy | initially no push until the user confirms; later the user authorised per-task pushes and, on 2026-10-12, a fast-forward of `main` (`main` and `build/implementation` are the same commit) | user ruling |
