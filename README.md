@@ -33,7 +33,7 @@ deliverables:
 
 | Deliverable | Where |
 |---|---|
-| Working prototype | this repository, branch `build/implementation` of <https://github.com/aman-18-choudhary/ai_powered_immune>; `make demo` |
+| Working prototype | this repository (<https://github.com/aman-18-choudhary/ai_powered_immune>, branch `main`); `make demo` |
 | Architecture diagram | [docs/architecture.md](docs/architecture.md) (context, containers, hero sequence, PII boundaries, audit flow) |
 | Presentation deck | [ScamShield-Immune.pptx](docs/deck/ScamShield-Immune.pptx), [PDF](docs/deck/ScamShield-Immune.pdf), [contact sheet](docs/deck/preview.png), [deck README](docs/deck/README.md) |
 | Demo video | [hero-run.webm](docs/demo/hero-run.webm) (2:49, no audio), [mp4](docs/demo/hero-run.mp4), [GIF preview](docs/demo/hero-run.gif), [notes](docs/demo/README.md) |
@@ -44,7 +44,7 @@ Needs Python 3.11+ and Node 20+.
 
 ```bash
 git clone https://github.com/aman-18-choudhary/ai_powered_immune.git && cd ai_powered_immune
-git checkout build/implementation   # the work is on this branch; main holds only the design docs
+# main is the default branch and holds the full project (build/implementation is the same commit)
 make install        # venv, editable installs of every package, npm ci for the console
 make demo           # builds the console and serves it with the demo-server
 ```
