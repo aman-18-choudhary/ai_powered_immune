@@ -11,7 +11,7 @@
 # Profiles (always pass `core` together with `stack`: depends_on crosses them):
 #   core           redpanda, topic bootstrap job, postgres (+postgis image), redis
 #   stack          call-guard, txn-guard x2 (bank A / bank B), antibody-hub, evidence-ledger,
-#                  graph-twin, geo-intel, citizen-shield, gateway, sim-engine, demo-server (+ web console)
+#                  graph-twin, geo-intel, citizen-shield, complaints, gateway, sim-engine, demo-server (+ web console)
 #   observability  prometheus, grafana
 #
 # Exposure: only the gateway (8000), demo-server (8080) and, for convenience, the core stores are
@@ -304,6 +304,37 @@ services:
     healthcheck: *health
     deploy: {resources: {limits: {cpus: "0.5", memory: 384M}}}
 
+  # Citizen complaints (Clerk identity, RBAC, evidence uploads, text analysis). Own database
+  # `complaints` (infra/postgres/init.sql on a fresh volume; an existing volume needs
+  # `CREATE DATABASE complaints;` once). It verifies Clerk session JWTs itself and trusts no
+  # gateway headers; evidence files live in the `complaints-evidence` volume (0600, not served).
+  # Without real CLERK_* values it starts and answers /healthz, but sign-in answers 503 until the
+  # JWKS is reachable. Live Clerk verification has not been exercised (see its README).
+  complaints:
+    <<: *service
+    image: scam-immune/complaints:dev
+    build: {context: .., dockerfile: services/complaints/Dockerfile}
+    environment:
+      COMPLAINTS_DATABASE_URL: postgresql+psycopg2://scam:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/complaints
+      COMPLAINTS_EVIDENCE_DIR: /var/lib/complaints/evidence
+      COMPLAINTS_AUTH_MODE: ${COMPLAINTS_AUTH_MODE:-clerk}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+      CLERK_AUDIENCE: ${CLERK_AUDIENCE:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      CLERK_BACKEND_LOOKUP: ${CLERK_BACKEND_LOOKUP:-0}
+      COMPLAINTS_DEMO_JWT_SECRET: ${COMPLAINTS_DEMO_JWT_SECRET:-}
+      INVESTIGATOR_ALLOWLIST: ${INVESTIGATOR_ALLOWLIST:-}
+      ADMIN_BOOTSTRAP_EMAILS: ${ADMIN_BOOTSTRAP_EMAILS:-}
+      COMPLAINTS_CORS_ORIGINS: ${COMPLAINTS_CORS_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes: ["complaints-evidence:/var/lib/complaints/evidence"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck: *health
+    deploy: {resources: {limits: {cpus: "1.0", memory: 1G}}}
+
   gateway:
     <<: *service
     image: scam-immune/gateway:dev
@@ -318,6 +349,7 @@ services:
       GATEWAY_UPSTREAM_LEDGER: http://evidence-ledger:8000
       GATEWAY_UPSTREAM_CITIZEN: http://citizen-shield:8000
       GATEWAY_UPSTREAM_GEO: http://geo-intel:8000
+      GATEWAY_UPSTREAM_COMPLAINTS: http://complaints:8000
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
       redis: {condition: service_healthy}
@@ -426,5 +458,6 @@ volumes:
   pgdata:
   redis-data:
   ledger-keys:
+  complaints-evidence:
   prometheus-data:
   grafana-data:

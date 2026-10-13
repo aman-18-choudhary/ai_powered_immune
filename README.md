@@ -114,6 +114,7 @@ Two packagings of the same service code:
 | [graph-twin](services/graph_twin) | ring detection, harm model, takedown simulation | 8000 | networkx, SQLAlchemy | [README](services/graph_twin/README.md) | 122 (+3 skipped) |
 | [geo-intel](services/geo_intel) | complaint hotspots (Poisson z-score), trend, cash-out points, city level | 8000 | FastAPI, SQLAlchemy | [README](services/geo_intel/README.md) | 64 (+1 skipped) |
 | [citizen-shield](services/citizen_shield) | citizen message checker (en/hi/ta/bn), degraded mode, anonymous reports | 8000 | FastAPI, SQLAlchemy | [README](services/citizen_shield/README.md) | 71 |
+| [complaints](services/complaints) | citizen complaints: Clerk-verified identity (live Clerk not exercised), citizen/investigator/admin RBAC, evidence uploads, honest text-only analysis, alerts | 8000 | FastAPI, SQLAlchemy, Postgres | [README](services/complaints/README.md) | 175 (+1 skipped) |
 | [gateway](services/gateway) | JWT auth, RBAC, rate limits, reverse proxy | 8000 (published on 127.0.0.1) | FastAPI, Redis | [README](services/gateway/README.md) | 60 |
 | [demo-server](services/demo_server) | single-process composition behind the console's `/api` + `/api/stream` | 8080 | FastAPI, WebSocket | [README](services/demo_server/README.md) | 183 |
 | [web-console](web-console) | seven-page React console, light and dark | 5173 (dev) | React, TypeScript, Tailwind, Vite | [README](web-console/README.md) | 172 (vitest) + Playwright e2e |
@@ -202,7 +203,7 @@ refuses to start with empty secrets. Known wiring caveats are listed in the head
 contracts/            shared pydantic models, topic names, keyed hashing (scam_contracts)
 libs/svckit/          bus, idempotency, health, drainer, PII guard, tokenizer
 services/             sim_engine call_guard txn_guard antibody_hub evidence_ledger graph_twin
-                      geo_intel citizen_shield gateway demo_server   (each: Dockerfile, pyproject.toml, tests/)
+                      geo_intel citizen_shield complaints gateway demo_server   (each: Dockerfile, pyproject.toml, tests/)
 tests/e2e/            bench (benchmark harness), audit (hero audit trail end to end)
 web-console/          React console (src/, e2e/ Playwright, scripts/)
 infra/                docker-compose.yml, .env.example, postgres/, prometheus.yml, docker/

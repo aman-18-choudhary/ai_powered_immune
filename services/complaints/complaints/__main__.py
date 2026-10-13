@@ -8,6 +8,8 @@ import uvicorn
 
 if __name__ == "__main__":
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    for noisy in ("httpx", "httpcore"):  # their INFO lines carry request URLs
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     uvicorn.run(
         "complaints.api:create_service_app",
         factory=True,
