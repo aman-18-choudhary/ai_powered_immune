@@ -45,8 +45,23 @@ Browser (Clerk sign-in)                  complaints service
   user and audited as `admin_bootstrap`; a later deliberate demotion is not undone) or by an
   existing ADMIN through `PUT /admin/users/{id}/role`. Granting INVESTIGATOR/ADMIN through the API
   requires the target to have a verified email.
-* Removing an address from the allowlist does not demote an existing investigator; use the admin
-  API.
+* **Access is re-evaluated on every request.** `users.role_source` records how an
+  INVESTIGATOR/ADMIN role was granted: `allowlist` (entry flow), `bootstrap` (env) or `admin`
+  (admin API). An `allowlist` investigator is effective only while the current verified token
+  email (verified, case/whitespace-insensitive) is still in `INVESTIGATOR_ALLOWLIST`; a
+  `bootstrap` admin only while it is still in `ADMIN_BOOTSTRAP_EMAILS`. Otherwise that request is
+  treated as CITIZEN, `/auth/session` returns `investigator_access: "lapsed"` (or
+  `admin_access: "lapsed"`) with a friendly message, and the lapse is audited once
+  (`investigator_access_lapsed` / `admin_access_lapsed`; `..._restored` when the email returns).
+  The stored role is not rewritten and nothing is cached beyond the request, so allowlist removal
+  (after the service picks up the new env) or an unverified/changed email takes effect on the next
+  request. Roles granted through the admin API are unaffected by list changes; an admin can
+  confirm an existing role (`PUT .../role` with the same role) to make it independent of the
+  lists. Rows from before `role_source` existed are derived (INVESTIGATOR -> allowlist; ADMIN ->
+  bootstrap only if bootstrapped and never changed by an admin).
+* Lock-out guard: a lapsed bootstrap admin keeps ADMIN while no other active admin granted by an
+  admin exists (`admin_access: "lapsed_retained"`, audit and ERROR log
+  `last_admin_bootstrap_lapsed`). Appoint another administrator through the API to end this.
 
 ### Clerk configuration the service needs
 
@@ -84,7 +99,7 @@ configuration error; there is no insecure fallback.
 | `POST /complaints/{id}/analysis`, `GET .../analysis` | owner, staff | new version per run |
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
 | `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | |
-| `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | optimistic `expected_role`; last active admin protected; audited |
+| `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | roles granted here have source `admin`; optimistic `expected_role`; last active admin protected; audited |
 
 Status transitions: SUBMITTED to UNDER_REVIEW or REJECTED; UNDER_REVIEW to INVESTIGATING, RESOLVED
 or REJECTED; INVESTIGATING to UNDER_REVIEW, RESOLVED or REJECTED; RESOLVED to INVESTIGATING;
@@ -107,6 +122,9 @@ Errors are JSON `{error, message}`; validation errors are `{error: "validation_e
 | run analysis | own | any | any |
 | alerts, stats | own | own | own |
 | users, roles, audit, health | no | no | yes |
+
+INVESTIGATOR (allowlist source) and ADMIN (bootstrap source) apply only while the verified email is
+still in the corresponding list; see Auth flow.
 
 An inactive user gets 403 `account_inactive` on every endpoint. Users are deactivated, never
 deleted.
@@ -180,7 +198,7 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 | Threat | Mitigation | Limit |
 |---|---|---|
 | forged / replayed / confused tokens | RS256 pinned, `none` and HS* rejected, key by `kid`, iss/exp/nbf/iat/azp checked | a stolen valid token works until it expires; no revocation list |
-| privilege escalation by claim or body | role only from DB; allowlist and bootstrap need a verified email; audit rows | whoever controls the allowlist/env or an ADMIN account controls roles |
+| privilege escalation by claim or body | role only from DB; allowlist and bootstrap need a verified email; allowlist removal takes effect on the next request (effective role re-checked per request); audit rows | whoever controls the allowlist/env or an ADMIN account controls roles; admin-granted roles persist until an admin changes them |
 | IDOR on complaints/evidence | owner check in every handler; others get 404 | none known |
 | upload abuse | sniffing, caps, count cap, atomic store, rate limit | no malware scan; content of valid-looking files is untrusted |
 | resource exhaustion | JSON cap 64 KiB, streamed upload cap, bounded pagination and filters, in-process per-user rate limits | rate limits are per process, not shared |

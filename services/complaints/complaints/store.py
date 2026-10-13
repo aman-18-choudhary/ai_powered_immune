@@ -216,6 +216,7 @@ class ComplaintStore:
                         id=uid, idp_subject=ident.subject, email=ident.email,
                         email_verified=ident.email_verified, display_name=ident.display_name,
                         role=role, is_active=True, created_at=now, last_login_at=now,
+                        role_source="bootstrap" if eligible else None,
                     )
                 )  # fmt: skip
                 if eligible:
@@ -245,12 +246,90 @@ class ComplaintStore:
                 ).first()
             ):
                 changes["role"] = "ADMIN"
+                changes["role_source"] = "bootstrap"
                 self._audit(conn, user["id"], "admin_bootstrap", user["id"],
                             {"role": user["role"]}, {"role": "ADMIN"}, now)  # fmt: skip
+            if user["role"] in ("INVESTIGATOR", "ADMIN") and (
+                changes.get("role_source", user["role_source"]) is None
+            ):
+                changes["role_source"] = self._derive_source(conn, user)
             if changes:
                 conn.execute(update(users).where(users.c.id == user["id"]).values(**changes))
                 user.update(changes)
             return user
+
+    @staticmethod
+    def _derive_source(conn: Connection, user: dict[str, Any]) -> str:
+        """Rows written before role_source existed: INVESTIGATOR came from the allowlist entry;
+        ADMIN is 'bootstrap' only if it was bootstrapped and never changed by an admin."""
+        if user["role"] == "INVESTIGATOR":
+            return "allowlist"
+        acts = {
+            r[0]
+            for r in conn.execute(
+                select(admin_audit.c.action).where(
+                    admin_audit.c.target_user_id == user["id"],
+                    admin_audit.c.action.in_(("admin_bootstrap", "role_change")),
+                )
+            )
+        }
+        return "bootstrap" if "admin_bootstrap" in acts and "role_change" not in acts else "admin"
+
+    _LAPSE_ACTIONS = {
+        "investigator": ("investigator_access_lapsed", "investigator_access_restored"),
+        "admin": ("admin_access_lapsed", "admin_access_restored"),
+    }
+
+    def has_other_admin_source_admin(self, user_id: str) -> bool:
+        """Is there another ACTIVE admin whose role was granted by an admin (not by env)?"""
+        with self.engine.connect() as c:
+            n = c.execute(
+                select(func.count())
+                .select_from(users)
+                .where(
+                    users.c.role == "ADMIN",
+                    users.c.is_active.is_(True),
+                    users.c.role_source == "admin",
+                    users.c.id != user_id,
+                )
+            ).scalar_one()
+        return int(n) > 0
+
+    def record_access_transition(
+        self, user_id: str, kind: str, valid: bool, retained: bool, now: datetime
+    ) -> None:
+        """Audit a lapse once per episode and a restoration once. ``kind`` is 'investigator' or
+        'admin'; ``retained`` marks a lapsed bootstrap admin kept because no other admin exists."""
+        lapsed, restored = self._LAPSE_ACTIONS[kind]
+        names = (
+            (lapsed, restored, "last_admin_bootstrap_lapsed")
+            if kind == "admin"
+            else (lapsed, restored)
+        )
+
+        def latest(conn: Connection) -> str | None:
+            return conn.execute(
+                select(admin_audit.c.action)
+                .where(admin_audit.c.target_user_id == user_id, admin_audit.c.action.in_(names))
+                .order_by(admin_audit.c.created_at.desc(), admin_audit.c.id.desc())
+                .limit(1)
+            ).scalar()
+
+        def needed(last: str | None) -> str | None:
+            if valid:
+                return restored if last is not None and last != restored else None
+            if last is None or last == restored:
+                return "last_admin_bootstrap_lapsed" if retained else lapsed
+            return None
+
+        with self.engine.connect() as c:
+            if needed(latest(c)) is None:
+                return
+        with self._tx() as conn:
+            self._admin_lock(conn)
+            action = needed(latest(conn))  # re-check under the lock: once per episode
+            if action is not None:
+                self._audit(conn, user_id, action, user_id, {}, {}, now)
 
     def grant_investigator(self, user_id: str, now: datetime) -> tuple[dict[str, Any], bool]:
         """Citizen -> investigator through the entry flow (the caller has verified eligibility).
@@ -262,11 +341,11 @@ class ComplaintStore:
                 return user, False
             conn.execute(
                 update(users).where(and_(users.c.id == user_id, users.c.role == "CITIZEN"))
-                .values(role="INVESTIGATOR")
+                .values(role="INVESTIGATOR", role_source="allowlist")
             )  # fmt: skip
             self._audit(conn, user_id, "investigator_entry", user_id, {"role": "CITIZEN"},
                         {"role": "INVESTIGATOR"}, now)  # fmt: skip
-            user["role"] = "INVESTIGATOR"
+            user["role"], user["role_source"] = "INVESTIGATOR", "allowlist"
             return user, True
 
     def list_users(
@@ -305,6 +384,15 @@ class ComplaintStore:
             if target["role"] != expected_role:
                 raise Conflict("role_conflict")
             if new_role == target["role"]:
+                if new_role != "CITIZEN" and target["role_source"] != "admin":
+                    # an admin confirming the role makes it independent of the env lists
+                    conn.execute(
+                        update(users).where(users.c.id == target_id).values(role_source="admin")
+                    )
+                    self._audit(conn, actor_id, "role_change", target_id,
+                                {"role": new_role, "role_source": target["role_source"]},
+                                {"role": new_role, "role_source": "admin"}, now)  # fmt: skip
+                    target["role_source"] = "admin"
                 return target
             if new_role in ("INVESTIGATOR", "ADMIN") and not (
                 target["email_verified"] and target["email"]
@@ -319,13 +407,14 @@ class ComplaintStore:
             res = conn.execute(
                 update(users)
                 .where(and_(users.c.id == target_id, users.c.role == expected_role))
-                .values(role=new_role)
+                .values(role=new_role, role_source=None if new_role == "CITIZEN" else "admin")
             )
             if res.rowcount != 1:
                 raise Conflict("role_conflict")
             self._audit(conn, actor_id, "role_change", target_id, {"role": target["role"]},
                         {"role": new_role}, now)  # fmt: skip
             target["role"] = new_role
+            target["role_source"] = None if new_role == "CITIZEN" else "admin"
             return target
 
     def set_active(

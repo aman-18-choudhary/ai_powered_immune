@@ -26,6 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.types import TypeDecorator
 
 ROLES = ("CITIZEN", "INVESTIGATOR", "ADMIN")
+ROLE_SOURCES = ("bootstrap", "allowlist", "admin")
 CATEGORIES = (
     "DIGITAL_ARREST", "UPI_FRAUD", "PHISHING", "OTP_SCAM", "BANK_FRAUD",
     "INVESTMENT_SCAM", "JOB_SCAM", "SOCIAL_MEDIA_FRAUD", "OTHER",
@@ -92,7 +93,12 @@ users = Table(
     Column("is_active", Boolean, nullable=False, default=True),
     Column("created_at", UTCDateTime, nullable=False),
     Column("last_login_at", UTCDateTime),
+    # how the current INVESTIGATOR/ADMIN role was granted: bootstrap | allowlist | admin
+    Column("role_source", String(16)),
     CheckConstraint(_in("role", ROLES), name="ck_users_role"),
+    CheckConstraint(
+        "role_source IS NULL OR " + _in("role_source", ROLE_SOURCES), name="ck_users_role_source"
+    ),
     Index("ix_users_email", "email"),
     Index("ix_users_role", "role", "is_active"),
 )  # fmt: skip

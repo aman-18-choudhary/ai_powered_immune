@@ -114,6 +114,7 @@ class CurrentUser:
     display_name: str | None
     is_active: bool
     uid_hash: str
+    notice: dict[str, str] | None = None  # e.g. {"investigator_access": "lapsed", "message": ...}
 
     @property
     def staff(self) -> bool:
@@ -423,6 +424,66 @@ def create_app(
         return JSONResponse({"error": "internal_error"}, status_code=500)
 
     # ------------------------------------------------------------------ auth
+    def in_list(email: str | None, entries: frozenset[str]) -> bool:
+        if not email:
+            return False
+        hit = False
+        for entry in entries:  # no early exit: constant-time per entry
+            hit |= hmac.compare_digest(email.encode(), entry.encode())
+        return hit
+
+    def allowlisted(email: str | None) -> bool:
+        return in_list(email, settings.investigator_allowlist)
+
+    async def _effective_role(
+        row: dict[str, Any], ident: Identity
+    ) -> tuple[str, dict[str, str] | None]:
+        """The role for THIS request. INVESTIGATOR granted via the allowlist and ADMIN granted by
+        env bootstrap stay effective only while the current VERIFIED token email is still in the
+        corresponding list; the stored role is never rewritten. Admin-granted roles are not
+        affected. Nothing is cached beyond the request."""
+        role, source = row["role"], row["role_source"]
+        if role == "INVESTIGATOR" and source == "allowlist":
+            valid = ident.email_verified and allowlisted(ident.email)
+            await asyncio.to_thread(
+                store.record_access_transition, row["id"], "investigator", valid, False, now()
+            )
+            if valid:
+                return role, None
+            return "CITIZEN", {
+                "investigator_access": "lapsed",
+                "message": "Your investigator access is no longer approved for this account. "
+                "You can continue as a citizen.",
+            }
+        if role == "ADMIN" and source == "bootstrap":
+            valid = ident.email_verified and in_list(ident.email, settings.admin_bootstrap_emails)
+            retained = False
+            if not valid:
+                retained = not await asyncio.to_thread(
+                    store.has_other_admin_source_admin, row["id"]
+                )
+            await asyncio.to_thread(
+                store.record_access_transition, row["id"], "admin", valid, retained, now()
+            )
+            if valid:
+                return role, None
+            if retained:
+                log.error(
+                    "last_admin_bootstrap_lapsed: the only admin is no longer in "
+                    "ADMIN_BOOTSTRAP_EMAILS; access kept so the system is not locked out"
+                )
+                return role, {
+                    "admin_access": "lapsed_retained",
+                    "message": "This administrator is no longer in the bootstrap list but is the "
+                    "only administrator, so access is kept. Appoint another administrator.",
+                }
+            return "CITIZEN", {
+                "admin_access": "lapsed",
+                "message": "Your administrator access is no longer approved for this account. "
+                "You can continue as a citizen.",
+            }
+        return role, None
+
     async def current_user(request: Request) -> CurrentUser:
         header = request.headers.get("authorization", "")
         scheme, _, token = header.partition(" ")
@@ -447,9 +508,10 @@ def create_app(
         request.state.uid_hash = uid_hash
         if not row["is_active"]:
             raise ApiError(403, "account_inactive", "This account has been deactivated.")
+        role, notice = await _effective_role(row, ident)
         return CurrentUser(
-            row["id"], row["role"], row["email"], row["email_verified"], row["display_name"],
-            row["is_active"], uid_hash,
+            row["id"], role, row["email"], row["email_verified"], row["display_name"],
+            row["is_active"], uid_hash, notice,
         )  # fmt: skip
 
     async def _maybe_backend_lookup(ident: Identity) -> Identity:
@@ -495,15 +557,8 @@ def create_app(
                 "role": row.role, "is_active": row.is_active,
             },
             "capabilities": CAPABILITIES[row.role],
+            **(row.notice or {}),
         }  # fmt: skip
-
-    def allowlisted(email: str | None) -> bool:
-        if not email:
-            return False
-        hit = False
-        for entry in settings.investigator_allowlist:  # no early exit: constant-time per entry
-            hit |= hmac.compare_digest(email.encode(), entry.encode())
-        return hit
 
     @app.get("/auth/session")
     async def auth_session(user: User) -> dict[str, Any]:
@@ -930,7 +985,8 @@ def _alert_view(a: dict[str, Any]) -> dict[str, Any]:
 def _admin_user_view(u: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": u["id"], "email": u["email"], "email_verified": u["email_verified"],
-        "display_name": u["display_name"], "role": u["role"], "is_active": u["is_active"],
+        "display_name": u["display_name"], "role": u["role"],
+        "role_source": u.get("role_source"), "is_active": u["is_active"],
         "created_at": _iso(u["created_at"]), "last_login_at": _iso(u["last_login_at"]),
     }  # fmt: skip
 
