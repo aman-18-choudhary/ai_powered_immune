@@ -15,7 +15,10 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-ROLES: frozenset[str] = frozenset({"officer", "analyst", "citizen", "admin"})
+ROLES: frozenset[str] = frozenset({"officer", "analyst", "citizen", "admin", "investigator"})
+# Demo accounts exist for the original four roles only. ``investigator`` is a valid token role
+# (used by the complaints service routes) but has no demo account.
+DEMO_ROLES: tuple[str, ...] = ("admin", "analyst", "citizen", "officer")
 ALGORITHM = "HS256"
 DEFAULT_TTL_SECONDS = 30 * 60
 
@@ -91,11 +94,12 @@ def demo_users_from_env(overrides: dict[str, str] | None = None) -> dict[str, tu
     """One demo user per role (username == role).
 
     Password precedence: explicit override, GATEWAY_DEMO_PASSWORD_<ROLE>, GATEWAY_DEMO_PASSWORD,
-    else a random password logged once (never a fixed default).
+    else a random password. Generated passwords are NEVER logged: set GATEWAY_DEMO_PASSWORD (or the
+    per-role variable) to know them.
     """
     logger.warning("GATEWAY_DEMO_USERS is enabled: demo accounts exist. Never use in production.")
     users: dict[str, tuple[str, str]] = {}
-    for role in sorted(ROLES):
+    for role in DEMO_ROLES:
         password = (
             (overrides or {}).get(role)
             or os.getenv(f"GATEWAY_DEMO_PASSWORD_{role.upper()}")
@@ -103,7 +107,12 @@ def demo_users_from_env(overrides: dict[str, str] | None = None) -> dict[str, tu
         )
         if not password:
             password = secrets.token_urlsafe(12)
-            logger.warning("generated demo password for %s: %s", role, password)
+            logger.warning(
+                "demo user %s created with a generated password (not logged); "
+                "set GATEWAY_DEMO_PASSWORD or GATEWAY_DEMO_PASSWORD_%s to choose it",
+                role,
+                role.upper(),
+            )
         users[role] = (password, role)
     return users
 

@@ -27,7 +27,7 @@ from svckit.health import make_health_router
 
 from .auth import InMemoryUserStore, Principal, UserStore, demo_users_from_env, issue_token
 from .ratelimit import RateLimiter
-from .rbac import require_role
+from .rbac import EXTERNAL_ROLE, require_role, require_role_or_external
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,13 @@ ROUTE_ROLES: dict[str, tuple[str, ...]] = {
     "geo": ("officer", "analyst", "admin"),
     "ledger": ("officer", "admin"),
     "citizen": ("citizen", "admin"),
+    # Complaints service (Clerk identity). "investigator" is a gateway role only here: the
+    # analyst/officer roles are NOT mapped to it and `investigator` reaches no other prefix.
+    "complaints": ("citizen", "investigator", "admin"),
 }
+# Prefixes whose upstream verifies an external identity provider's RS256 bearer token itself:
+# the gateway forwards Authorization for them and passes through unverified RS256-shaped tokens.
+EXTERNAL_BEARER_PREFIXES = frozenset({"complaints"})
 
 _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
@@ -232,7 +238,10 @@ def create_app(
         return out
 
     def make_proxy(prefix: str) -> Callable[..., Awaitable[Response]]:
-        guard = Depends(require_role(*ROUTE_ROLES[prefix]))
+        external = prefix in EXTERNAL_BEARER_PREFIXES
+        guard = Depends(
+            (require_role_or_external if external else require_role)(*ROUTE_ROLES[prefix])
+        )
 
         async def proxy(
             request: Request, principal: Annotated[Principal, guard], path: str = ""
@@ -251,8 +260,12 @@ def create_app(
                 return JSONResponse({"error": "upstream_not_configured"}, status_code=502)
             headers = _forward_headers(request)
             headers["X-Request-Id"] = request.state.request_id
-            headers["X-Principal-Role"] = principal.role
-            headers["X-Principal-Sub"] = principal.sub
+            if external:
+                # the upstream verifies the bearer token itself and trusts no gateway headers
+                headers["Authorization"] = request.headers["authorization"]
+            if principal.role != EXTERNAL_ROLE:
+                headers["X-Principal-Role"] = principal.role
+                headers["X-Principal-Sub"] = principal.sub
             url = f"{base.rstrip('/')}/{quote(path, safe='/')}"
             try:
                 return await fetch(request.method, url, request, headers)

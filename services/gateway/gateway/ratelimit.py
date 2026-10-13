@@ -14,6 +14,10 @@ from redis.asyncio import Redis
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIMITS: dict[str, int] = {"citizen": 30, "analyst": 300, "officer": 300, "admin": 600}
+# Added later (kept apart so DEFAULT_LIMITS stays the original four): ``investigator`` for the
+# complaints routes, and ``external`` for the unverified external-IdP bearer pass-through, which is
+# keyed by client IP.
+EXTRA_LIMITS: dict[str, int] = {"investigator": 300, "external": 30}
 WINDOW_SECONDS = 60
 LOGIN_FAILURE_LIMIT = 10
 
@@ -28,7 +32,7 @@ class RateLimiter:
         login_failure_limit: int = LOGIN_FAILURE_LIMIT,
     ) -> None:
         self._redis = redis
-        self._limits = {**DEFAULT_LIMITS, **(limits or {})}
+        self._limits = {**DEFAULT_LIMITS, **EXTRA_LIMITS, **(limits or {})}
         self._window = window
         self._clock = clock
         self._login_limit = login_failure_limit
