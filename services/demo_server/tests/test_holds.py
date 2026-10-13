@@ -166,3 +166,31 @@ def test_double_resolve_race_is_single_effect(gated):
     ev = events(c)
     assert sum(e["kind"] == "antibody.published" for e in ev) == 1
     assert sum(e["kind"] == "hold.resolved" and e["txn_ref"] == hold["txn_ref"] for e in ev) == 1
+
+
+def test_confirm_makes_exactly_one_antibody_even_with_hub_submission_env_set(
+    gated, monkeypatch
+):
+    """The demo engine submits to the hub itself; txn-guard's confirm-to-hub submission is wired
+    only by ``create_service_app`` (never by the harness), so a confirm must not double-submit
+    even when the txn-guard variables are present in the environment."""
+    monkeypatch.setenv("HUB_URL", "http://hub.invalid")
+    monkeypatch.setenv("TXN_BANK_ID", "bank_a")
+    monkeypatch.setenv("TXN_HUB_SUBMIT", "1")
+    c, g = gated
+    off, an, hold = start_and_hold(c)
+    h = c.app.state.engine.run.harness
+    for bank in h.banks.values():
+        assert bank.holds.hub_info()["hub_submit"] == "disabled"
+    r = c.post(
+        f"/api/holds/{hold['txn_ref']}/resolve", json={"action": "confirm_block"}, headers=an
+    )
+    assert r.status_code == 200 and r.json()["hold"]["state"] == "blocked"
+    g.release.set()
+    wait_for(lambda: c.get("/api/demo/state", headers=off).json()["status"] == "finished")
+    abs_ = c.get("/api/antibodies?state=all", headers=an).json()["antibodies"]
+    assert len(abs_) == 1
+    ev = events(c)
+    assert sum(e["kind"] == "antibody.published" for e in ev) == 1
+    assert sum(e["kind"] == "antibody.applied" for e in ev) == 1
+    assert [e["key"] for e in ev if e["kind"] == "scenario.step"].count("antibody_shared") == 1
