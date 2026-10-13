@@ -229,3 +229,26 @@ class RoleBody(BaseModel):
 class ActiveBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     is_active: bool
+
+
+class AnalyzeIn(BaseModel):
+    """Stateless analysis input. Values are lenient on purpose (an odd phone or UPI id is
+    analysed and reported, not rejected) but bounded and free of control characters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=10, max_length=5000),
+        AfterValidator(lambda v: _clean(v, multiline=True) or ""),
+    ]
+    title: _opt(200) = None  # type: ignore[valid-type]
+    suspicious_url: _opt(2048) = None  # type: ignore[valid-type]
+    suspect_phone: _opt(40) = None  # type: ignore[valid-type]
+    upi_id: _opt(320) = None  # type: ignore[valid-type]
+    suspect_email: _opt(254) = None  # type: ignore[valid-type]
+    amount: Annotated[Decimal | None, BeforeValidator(_amount)] = None
+    payment_method: Annotated[PaymentMethod | None, BeforeValidator(_blank_to_none)] = None
+    city: _opt(100) = None  # type: ignore[valid-type]
+    state: _opt(100) = None  # type: ignore[valid-type]
+    social_platform: _opt(50) = None  # type: ignore[valid-type]

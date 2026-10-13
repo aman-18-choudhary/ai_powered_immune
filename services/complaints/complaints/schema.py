@@ -202,6 +202,10 @@ analyses = Table(
     Column("recommended_actions", JSON, nullable=False),
     Column("limitations", JSON, nullable=False),
     Column("status", String(16), nullable=False),
+    # pipeline v2 extras (stages, reasons, URL/entity detail, LLM text). Added after the first
+    # release: NULL for rows written by v1; ``ComplaintStore.create_schema`` adds the column to
+    # an existing table (additive, idempotent).
+    Column("detail", JSON),
     UniqueConstraint("complaint_id", "version", name="uq_analysis_version"),
     CheckConstraint(_in("status", ANALYSIS_STATUSES), name="ck_analysis_status"),
     CheckConstraint(

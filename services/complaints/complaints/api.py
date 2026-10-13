@@ -31,7 +31,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from svckit.health import make_health_router
 
-from .analysis import SCORE_SEMANTICS, AnalysisService, CallGuardTextAnalysis
+from .analysis import (
+    SCORE_SEMANTICS,
+    AnalysisOutcome,
+    AnalysisService,
+    CallGuardTextAnalysis,
+    ComplaintAnalysisPipeline,
+    stored_level,
+)
+from .explain import OllamaClient
 from .config import ConfigError, Settings
 from .evidence import EvidenceStorage, UploadError, receive_upload
 from .identity import (
@@ -46,7 +54,7 @@ from .identity import (
 )
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
-from .validation import ActiveBody, ComplaintIn, EntryBody, RoleBody, StatusBody
+from .validation import ActiveBody, AnalyzeIn, ComplaintIn, EntryBody, RoleBody, StatusBody
 
 log = logging.getLogger("complaints")
 access_log = logging.getLogger("complaints.access")
@@ -71,16 +79,17 @@ CAPABILITIES: dict[str, list[str]] = {
     "CITIZEN": [
         "complaints:create", "complaints:read_own", "complaints:delete_own_submitted",
         "evidence:upload_own", "evidence:read_own", "analysis:run_own", "analysis:read_own",
-        "alerts:read_own", "stats:read_own",
+        "analysis:stateless", "alerts:read_own", "stats:read_own",
     ],
     "INVESTIGATOR": [
         "complaints:read_all", "complaints:update_status", "evidence:read_all",
-        "analysis:run_all", "analysis:read_all", "alerts:read_own", "stats:read_own",
+        "analysis:run_all", "analysis:read_all", "analysis:stateless", "alerts:read_own",
+        "stats:read_own",
     ],
     "ADMIN": [
         "complaints:read_all", "complaints:update_status", "evidence:read_all",
-        "analysis:run_all", "analysis:read_all", "alerts:read_own", "stats:read_own",
-        "admin:users", "admin:roles", "admin:audit", "admin:health",
+        "analysis:run_all", "analysis:read_all", "analysis:stateless", "alerts:read_own",
+        "stats:read_own", "admin:users", "admin:roles", "admin:audit", "admin:health",
     ],
 }  # fmt: skip
 
@@ -250,14 +259,38 @@ def _history_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]  # fmt: skip
 
 
+def _effective_level(a: dict[str, Any]) -> str | None:
+    """CRITICAL is stored as HIGH (see ``analysis.stored_level``); the exact level is in detail."""
+    d = a.get("detail") or {}
+    return d.get("risk_level") or a["risk_level"]
+
+
 def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
     if a is None:
         return None
     return {
         "version": a["version"], "created_at": _iso(a["created_at"]), "status": a["status"],
-        "risk_score": a["risk_score"], "risk_level": a["risk_level"],
+        "risk_score": a["risk_score"], "risk_level": _effective_level(a),
         "score_semantics": SCORE_SEMANTICS,
     }  # fmt: skip
+
+
+def _detail_fields(d: dict[str, Any] | None) -> dict[str, Any]:
+    """Pipeline v2 fields; defaults for rows written by v1 (additive API fields only)."""
+    d = d or {}
+    return {
+        "explanation_source": d.get("explanation_source"),
+        "llm_explanation": d.get("llm_explanation"),
+        "confidence_semantics": d.get("confidence_semantics"),
+        "capability_reasons": d.get("capability_reasons") or {},
+        "unavailable_capabilities": d.get("unavailable_capabilities") or [],
+        "unanalysed_attachments": d.get("unanalysed_attachments") or [],
+        "category_model": d.get("category_model"),
+        "url_analysis": d.get("url_analysis"),
+        "entity_checks": d.get("entity_checks"),
+        "context": d.get("context"),
+        "score_components": d.get("score_components"),
+    }
 
 
 def _analysis_view(a: dict[str, Any]) -> dict[str, Any]:
@@ -265,10 +298,25 @@ def _analysis_view(a: dict[str, Any]) -> dict[str, Any]:
         "id": a["id"], "complaint_id": a["complaint_id"], "version": a["version"],
         "created_at": _iso(a["created_at"]), "pipeline_version": a["pipeline_version"],
         "status": a["status"], "capabilities": a["capabilities"], "risk_score": a["risk_score"],
-        "risk_level": a["risk_level"], "score_semantics": SCORE_SEMANTICS,
+        "risk_level": _effective_level(a), "score_semantics": SCORE_SEMANTICS,
         "classification": a["classification"], "confidence": a["confidence"],
         "indicators": a["indicators"], "explanation": a["explanation"],
         "recommended_actions": a["recommended_actions"], "limitations": a["limitations"],
+        **_detail_fields(a.get("detail")),
+    }  # fmt: skip
+
+
+def _outcome_view(out: AnalysisOutcome, created_at: datetime) -> dict[str, Any]:
+    """The same structure for an analysis that is not stored (``POST /analyze``)."""
+    return {
+        "pipeline_version": out.pipeline_version, "status": out.status,
+        "capabilities": out.capabilities, "risk_score": out.risk_score,
+        "risk_level": out.risk_level, "score_semantics": SCORE_SEMANTICS,
+        "classification": out.classification, "confidence": out.confidence,
+        "indicators": out.indicators, "explanation": out.explanation,
+        "recommended_actions": out.recommended_actions, "limitations": out.limitations,
+        **_detail_fields(out.extra or None),
+        "created_at": _iso(created_at), "persisted": False,
     }  # fmt: skip
 
 
@@ -295,6 +343,7 @@ def create_app(
     jwks_fetcher: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     verifier: IdentityVerifier | None = None,
     analysis: AnalysisService | None = None,
+    ollama: OllamaClient | None = None,
     clock: Callable[[], datetime] | None = None,
     backend_client: ClerkBackendClient | None = None,
 ) -> FastAPI:
@@ -331,7 +380,12 @@ def create_app(
         backend_client = ClerkBackendClient(settings.clerk_secret_key)
     if backend_client is not None:
         closers.append(backend_client.aclose)
-    analysis_service: AnalysisService = analysis or CallGuardTextAnalysis()
+    ollama_client = ollama or OllamaClient(
+        settings.ollama_url, settings.ollama_model, settings.ollama_timeout_s
+    )
+    analysis_service: AnalysisService = analysis or ComplaintAnalysisPipeline(
+        explainer=ollama_client
+    )
 
     storage = EvidenceStorage(settings.evidence_dir)  # type: ignore[arg-type]
     try:
@@ -346,6 +400,7 @@ def create_app(
             "write": settings.rate_write_per_min,
             "upload": settings.rate_upload_per_min,
             "analysis": settings.rate_analysis_per_min,
+            "analyze": settings.rate_analyze_per_min,
             "read": settings.rate_read_per_min,
         }
     )
@@ -800,13 +855,18 @@ def create_app(
     async def run_analysis(complaint_id: str, user: User) -> dict[str, Any]:
         throttle("analysis", user)
         c = await _load(user, complaint_id)
-        out = await analysis_service.analyse(c)
+        files = await asyncio.to_thread(store.list_evidence, complaint_id)
+        out = await analysis_service.analyse(
+            {**c, "evidence": [{"mime_type": e["mime_type"], "size_bytes": e["size_bytes"]}
+                               for e in files]}  # fmt: skip
+        )
         rec = await asyncio.to_thread(
             store.add_analysis,
             complaint_id,
             {
                 "pipeline_version": out.pipeline_version, "capabilities": out.capabilities,
-                "risk_score": out.risk_score, "risk_level": out.risk_level,
+                "risk_score": out.risk_score, "risk_level": stored_level(out.risk_level),
+                "detail": ({**out.extra, "risk_level": out.risk_level} if out.extra else None),
                 "classification": out.classification, "confidence": out.confidence,
                 "indicators": out.indicators, "explanation": out.explanation,
                 "recommended_actions": out.recommended_actions, "limitations": out.limitations,
@@ -815,6 +875,21 @@ def create_app(
             now(),
         )  # fmt: skip
         return _analysis_view(rec)
+
+    @app.post("/analyze")
+    async def analyze_text(body: AnalyzeIn, user: User) -> dict[str, Any]:
+        """Stateless: analyse submitted text and optional fields. Nothing is stored and the
+        content is not logged."""
+        throttle("analyze", user)
+        complaint = {
+            "title": body.title or "", "description": body.text, "category": None,
+            "suspicious_url": body.suspicious_url, "suspect_phone": body.suspect_phone,
+            "upi_id": body.upi_id, "suspect_email": body.suspect_email, "amount": body.amount,
+            "payment_method": body.payment_method, "city": body.city, "state": body.state,
+            "social_platform": body.social_platform, "evidence": [],
+        }  # fmt: skip
+        out = await analysis_service.analyse(complaint)
+        return _outcome_view(out, now())
 
     @app.get("/complaints/{complaint_id}/analysis")
     async def get_analysis(complaint_id: str, user: User) -> Response:
@@ -935,8 +1010,16 @@ def create_app(
             "jwks": {"status": jwks_status},
             "call_guard": {"status": "importable" if guard_ok else "unavailable"},
         }
-        for name in ("qdrant", "neo4j", "postgis", "ollama", "redis"):
+        for name in ("qdrant", "neo4j", "postgis", "redis"):
             out[name] = {"status": "not_configured"}
+        if isinstance(analysis_service, ComplaintAnalysisPipeline):
+            out["category_model"] = await analysis_service.category_health()
+        else:
+            out["category_model"] = {"status": "not_configured"}
+        out["ollama"] = {
+            "status": await ollama_client.probe(),
+            "model": ollama_client.model if ollama_client.configured else None,
+        }
         return out
 
     # ------------------------------------------------------------------ middleware stack

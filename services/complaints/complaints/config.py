@@ -37,6 +37,19 @@ def _int(name: str, default: int, lo: int = 1, hi: int = 10**9) -> int:
     return value
 
 
+def _float(name: str, default: float, lo: float, hi: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number") from exc
+    if not lo <= value <= hi:
+        raise ConfigError(f"{name} must be between {lo} and {hi}")
+    return value
+
+
 def _https_or_loopback(url: str) -> bool:
     parts = urlsplit(url)
     if parts.scheme == "https" and parts.hostname:
@@ -67,6 +80,10 @@ class Settings:
     rate_upload_per_min: int = 20
     rate_analysis_per_min: int = 10
     rate_read_per_min: int = 240
+    rate_analyze_per_min: int = 10
+    ollama_url: str | None = None  # local Ollama server; None = LLM explanation not configured
+    ollama_model: str = "qwen2.5:3b"
+    ollama_timeout_s: float = 20.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -99,6 +116,10 @@ class Settings:
             rate_upload_per_min=_int("COMPLAINTS_RATE_UPLOAD_PER_MIN", 20),
             rate_analysis_per_min=_int("COMPLAINTS_RATE_ANALYSIS_PER_MIN", 10),
             rate_read_per_min=_int("COMPLAINTS_RATE_READ_PER_MIN", 240),
+            rate_analyze_per_min=_int("COMPLAINTS_RATE_ANALYZE_PER_MIN", 10),
+            ollama_url=(os.getenv("OLLAMA_URL") or "").strip().rstrip("/") or None,
+            ollama_model=(os.getenv("OLLAMA_MODEL") or "").strip() or "qwen2.5:3b",
+            ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 20.0, 1.0, 120.0),
         )
 
     def validate(self) -> None:
@@ -128,5 +149,9 @@ class Settings:
                 )
         else:
             raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk' or 'demo'")
+        if self.ollama_url is not None:
+            parts = urlsplit(self.ollama_url)
+            if parts.scheme not in ("http", "https") or not parts.hostname or parts.username:
+                raise ConfigError("OLLAMA_URL must be an http(s) URL without credentials")
         if any(o == "*" or not o for o in self.cors_origins):
             raise ConfigError("COMPLAINTS_CORS_ORIGINS must list explicit origins, not '*'")

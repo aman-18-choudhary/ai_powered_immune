@@ -136,6 +136,16 @@ class ComplaintStore:
             if conn.dialect.name == "postgresql":
                 conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": ADVISORY_LOCK_SCHEMA})
             metadata.create_all(conn)
+            self._ensure_additive_columns(conn)
+
+    @staticmethod
+    def _ensure_additive_columns(conn: Connection) -> None:
+        """Add columns introduced after a table was first created (idempotent, additive only)."""
+        from sqlalchemy import inspect
+
+        cols = {c["name"] for c in inspect(conn).get_columns("analyses")}
+        if "detail" not in cols:
+            conn.execute(text("ALTER TABLE analyses ADD COLUMN detail JSON"))
 
     def close(self) -> None:
         self.engine.dispose()
@@ -766,7 +776,8 @@ class ComplaintStore:
         d["created_at"] = _aware(d["created_at"])
         if summary:
             return {
-                k: d[k] for k in ("version", "created_at", "status", "risk_score", "risk_level")
+                k: d.get(k)
+                for k in ("version", "created_at", "status", "risk_score", "risk_level", "detail")
             }
         return d
 
