@@ -128,3 +128,11 @@ def test_no_exact_or_near_duplicate_leakage_between_train_and_test():
 def test_dataset_has_no_real_looking_account_numbers():
     # amounts are plain numbers; phones come from a documented random generator
     assert all(re.fullmatch(r"\d+", r["amount"]) for r in ROWS if r["amount"])
+
+
+def test_hard_negative_families_are_in_every_split_and_train_has_several():
+    by = collections.defaultdict(set)
+    for r in ROWS:
+        if r["hard_negative"] == "true":
+            by[r["split"]].add(r["group_id"])
+    assert len(by["train"]) >= 2 and len(by["validation"]) >= 1 and len(by["test"]) >= 1
