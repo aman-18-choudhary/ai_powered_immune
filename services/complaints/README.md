@@ -73,7 +73,7 @@ configuration error; there is no insecure fallback.
 |---|---|---|
 | `GET /healthz`, `GET /readyz` | none | readiness pings the DB and the evidence dir |
 | `GET /auth/session` | any | upserts the user, returns `{user, capabilities}` |
-| `POST /auth/entry` | any | `{entry: citizen | investigator}` |
+| `POST /auth/entry` | any | `{entry: "citizen"}` or `{entry: "investigator"}` |
 | `POST /complaints` | CITIZEN | required: `category`, `title`, `description` (10-5000). Optional fields stay NULL when absent or blank. `Idempotency-Key` header (24 h, per user) |
 | `GET /complaints` | any | citizen: own only; staff: all non-deleted. Filters `status category city state incident_from/to created_from/to risk_level has_evidence q`, `sort`, `limit` (1-100), `offset` |
 | `GET /complaints/{id}` | owner, INVESTIGATOR, ADMIN | others get 404, identical to a missing id; includes status history, latest analysis summary, evidence list |
@@ -196,7 +196,7 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 * Uncalibrated score, text only, no category classifier, no explanations.
 * No malware scanning; no data-retention or erasure job; evidence stays on one volume (no
   replication).
-* The in-process rate limiter and idempotency cache of the JWKS lookup are per process.
+* The rate limiter and the (optional) backend email-lookup cache are per process.
 * Create-only schema (no in-place migrations); `python -m complaints.migrate` runs `create_all`
   behind a Postgres advisory lock.
 * No `/metrics` endpoint (not scraped by Prometheus).
