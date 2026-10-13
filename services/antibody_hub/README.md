@@ -20,6 +20,20 @@ so every other bank's txn-guard can block the same mule within seconds (Task 11 
   carries `X-Principal-Bank`, `source_bank` must equal it (bank A cannot publish as bank B).
   `source_bank` must be listed in `HUB_BANKS` when that is set; when it is empty (default) only `^[a-z0-9_-]{2,32}$` is accepted (no free text).
 
+## Who calls `POST /antibodies` (service-to-service principal)
+
+The gateway has no route to the hub. In the multi-container stack the caller is txn-guard: when
+an analyst resolves a hold with `confirm_block`, the bank's txn-guard instance submits the
+antibody itself, asserting a principal after its own gateway trust gate: `X-Principal-Role:
+analyst`, `X-Principal-Sub` = the resolving analyst's subject (the antibody's `confirmed_by`),
+`X-Principal-Bank` = that instance's `TXN_BANK_ID` (so `source_bank` must equal it) and
+`X-Gateway-Secret` = `HUB_GATEWAY_SECRET`. `HUB_BANKS` must list every bank's `TXN_BANK_ID`
+(`infra/docker-compose.yml`: `bank_sbi,bank_hdfc`). The shared secret is a service credential:
+anyone holding it can assert any role, so it must stay on the internal network. Submissions are
+at-least-once (txn-guard retries after timeouts and restarts); the 200 idempotent repeat makes a
+duplicate harmless. While the hub is unreachable the antibody is created late (see the txn-guard
+README, Confirm-to-hub).
+
 ## Endpoints (behind the gateway)
 
 Headers `X-Principal-Role/-Sub/-Bank` are trusted only when `HUB_GATEWAY_SECRET` is set and

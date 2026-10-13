@@ -17,6 +17,12 @@ seconds later pays the same, seasoned mule. The ledger records, in receipt order
 3. `antibody.created` (antibody-hub): an analyst confirmed the mule; the hub published a shared
    threat marker.
 4. `hold.resolved` (txn-guard): the analyst confirmed the block (pseudonymous principal, role).
+   In the multi-container stack the antibody is created by txn-guard itself when the analyst
+   resolves the hold with `confirm_block`: `hold.resolved` is followed by `hold.antibody_submitted`
+   (result, attempts, 8-hex key prefix) once the hub accepted it, then the hub's own
+   `antibody.created`; a terminal failure is `hold.antibody_submit_failed`. While the hub is down
+   these entries are delayed, not lost, and the order of `hold.resolved` / `antibody.created`
+   depends on delivery.
 5. `hold.created` (txn-guard, bank B): B's first transfer to the same account was held with
    reason `ANTIBODY_MATCH`, although nothing local to B looked wrong.
 
@@ -69,7 +75,7 @@ per state change, none quarantined, package about 50 KB.
 | service | events | note |
 |---|---|---|
 | call-guard | `callrisk.alert` | published with the alert in one idempotent step |
-| txn-guard | `hold.created`, `hold.upgraded`, `hold.resolved`, `hold.overdue` | transactional outbox, at-least-once |
+| txn-guard | `hold.created`, `hold.upgraded`, `hold.resolved`, `hold.overdue`, `hold.antibody_submitted`, `hold.antibody_submit_failed` | transactional outbox, at-least-once |
 | antibody-hub | `antibody.created / extended / expired / revoked / revoked.cross_bank / corroborated`, `protected.added / removed` | same DB transaction as the change |
 | evidence-ledger | chain, signed checkpoints, cases, packages, `package.exported` | receipt-ordered, idempotent on the full entry |
 

@@ -248,6 +248,8 @@ rounded to 4 dp, `reason_codes` is the sorted list of codes only, no reason text
 | `hold.upgraded` | the same plus `from_decision, to_decision, trigger` (`call_risk`, `antibody`, `late_call_risk`, `late_antibody`) |
 | `hold.resolved` | the same plus `action` (`release`/`confirm_block`), `resolver_role`, `resolver_ref`, `resolved_ts` |
 | `hold.overdue` | the same plus `overdue: true` |
+| `hold.antibody_submitted` | the same plus `result` (`ok` / `duplicate` / `protected`), `attempts`, `key_prefix` (first 8 hex of the key hash), `resolver_ref` |
+| `hold.antibody_submit_failed` | the same plus `result` (`rejected` / `exhausted` / `skipped`), `attempts`, `reason` (skips), `http_status` (rejections) |
 
 `amount_bucket` is one of `<1k`, `1k-10k`, `10k-100k`, `100k-1m`, `>=1m` (rupees). **Not in the
 ledger:** the amount, payer token, payee hash (only its 16-hex `payee_ref`), account numbers,
@@ -323,9 +325,71 @@ and `consumer.run_antibody_consumer` feed it.
   `decision_seq + 1`, `LATE_ANTIBODY_POST_SETTLEMENT` on settled allows, at most one upgrade per
   transaction per antibody, never a downgrade.
 * **Env**: `TXN_BANK_ID`, `HUB_URL`, `HUB_GATEWAY_SECRET`, `ANTIBODY_BLOOM` (0/1),
-  `ANTIBODY_CACHE_CAPACITY`. Metrics: `txn_guard_antibody_cache_size`,
+  `ANTIBODY_CACHE_CAPACITY` (submission variables: see Confirm-to-hub below). Metrics: `txn_guard_antibody_cache_size`,
   `txn_guard_antibody_matches_total`, `txn_guard_antibody_bootstrap_failed`,
   `txn_guard_antibody_bloom_unconfirmed_total`.
+
+### Confirm-to-hub: an analyst's `confirm_block` creates the antibody
+
+`POST /holds/{txn}/resolve {"action": "confirm_block"}` (role analyst/admin) resolves the hold AND
+queues one antibody submission for the held transaction's payee (`mule_account`, the keyed
+`payee_hash`). Without it the cross-bank mechanism would stop at bank A.
+
+* **Atomic and durable.** The submission is written into the hold record (`hub_pending`) in the
+  same compare-and-set as the `blocked` state, like `audit_pending`; it is a field of the Redis
+  hold record (and of the in-memory record), so it survives a restart; the hold keeps the keyed
+  `payee_hash` additively (never returned by the API, never in logs or the ledger). Only
+  `confirm_block` queues one: `release` never does, a repeated `confirm_block` on a blocked hold
+  returns the same result without a second submission, and a conflicting action is 409 as before.
+  A `release` after a `confirm_block` is not possible (409); a wrongly confirmed mule is corrected
+  by revoking the antibody at the hub (a hub-side operation, audited there).
+* **Delivery (at-least-once, never on the request path).** A background submitter (svckit
+  `Drainer`: fire-and-forget, concurrency cap, per-key in-flight guard, per-attempt timeout
+  `HUB_SUBMIT_TIMEOUT_S` = 2 s, breaker) plus the periodic sweeper (`AUDIT_DRAIN_INTERVAL_S`,
+  batch cap `HUB_SUBMIT_SWEEP_BATCH` = 100) `POST {HUB_URL}/antibodies` with
+  `X-Principal-Role: analyst`, `X-Principal-Sub: <resolver sub via safe_actor>`,
+  `X-Principal-Bank: <TXN_BANK_ID>` and `X-Gateway-Secret: <HUB_GATEWAY_SECRET>`. The body is
+  `kind`, `key_hash`, `source_bank` (= `TXN_BANK_ID`), `evidence_ref` (the ledger `txn_ref` with
+  its hex digits mapped to letters g-p, so the hub's stricter identifier guard cannot refuse it;
+  reversible) and `extend: false`. The resolve HTTP response returns after the compare-and-set;
+  it does not await the hub (tested with a hub that sleeps 5 s).
+* **Outcomes.** 201 ok / 200 duplicate (the hub is idempotent for an identical active antibody):
+  the pending item is cleared in a CAS and `hold.antibody_submitted` is audited. 409 `PROTECTED`:
+  terminal, recorded as `hub_result: protected`, audited, never retried. 422 (or any other 4xx
+  except 401/403/404/405/408/425/429): terminal failure, `hub_result: rejected`,
+  `hold.antibody_submit_failed`, never retried. 401/403/404/405: configuration error (wrong
+  `HUB_GATEWAY_SECRET`, `HUB_URL`, or this bank missing from the hub's `HUB_BANKS`): loud
+  WARNING, `txn_guard_hub_submit_auth_failures_total`, the item stays pending and is retried with
+  backoff. 5xx, 408/425/429, network errors, timeouts: retried with exponential backoff
+  (1 s doubling, capped at 60 s; the backoff clock is in memory, so a restart retries at once)
+  until `HUB_SUBMIT_MAX_ATTEMPTS` (default unlimited; when set, exhaustion is terminal and
+  audited as `exhausted`).
+* **Skips (recorded, never fail the resolve).** `TXN_BANK_ID` unset or not a hub bank slug, a
+  `payee_hash` that is not 64 lowercase hex (or a hold created before the field existed), or the
+  global pending cap (`HUB_SUBMIT_MAX_PENDING`, default 10,000 undelivered submissions per
+  instance): `hub_result: skipped` + `hub_reason`, counter `result="skipped"`, one
+  `hold.antibody_submit_failed` audit entry (`result: skipped`).
+* **Guarantee, exactly.** While the hub is down or misconfigured the hold is resolved and the
+  antibody is created late: other banks are NOT protected until the submission is delivered.
+  A skipped or terminally rejected submission is never retried automatically (an operator must
+  re-confirm via the hub). Counters and the retry clock are per process; the pending set is in the
+  hold store (Redis `txnguard:holds:hub`). A closed hold with an undelivered submission is
+  persisted without the 90-day expiry until it is delivered or terminally failed.
+* **Config.** `HUB_URL`, `HUB_GATEWAY_SECRET` (never logged), `TXN_BANK_ID`; `TXN_HUB_SUBMIT`
+  (`1`/`0`; unset means on only when both `HUB_URL` and `TXN_BANK_ID` are set, so single-instance
+  dev/test is unchanged); `HUB_SUBMIT_TIMEOUT_S`, `HUB_SUBMIT_MAX_ATTEMPTS`,
+  `HUB_SUBMIT_MAX_PENDING`, `HUB_SUBMIT_SWEEP_BATCH`, `HUB_SUBMIT_CONCURRENCY` (8),
+  `HUB_SUBMIT_BREAKER_COOLDOWN_S` (10).
+* **Observability.** `txn_guard_hub_submissions_total{result}` (ok, duplicate, protected,
+  rejected, retried, skipped, exhausted), `txn_guard_hub_pending`,
+  `txn_guard_hub_submit_auth_failures_total`, `txn_guard_hub_submit_breaker_open`,
+  `txn_guard_hub_last_error_info{class}` (an error class name only). `/readyz` adds
+  `hub_submit` (`enabled`/`disabled`) and `hub_reachable` (`unknown`/`true`/`false`, from the
+  last attempt): informational, never a readiness failure. A hold view exposes `hub_pending`
+  (bool), `hub_result` and `hub_reason`.
+* **Demo server.** The single-process demo wires no hub client into its hold stores, so
+  `confirm_block` there queues nothing and the engine's own `hub.submit` stays the only
+  submission (one antibody per confirm; tested).
 
 ### Antibody benchmark caveats and the hero demo
 

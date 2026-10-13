@@ -183,6 +183,10 @@ services:
       REDIS_URL: redis://redis:6379/1
       HUB_URL: http://antibody-hub:8000
       HUB_GATEWAY_SECRET: ${HUB_GATEWAY_SECRET:?set HUB_GATEWAY_SECRET in infra/.env (see .env.example)}
+      # confirm_block at this bank creates the antibody at the hub (POST /antibodies as role
+      # analyst, X-Principal-Bank = TXN_BANK_ID, which must be listed in the hub's HUB_BANKS)
+      TXN_HUB_SUBMIT: ${TXN_HUB_SUBMIT:-1}
+      HUB_SUBMIT_TIMEOUT_S: ${HUB_SUBMIT_TIMEOUT_S:-2}
       HOLD_DEADLINE_S: ${HOLD_DEADLINE_S:-120}
       # The gateway forwards X-Principal-* but does not inject a per-service secret, so the
       # services behind it trust those headers and are reachable only on the internal network.

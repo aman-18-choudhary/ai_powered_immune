@@ -66,6 +66,7 @@ flowchart TB
   K -- "txn.decisions, antibody.published" --> GT
   HUB -- "antibody.published" --> K
   TA & TB -- "bootstrap exact set (X-Gateway-Secret)" --> HUB
+  TA & TB -- "POST /antibodies on confirm_block (X-Gateway-Secret, analyst principal)" --> HUB
   K -- "ledger.append" --> LED
   HUB --- PG
   LED --- PG
@@ -88,7 +89,11 @@ Notes on the wiring, all from `infra/docker-compose.yml`:
 * The gateway forwards `X-Principal-Role` / `X-Principal-Sub` but injects no per-service secret.
   Services behind it therefore run with `TRUST_GATEWAY_HEADERS=1` and are reachable only on the
   internal network. The hub is the exception: it is not routed by the gateway, and the txn-guards
-  present `HUB_GATEWAY_SECRET` as `X-Gateway-Secret`.
+  present `HUB_GATEWAY_SECRET` as `X-Gateway-Secret`. Analysts never call the hub directly: they
+  confirm a mule with `holds/{txn}/resolve` through the gateway's `/api/txn` route, and txn-guard submits the antibody to
+  the hub itself (service-to-service principal: role `analyst`, `X-Principal-Sub` = the resolving
+  analyst's subject, `X-Principal-Bank` = this instance's `TXN_BANK_ID`, which the hub requires to
+  equal `source_bank`).
 * `/api/geo` is served by the standalone `geo-intel` service in the stack (`GATEWAY_UPSTREAM_GEO`);
   it is fed by `complaints` events, while the demo-server still computes its own geographic view
   in process from the simulator's points.
@@ -123,8 +128,9 @@ sequenceDiagram
   Sim->>TA: txn.events (A pays mule M)
   TA-->>An: hold_verify (reason codes incl. ACTIVE_SCAM_CALL)
   TA-->>Led: hold.created
-  An->>TA: resolve: confirm_block
-  An->>Hub: antibody for M (keyed hash, TTL 14 d)
+  An->>TA: resolve: confirm_block (hold + durable submission in one write)
+  TA-->>An: 200 (never waits for the hub)
+  TA->>Hub: POST /antibodies as analyst of bank A (background, at-least-once)
   Hub-->>TB: antibody.published
   Hub-->>Led: antibody.created (same DB transaction)
   Sim->>TB: txn.events (victim B pays M 90 s later, no flagged call)
@@ -212,6 +218,7 @@ payment is blocked.
 | Redis | gateway | rate limiter fails open (0.25 s connect timeout, 0.5 s limiter timeout) | gateway/main.py |
 | Redis | txn-guard | history, holds, pending and idempotency live there; without it transactions are not decided (retry then DLQ). Required (`REDIS_URL`) | txn_guard README |
 | Redis | call-guard | session state is in Redis when `REDIS_URL` is set; losing the session store is one of the two ways an audit entry can be lost (see first row) | call_guard README |
+| antibody-hub | txn-guard (confirm_block) | the resolve never waits for the hub; the submission is stored on the hold record in the same write as the resolution and retried (capped backoff 60 s, breaker, sweeper). While the hub is down the hold is resolved but the antibody is created late: other banks are not protected until delivery; 401/403/404 are loud (`txn_guard_hub_submit_auth_failures_total`) and stay pending; 409 PROTECTED and 422 are terminal and audited (`hold.antibody_submitted` / `hold.antibody_submit_failed`) | txn_guard README, Confirm-to-hub |
 | antibody-hub | txn-guard | startup bootstrap bounded (15 s); on failure WARNING, `antibody_bootstrap_failed=1`, runs on events only, re-bootstraps every 900 s; unknown antibodies are not enforced (fail-open) | txn_guard README, Cross-bank antibodies |
 | model artifact missing / tampered | call-guard, txn-guard | SHA-256 pin, version and smoke test; otherwise rules-only fallback, `/readyz` shows `fallback_mode=true` | txn_guard README, Fallback |
 | analyst does not resolve a hold | txn-guard | hold stays open, flagged overdue; never auto-released or auto-blocked | txn_guard README |
