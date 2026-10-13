@@ -9,12 +9,20 @@ pytestmark = pytest.mark.skipif(not URL, reason="COMPLAINTS_TEST_POSTGRES_URL no
 
 
 def test_schema_and_core_flow_on_postgres():
-    from datetime import UTC, datetime
-
-    from complaints.identity import Identity
     from complaints.store import ComplaintStore
 
     st = ComplaintStore(URL)
+    try:
+        _flow(st)
+    finally:
+        st.close()
+
+
+def _flow(st):
+    from datetime import UTC, datetime
+
+    from complaints.identity import Identity
+
     st.create_schema()
     st.create_schema()  # idempotent
     now = datetime.now(UTC)
@@ -24,7 +32,6 @@ def test_schema_and_core_flow_on_postgres():
     assert u["role"] == "CITIZEN"
     c, created = st.create_complaint(
         u["id"], {"category": "PHISHING", "title": "t" * 5, "description": "d" * 12,
-                  "amount": None}, now, idempotency_key=None, request_hash="h",
+                  "amount": None, "reported_at": now}, now, idempotency_key=None, request_hash="h",
     )  # fmt: skip
     assert created and st.get_complaint(c["id"])["owner_user_id"] == u["id"]
-    st.close()

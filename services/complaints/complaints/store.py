@@ -609,11 +609,22 @@ class ComplaintStore:
     def add_evidence(
         self, complaint_id: str, uploader_id: str, rec: dict[str, Any], max_count: int,
         now: datetime,
-    ) -> dict[str, Any]:  # fmt: skip
+    ) -> tuple[dict[str, Any], bool]:  # fmt: skip
+        """Insert a stored-evidence row. Returns (row, created); re-sending the same bytes (same
+        sha256) for the complaint returns the existing row with created=False (retry-safe)."""
         with self._tx() as conn:
             cur = self._get_complaint(conn, complaint_id, lock=True)
             if cur is None or cur["owner_user_id"] != uploader_id:
                 raise NotFound()
+            same = conn.execute(
+                select(complaint_evidence).where(
+                    complaint_evidence.c.complaint_id == complaint_id,
+                    complaint_evidence.c.status == "stored",
+                    complaint_evidence.c.sha256 == rec["sha256"],
+                )
+            ).first()
+            if same is not None:
+                return {**dict(same._mapping), "created_at": _aware(same.created_at)}, False
             if cur["status"] in CLOSED_STATUSES:
                 raise Conflict("complaint_closed")
             n = conn.execute(
@@ -636,7 +647,7 @@ class ComplaintStore:
             row = conn.execute(
                 select(complaint_evidence).where(complaint_evidence.c.id == eid)
             ).one()
-            return {**dict(row._mapping), "created_at": _aware(row.created_at)}
+            return {**dict(row._mapping), "created_at": _aware(row.created_at)}, True
 
     def list_evidence(self, complaint_id: str) -> list[dict[str, Any]]:
         with self.engine.connect() as c:

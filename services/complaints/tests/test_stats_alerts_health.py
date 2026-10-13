@@ -222,22 +222,54 @@ async def test_no_secret_columns_in_schema():
 
 
 async def test_schema_constraints(settings):
-    from sqlalchemy import create_engine, text
+    from datetime import UTC, datetime
+
+    from sqlalchemy import insert
     from sqlalchemy.exc import IntegrityError
 
+    from complaints.schema import users
     from complaints.store import ComplaintStore
 
     st = ComplaintStore(settings.database_url)
-    with st.engine.begin() as c, pytest.raises(IntegrityError):
-        c.execute(
-            text(
-                "INSERT INTO users (id, idp_subject, email_verified, role, is_active, created_at) "
-                "VALUES ('1','s',0,'ROOT',1,'2026-01-01')"
+    try:
+        with pytest.raises(IntegrityError), st.engine.begin() as c:
+            c.execute(
+                insert(users).values(
+                    id="1",
+                    idp_subject="s",
+                    email_verified=False,
+                    role="ROOT",
+                    is_active=True,
+                    created_at=datetime.now(UTC),
+                )
             )
-        )
-    st.close()
-    assert create_engine  # import used
+    finally:
+        st.close()
 
 
 def test_httpx_available():
     assert httpx.__version__
+
+
+def test_rate_limiter_fails_open_on_internal_error():
+    from complaints.api import RateLimiter
+
+    assert RateLimiter({}).hit("unknown-kind", "u") is None  # KeyError inside -> allowed
+
+
+async def test_chunked_json_body_capped(client, tok):
+    async def gen():
+        for _ in range(40):
+            yield b" " * 4096
+
+    r = await client.post(
+        "/complaints", content=gen(), headers={**tok("a"), "Content-Type": "application/json"}
+    )
+    assert r.status_code == 413
+
+
+async def test_unknown_field_name_not_echoed(client, tok):
+    r = await client.post("/complaints", json={**{"category": "OTHER", "title": "abc",
+                          "description": "long enough text"}, "leaky_key_name_77": 1},
+                          headers=tok("a"))  # fmt: skip
+    assert r.status_code == 422 and "leaky_key_name_77" not in r.text

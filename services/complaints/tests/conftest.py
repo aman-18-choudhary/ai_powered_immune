@@ -5,8 +5,9 @@ verifier is given the matching JWKS directly.
 """
 
 import json
+import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import httpx
@@ -102,10 +103,27 @@ def analysis() -> FakeAnalysis:
     return FakeAnalysis()
 
 
+PG_URL = os.getenv("COMPLAINTS_TEST_POSTGRES_URL")
+
+
+def _db_url(tmp_path: Path) -> str:
+    if not PG_URL:
+        return f"sqlite:///{tmp_path / 'c.db'}"
+    from sqlalchemy import create_engine
+
+    from complaints.schema import metadata
+
+    eng = create_engine(PG_URL)
+    with eng.begin() as conn:  # fresh tables for every test
+        metadata.drop_all(conn)
+    eng.dispose()
+    return PG_URL
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        database_url=f"sqlite:///{tmp_path / 'c.db'}",
+        database_url=_db_url(tmp_path),
         auth_mode="clerk",
         clerk_issuer=ISSUER,
         clerk_jwks_url="https://clerk.test.example/.well-known/jwks.json",
@@ -118,13 +136,19 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def make_app(settings, idp, analysis) -> Callable[..., object]:
+def make_app(settings, idp, analysis) -> Iterator[Callable[..., object]]:
+    made = []
+
     def _make(**kw):
         s = kw.pop("settings", settings)
         jwks = kw.pop("jwks", idp.jwks())
-        return create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
+        app = create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
+        made.append(app)
+        return app
 
-    return _make
+    yield _make
+    for app in made:  # tests do not run the lifespan: release DB connections explicitly
+        app.state.store.close()
 
 
 @pytest.fixture

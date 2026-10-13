@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, Header, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -93,8 +93,12 @@ class ApiError(Exception):
         self.status, self.code, self.message, self.headers = status, code, message, headers or {}
 
 
-class BodyTooLarge(Exception):
-    pass
+class BodyTooLarge(HTTPException):
+    """Raised from the ASGI receive wrapper. An HTTPException subclass so FastAPI's body parsing
+    lets it through (it turns any other error into a 400)."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413)
 
 
 def _err(status: int, code: str, message: str, headers: dict[str, str] | None = None) -> Response:
@@ -383,7 +387,14 @@ def create_app(
     async def _validation(_: Request, exc: RequestValidationError) -> Response:
         # never echo submitted values (FastAPI's default includes "input" and "ctx")
         detail = [
-            {"loc": [str(p) for p in e["loc"]], "msg": e["msg"], "type": e["type"]}
+            {
+                # an unknown key name is client input: do not echo it either
+                "loc": [
+                    str(p) for p in (e["loc"][:-1] if e["type"] == "extra_forbidden" else e["loc"])
+                ],
+                "msg": e["msg"],
+                "type": e["type"],
+            }
             for e in exc.errors()
         ]
         return JSONResponse({"error": "validation_error", "detail": detail}, status_code=422)
@@ -621,14 +632,7 @@ def create_app(
             v = filters[k]
             if v is not None and v.tzinfo is None:
                 filters[k] = v.replace(tzinfo=UTC)
-        if not user.staff:
-            # citizens: own complaints only; staff-only filters are dropped, never widened
-            for k in ("city", "state", "risk_level", "has_evidence", "q"):
-                if k in ("q",):
-                    continue
-                filters[k] = None
-            filters["city"] = city
-            filters["state"] = state
+        # the scope is applied by the store (owner_id for citizens); filters can only narrow it
         items, total = await asyncio.to_thread(
             store.list_complaints,
             owner_id=None if user.staff else user.id,
@@ -689,7 +693,7 @@ def create_app(
             raise ApiError(503, "evidence_storage_failed",
                            "The file could not be stored.") from None  # fmt: skip
         try:
-            rec = await asyncio.to_thread(
+            rec, created = await asyncio.to_thread(
                 store.add_evidence, complaint_id, user.id,
                 {
                     "original_filename": stored.original_filename, "mime_type": stored.mime_type,
@@ -701,7 +705,9 @@ def create_app(
         except BaseException:
             await asyncio.to_thread(storage.remove, stored.storage_key)  # no orphan on failure
             raise
-        return JSONResponse(_evidence_view(rec), status_code=201)
+        if not created:  # the same bytes were already stored for this complaint: a retry
+            await asyncio.to_thread(storage.remove, stored.storage_key)
+        return JSONResponse(_evidence_view(rec), status_code=201 if created else 200)
 
     @app.get("/complaints/{complaint_id}/evidence")
     async def list_evidence(complaint_id: str, user: User) -> dict[str, Any]:

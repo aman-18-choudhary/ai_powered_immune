@@ -292,3 +292,16 @@ async def test_missing_file_on_disk_is_honest_404(client, tok, settings):
             p.unlink()
     r = await client.get(f"/complaints/{c['id']}/evidence/{ev['id']}/download", headers=tok("a"))
     assert r.status_code == 404 and r.json()["error"] == "evidence_file_missing"
+
+
+async def test_resending_same_bytes_is_a_retry_not_a_second_file(client, tok, settings):
+    c = await create(client, tok("a"))
+    first = await up(client, tok("a"), c["id"], "a.png", PNG)
+    again = await up(client, tok("a"), c["id"], "renamed.png", PNG)
+    assert first.status_code == 201 and again.status_code == 200
+    assert again.json()["id"] == first.json()["id"]
+    assert len([p for p in settings.evidence_dir.rglob("*") if p.is_file()]) == 1
+    assert (
+        len((await client.get(f"/complaints/{c['id']}/evidence", headers=tok("a"))).json()["items"])
+        == 1
+    )
