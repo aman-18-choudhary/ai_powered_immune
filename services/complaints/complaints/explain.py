@@ -48,8 +48,8 @@ _CLAIM = re.compile(r"probab|likelihood|\bchances?\b|\b\d{1,3}\s?%|percent", re.
 
 
 def sanitise(text: str, limit: int = MAX_PROMPT_TEXT) -> str:
-    t = _URL.sub("[link]", text)
-    t = _EMAIL_UPI.sub("[id]", t)
+    t = _EMAIL_UPI.sub("[id]", text)
+    t = _URL.sub("[link]", t)
     t = _PHONE.sub("[number]", t)
     t = _DIGITS.sub("[number]", t)
     return t[:limit]

@@ -97,8 +97,10 @@ class CategoryModel:
             ab = conf < self.min_confidence
             out.append(
                 CategoryPrediction(
-                    UNDETERMINED if ab else self.classes[order[0]], conf,
-                    tuple((self.classes[i], round(probs[i], 4)) for i in order[:3]), ab,
+                    UNDETERMINED if ab else self.classes[order[0]],
+                    conf,
+                    tuple((self.classes[i], round(probs[i], 4)) for i in order[:3]),
+                    ab,
                     self.classes[order[0]],
                 )  # fmt: skip
             )
@@ -128,9 +130,7 @@ def min_confidence_from_env(default: float) -> float:
     return v if 0.0 <= v <= 1.0 else default
 
 
-def load_with_status(
-    path: Path | None = None, expected_sha256: str | None = None
-) -> LoadResult:
+def load_with_status(path: Path | None = None, expected_sha256: str | None = None) -> LoadResult:
     path = path or ARTIFACT_PATH
     try:
         from . import artifact_pin

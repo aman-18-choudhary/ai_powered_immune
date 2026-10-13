@@ -53,7 +53,9 @@ def test_indicator_shape_and_weights_in_range():
         assert i["source"] == "url_heuristics"
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "http://", "x" * 3000, "http://a b.com/", "http://[::1"])
+@pytest.mark.parametrize(
+    "bad", ["", "   ", "http://", "x" * 3000, "http://a b.com/", "http://[::1"]
+)
 def test_unparseable_urls_give_no_indicators(bad):
     r = analyse_url(bad)
     assert r["status"] == "unparseable" and r["indicators"] == []
@@ -79,7 +81,10 @@ def test_placeholder_and_malformed_values_are_flagged_as_data_quality():
                                                 "upi_id": "bad id@x"})["checks"]}  # fmt: skip
     assert f["phone"]["plausible"] is False and f["phone"]["notes"]
     assert f["upi_id"]["format"] == "invalid"
-    g = {c["field"]: c for c in check_entities({"suspect_phone": "12ab", "upi_id": "x1@weirdbank"})["checks"]}
+    g = {
+        c["field"]: c
+        for c in check_entities({"suspect_phone": "12ab", "upi_id": "x1@weirdbank"})["checks"]
+    }
     assert g["phone"]["format"] == "invalid"
     assert g["upi_id"]["format"] == "valid" and g["upi_id"]["handle_known"] is False
     assert "not evidence of fraud" in " ".join(g["upi_id"]["notes"])

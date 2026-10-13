@@ -389,7 +389,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         url_analysis: dict[str, Any] | None = None
         if url:
             url_analysis = analyse_url(str(url))
-            caps["url_heuristics"] = "available" if url_analysis["status"] == "analysed"                 else "unavailable"  # fmt: skip
+            ok = url_analysis["status"] == "analysed"
+            caps["url_heuristics"] = "available" if ok else "unavailable"
             if url_analysis["status"] != "analysed":
                 reasons["url_heuristics"] = "url_unparseable"
             indicators += url_analysis["indicators"]
@@ -406,7 +407,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
 
         # (e) geographic context (recorded only)
         ctx = context_fields(complaint)
-        caps["geographic_context"] = "available" if ctx["geographic"]["present"]             else "skipped_no_input"  # fmt: skip
+        has_geo = ctx["geographic"]["present"]
+        caps["geographic_context"] = "available" if has_geo else "skipped_no_input"
 
         # (f) attachments: audio transcript / OCR are not available; list what was not analysed
         unanalysed, kinds = _attachments(complaint.get("evidence"))
@@ -431,7 +433,10 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         risk: int | None = None
         if bases or (url_analysis and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
-        scored = text_score is not None or prior is not None or classification is not None             or bool(weights)  # fmt: skip
+        scored = (
+            text_score is not None or prior is not None or classification is not None
+            or bool(weights)
+        )  # fmt: skip
         level: str | None = band_v2(risk) if risk is not None else None
         withheld = False
         if text_score is None and level in (None, "LOW"):
@@ -489,7 +494,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         # limitations (exact, no overclaims)
         limitations += [
             "The risk score is an uncalibrated heuristic ordering, not a likelihood. Formula: "
-            + RISK_FORMULA + ".",
+            + RISK_FORMULA
+            + ".",
             "The text scorer was built for digital-arrest call scripts and trained on simulator "
             "and authored data; it has not been validated on real complaints.",
             "The category model was trained on synthetic template data only and has not been "

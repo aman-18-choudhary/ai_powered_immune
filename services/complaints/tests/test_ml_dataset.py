@@ -5,8 +5,6 @@ import collections
 import re
 from pathlib import Path
 
-import pytest
-
 from complaints.ml import synth
 
 ROWS = synth.read_csv(synth.DEFAULT_CSV)

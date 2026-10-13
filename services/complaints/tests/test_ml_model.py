@@ -116,7 +116,9 @@ def test_low_confidence_abstains_and_threshold_env_applies(model, monkeypatch):
     monkeypatch.setenv("CATEGORY_MIN_CONFIDENCE", "0.99")
     strict = load_category_model()
     assert strict is not None
-    p = strict.predict("A caller said I am under digital arrest, transfer money to RBI safe account")
+    p = strict.predict(
+        "A caller said I am under digital arrest, transfer money to RBI safe account"
+    )
     assert p.label == UNDETERMINED and p.abstained and p.argmax_label == "DIGITAL_ARREST"
     monkeypatch.setenv("CATEGORY_MIN_CONFIDENCE", "garbage")
     assert load_category_model().min_confidence == model.min_confidence
@@ -178,4 +180,6 @@ def test_metrics_file_documents_leakage_gap_and_synthetic_label():
 def test_training_splits_are_grouped_with_no_overlap():
     d = METRICS["dataset"]
     assert sum(d["rows_per_split"].values()) == d["rows"] == len(ROWS)
-    assert METRICS["dataset"]["sha256"] == hashlib.sha256(synth.DEFAULT_CSV.read_bytes()).hexdigest()
+    assert (
+        METRICS["dataset"]["sha256"] == hashlib.sha256(synth.DEFAULT_CSV.read_bytes()).hexdigest()
+    )

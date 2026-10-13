@@ -111,7 +111,12 @@ def analyse_url(raw: str) -> dict[str, Any]:
         "status": "unparseable", "scheme": None, "host": None, "indicators": [],
         "fetched": False, "reputation": "unavailable", "limits": limits,
     }  # fmt: skip
-    if not isinstance(raw, str) or not raw.strip() or len(raw) > MAX_URL or _CTRL.search(raw.strip()):
+    if (
+        not isinstance(raw, str)
+        or not raw.strip()
+        or len(raw) > MAX_URL
+        or _CTRL.search(raw.strip())
+    ):
         return base
     s = raw.strip()
     if "://" not in s:
@@ -139,7 +144,9 @@ def analyse_url(raw: str) -> dict[str, Any]:
                         "the link contains a user-info part before the host, a common way to "
                         "disguise the real address"))  # fmt: skip
     if _is_ip_literal(host):
-        ind.append(_ind("IP_LITERAL_HOST", 0.45, "the link uses a raw IP address instead of a name"))
+        ind.append(
+            _ind("IP_LITERAL_HOST", 0.45, "the link uses a raw IP address instead of a name")
+        )
         return base  # no domain-based checks apply
     labels = [lb for lb in host.split(".") if lb]
     if any(lb.startswith("xn--") for lb in labels):
@@ -251,9 +258,13 @@ def context_fields(complaint: dict[str, Any]) -> dict[str, Any]:
         geo.append("coordinates")
     return {
         "present_fields": present,
-        "geographic": {"present": bool(geo), "fields": geo, "used_for_scoring": False,
-                       "note": "location is recorded as context only; hotspot comparison is not "
-                               "part of this analysis"},  # fmt: skip
+        "geographic": {
+            "present": bool(geo),
+            "fields": geo,
+            "used_for_scoring": False,
+            "note": "location is recorded as context only; hotspot comparison is not "
+            "part of this analysis",
+        },  # fmt: skip
         "amount_present": complaint.get("amount") not in (None, ""),
         "payment_method_present": complaint.get("payment_method") not in (None, ""),
         "used_for_scoring": False,

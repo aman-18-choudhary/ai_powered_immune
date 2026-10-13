@@ -86,7 +86,7 @@ CITIES = [("Mumbai", "Maharashtra"), ("Pune", "Maharashtra"), ("Delhi", "Delhi")
           ("Bengaluru", "Karnataka"), ("Hyderabad", "Telangana"), ("Chennai", "Tamil Nadu"),
           ("Kolkata", "West Bengal"), ("Jaipur", "Rajasthan"), ("Lucknow", "Uttar Pradesh"),
           ("Ahmedabad", "Gujarat"), ("Patna", "Bihar"), ("Indore", "Madhya Pradesh"),
-          ("Nagpur", "Maharashtra"), ("Surat", "Gujarat"), ("Bhopal", "Madhya Pradesh")]  # fmt: skip
+          ("Nagpur", "Maharashtra"), ("Surat", "Gujarat"), ("Bhopal", "Madhya Pradesh")]  # fmt: skip  # noqa: E501
 AMOUNTS = [499, 999, 1500, 2999, 4800, 9500, 12000, 25000, 48500, 75000, 150000, 320000]
 HANDLES = ["okaxis", "oksbi", "okhdfcbank", "ybl", "paytm", "upi", "ibl", "axl"]
 TLDS_BAD = ["xyz", "top", "click", "info", "online", "site", "cc"]
@@ -98,10 +98,23 @@ GENERIC_OPEN = {
     "dv": ["", "", "", "नमस्ते, ", "सर, "],
 }
 GENERIC_CLOSE = {
-    "en": ["", "", "", " Kindly take action.", " I am very worried.", " Please look into this.",
-           " This happened yesterday."],  # fmt: skip
-    "hi": ["", "", "", " Kripya karyavahi karein.", " Main bahut pareshan hoon.",
-           " Ye kal hua tha."],  # fmt: skip
+    "en": [
+        "",
+        "",
+        "",
+        " Kindly take action.",
+        " I am very worried.",
+        " Please look into this.",
+        " This happened yesterday.",
+    ],  # fmt: skip
+    "hi": [
+        "",
+        "",
+        "",
+        " Kripya karyavahi karein.",
+        " Main bahut pareshan hoon.",
+        " Ye kal hua tha.",
+    ],  # fmt: skip
     "dv": ["", "", "", " कृपया कार्रवाई करें।", " मैं बहुत परेशान हूँ।"],
 }
 HINGLISH_VARIANTS = {
@@ -164,11 +177,14 @@ def _phone(rng: random.Random) -> str:
 
 def _url(rng: random.Random, kind: str | None = None) -> str:
     kind = kind or rng.choice(("lookalike", "lookalike", "lookalike", "short", "ip", "plain"))
-    tail = "".join(rng.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(rng.randrange(4, 8)))
+    tail = "".join(
+        rng.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(rng.randrange(4, 8))
+    )
     if kind == "lookalike":
         b = rng.choice(BRAND_TOKENS)
-        return f"https://{b}-{rng.choice(['kyc', 'secure', 'update', 'login'])}-{tail}." + rng.choice(
-            TLDS_BAD
+        return (
+            f"https://{b}-{rng.choice(['kyc', 'secure', 'update', 'login'])}-{tail}."
+            + rng.choice(TLDS_BAD)
         )
     if kind == "short":
         return f"https://{rng.choice(SHORTENERS)}/{tail}"
@@ -224,7 +240,7 @@ def generate(seed: int = SEED) -> list[dict[str, Any]]:
             rng = random.Random(f"{seed}:{cat}:{key}")
             langs = [lg for lg in ("en", "hi", "dv") if tmpls[lg]]
             weights = [LANG_WEIGHTS[lg] for lg in langs]
-            for i in range(per):
+            for _ in range(per):
                 lang = rng.choices(langs, weights)[0]
                 ti = rng.randrange(len(tmpls[lang]))
                 slots = _fill(rng)
@@ -269,12 +285,17 @@ def generate(seed: int = SEED) -> list[dict[str, Any]]:
                 if rng.random() < p["plat"]:
                     row["social_platform"] = slots["platform"]
                     if rng.random() < p["acct"] / max(p["plat"], 0.01):
-                        row["social_account"] = "@" + rng.choice(["real", "the", "official", "mr"]) + (
-                            "_" + str(rng.randrange(100, 9999))
+                        row["social_account"] = (
+                            "@"
+                            + rng.choice(["real", "the", "official", "mr"])
+                            + ("_" + str(rng.randrange(100, 9999)))
                         )
                 if rng.random() < p["email"]:
-                    row["suspect_email"] = f"{rng.choice(['hr', 'support', 'care'])}{rng.randrange(10, 99)}@" + rng.choice(  # noqa: E501
-                        ["mail-secure.top", "gmail.com", "jobs-portal.xyz", "outlook.com"]
+                    row["suspect_email"] = (
+                        f"{rng.choice(['hr', 'support', 'care'])}{rng.randrange(10, 99)}@"
+                        + rng.choice(  # noqa: E501
+                            ["mail-secure.top", "gmail.com", "jobs-portal.xyz", "outlook.com"]
+                        )
                     )
                 rows.append(row)
                 # augmentation: copy inherits group/split, never crosses it

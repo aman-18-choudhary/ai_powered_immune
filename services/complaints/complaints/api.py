@@ -39,9 +39,9 @@ from .analysis import (
     ComplaintAnalysisPipeline,
     stored_level,
 )
-from .explain import OllamaClient
 from .config import ConfigError, Settings
 from .evidence import EvidenceStorage, UploadError, receive_upload
+from .explain import OllamaClient
 from .identity import (
     ClerkBackendClient,
     ClerkJwtVerifier,
@@ -857,8 +857,12 @@ def create_app(
         c = await _load(user, complaint_id)
         files = await asyncio.to_thread(store.list_evidence, complaint_id)
         out = await analysis_service.analyse(
-            {**c, "evidence": [{"mime_type": e["mime_type"], "size_bytes": e["size_bytes"]}
-                               for e in files]}  # fmt: skip
+            {
+                **c,
+                "evidence": [
+                    {"mime_type": e["mime_type"], "size_bytes": e["size_bytes"]} for e in files
+                ],
+            }  # fmt: skip
         )
         rec = await asyncio.to_thread(
             store.add_analysis,

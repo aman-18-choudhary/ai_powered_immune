@@ -220,27 +220,35 @@ def run(out: Path = ARTIFACT_PATH, csv_path: Path = synth.DEFAULT_CSV, write: bo
         "model_version": MODEL_VERSION,
         "DATA_IS_100_PERCENT_SYNTHETIC": True,
         "disclaimer": "Synthetic-data metrics. Not a statement about real-world performance; "
-                      "the model has not been validated on real complaints.",
+        "the model has not been validated on real complaints.",
         "dataset": {
-            "file": csv_path.name, "sha256": sha_csv, "rows": len(rows),
+            "file": csv_path.name,
+            "sha256": sha_csv,
+            "rows": len(rows),
             "rows_per_split": {s: len(v) for s, v in by.items()},
             "families_per_split": {s: len({r["group_id"] for r in v}) for s, v in by.items()},
-            "generator_seed": synth.SEED, "label_noise": synth.LABEL_NOISE,
+            "generator_seed": synth.SEED,
+            "label_noise": synth.LABEL_NOISE,
         },
         "training": {
-            "seed": SEED, "algorithm": "tfidf(word1-2+char_wb3-5)+multinomial_logreg",
-            "class_weight": "balanced", "fitted_on": "train split only",
-            "C_search_on_validation": search, "chosen_C": best_c,
+            "seed": SEED,
+            "algorithm": "tfidf(word1-2+char_wb3-5)+multinomial_logreg",
+            "class_weight": "balanced",
+            "fitted_on": "train split only",
+            "C_search_on_validation": search,
+            "chosen_C": best_c,
             "C_rule": f"largest C with validation macro-F1 within {C_TOLERANCE} of the best",
             "abstention_threshold_min_confidence": threshold,
             "threshold_rule": f"smallest threshold with validation accuracy on answered >= "
-                              f"{TARGET_ANSWERED_ACC} and coverage >= {MIN_COVERAGE}",
+            f"{TARGET_ANSWERED_ACC} and coverage >= {MIN_COVERAGE}",
             "validation_threshold_table": val_table,
-            "sklearn_version": sklearn.__version__, "numpy_version": np.__version__,
+            "sklearn_version": sklearn.__version__,
+            "numpy_version": np.__version__,
         },
         "headline_test_group_split": {
             **headline,
-            "macro_f1": headline["macro_f1"], "n": len(te_y),
+            "macro_f1": headline["macro_f1"],
+            "n": len(te_y),
             "metric_basis": "argmax label vs observed (noisy) label, abstention ignored",
             "accuracy_vs_clean_labels": float(accuracy_score(clean_y, te_pred)),
             "abstention": ab,
@@ -252,7 +260,8 @@ def run(out: Path = ARTIFACT_PATH, csv_path: Path = synth.DEFAULT_CSV, write: bo
         "augmented_rows_in_test": {
             "n": int(aug_mask.sum()),
             "accuracy": float((pred_arr[aug_mask] == y_arr[aug_mask]).mean())
-            if aug_mask.any() else None,
+            if aug_mask.any()
+            else None,
         },
         "hard_negatives_test": hard,
     }
@@ -266,8 +275,7 @@ def run(out: Path = ARTIFACT_PATH, csv_path: Path = synth.DEFAULT_CSV, write: bo
         )  # fmt: skip
         sha = hashlib.sha256(out.read_bytes()).hexdigest()
         PIN_PATH.write_text(
-            '"""Pinned integrity data for the category classifier artifact. '
-            'Written by ``python -m complaints.ml.train``."""\n\n'
+            '"""Pinned SHA-256 of the category artifact (``python -m complaints.ml.train``)."""\n\n'
             f'ARTIFACT_SHA256 = "{sha}"\n'
         )
         metrics["artifact"] = {"file": out.name, "bytes": out.stat().st_size, "sha256": sha}
@@ -281,11 +289,15 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     m = run(a.out)
     h = m["headline_test_group_split"]
-    print(f"{MODEL_VERSION} (SYNTHETIC data) C={m['training']['chosen_C']} "
-          f"threshold={m['training']['abstention_threshold_min_confidence']}")
-    print(f"test macro-F1={h['macro_f1']:.4f} accuracy={h['accuracy']:.4f} "
-          f"abstention={h['abstention']['abstention_rate']:.3f} "
-          f"acc_answered={h['abstention']['accuracy_on_answered']:.4f}")
+    print(
+        f"{MODEL_VERSION} (SYNTHETIC data) C={m['training']['chosen_C']} "
+        f"threshold={m['training']['abstention_threshold_min_confidence']}"
+    )
+    print(
+        f"test macro-F1={h['macro_f1']:.4f} accuracy={h['accuracy']:.4f} "
+        f"abstention={h['abstention']['abstention_rate']:.3f} "
+        f"acc_answered={h['abstention']['accuracy_on_answered']:.4f}"
+    )
     print(f"leaky random-split macro-F1={m['leaky_random_split']['macro_f1']:.4f} (NOT headline)")
     print(f"artifact {m['artifact']['bytes']} bytes sha256={m['artifact']['sha256']}")
     return 0

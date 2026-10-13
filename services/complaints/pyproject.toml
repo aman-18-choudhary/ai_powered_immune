@@ -16,11 +16,14 @@ dependencies = [
 postgres = ["psycopg2-binary>=2.9"]
 # call-guard is the in-process text scorer used by the first AnalysisService; without it the
 # service still runs and reports analysis status UNAVAILABLE.
-analysis = ["call-guard"]
+analysis = ["call-guard", "scikit-learn", "joblib", "numpy"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "cryptography>=42"]
 
 [tool.setuptools.packages.find]
 include = ["complaints*"]
+
+[tool.setuptools.package-data]
+"complaints.ml" = ["artifacts/*", "MODEL_CARD.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -36,3 +39,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
+"complaints/ml/synth_templates.py" = ["E501"]
