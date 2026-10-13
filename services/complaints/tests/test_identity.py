@@ -5,8 +5,8 @@ import time
 import httpx
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from conftest import ISSUER, Idp, bearer
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from complaints.identity import (
     ClerkBackendClient,
@@ -193,9 +193,7 @@ async def test_idp_down_is_503_no_detail(make_app, idp):
         raise httpx.ConnectError("secret-host.internal refused")
 
     app = make_app(jwks=None, jwks_fetcher=fetch)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://t"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/auth/session", headers=bearer(idp.token()))
     assert r.status_code == 503
     assert "secret-host" not in r.text
@@ -209,10 +207,15 @@ async def test_weak_rsa_key_in_jwks_ignored():
             self.key = weak
             self.kid = "weak"
 
+    import warnings
+
     w = W()
     v = ClerkJwtVerifier(issuer=ISSUER, jwks=w.jwks())
+    with warnings.catch_warnings():  # PyJWT itself warns when signing with a 1024-bit key
+        warnings.simplefilter("ignore")
+        token = w.token()
     with pytest.raises(IdentityError):
-        await v.verify(w.token())
+        await v.verify(token)
 
 
 async def test_authorized_parties_optional_when_unset(idp):
@@ -250,7 +253,7 @@ async def test_demo_verifier_rejects_other_algs_and_bad_signature():
     with pytest.raises(IdentityError):
         await v.verify(jwt.encode({"sub": "x", "iat": now, "exp": now + 9}, "y" * 40, "HS256"))
     with pytest.raises(IdentityError):
-        await v.verify(jwt.encode({"sub": "x", "iat": now, "exp": now + 9}, SECRET, "HS384"))
+        await v.verify(jwt.encode({"sub": "x", "iat": now, "exp": now + 9}, SECRET * 2, "HS384"))
 
 
 async def test_demo_mode_app_role_claim_ignored(make_app, settings):
@@ -260,9 +263,7 @@ async def test_demo_mode_app_role_claim_ignored(make_app, settings):
         settings, auth_mode="demo", demo_jwt_secret=SECRET, clerk_issuer=None, clerk_jwks_url=None
     )
     app = make_app(settings=s, jwks=None)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://t"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/auth/session", headers=bearer(demo_token(role="admin")))
         assert r.status_code == 200 and r.json()["user"]["role"] == "CITIZEN"
         r = await c.post(
@@ -291,9 +292,7 @@ async def test_backend_client_parses_primary_verified_email_and_hides_key():
             },
         )  # fmt: skip
 
-    c = ClerkBackendClient(
-        secret_key="sk_test_dummy", transport=httpx.MockTransport(handler)
-    )
+    c = ClerkBackendClient(secret_key="sk_test_dummy", transport=httpx.MockTransport(handler))
     got = await c.lookup_primary_email("user_1")
     assert got == ("primary@example.org", True)
     assert seen["auth"] == "Bearer sk_test_dummy" and seen["url"].endswith("/v1/users/user_1")

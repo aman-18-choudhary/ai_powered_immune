@@ -50,9 +50,7 @@ async def test_allowlist_casing_and_whitespace(client, idp, settings, make_app):
         settings, investigator_allowlist=frozenset({"  Spacey.One@EXAMPLE.org ".strip().casefold()})
     )
     app = make_app(settings=s)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://t"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         h = bearer(idp.token(sub="sp", email="SPACEY.one@example.ORG"))
         r = await c.post("/auth/entry", json={"entry": "investigator"}, headers=h)
         assert r.status_code == 200
@@ -83,7 +81,8 @@ async def test_role_in_body_and_claims_ignored(client, tok):
     )
     assert r.status_code == 200 and r.json()["user"]["role"] == "CITIZEN"
     r = await client.get(
-        "/auth/session", headers=tok("a", role="ADMIN", roles=["ADMIN"], public_metadata={"role": "ADMIN"})
+        "/auth/session",
+        headers=tok("a", role="ADMIN", roles=["ADMIN"], public_metadata={"role": "ADMIN"}),
     )
     assert r.json()["user"]["role"] == "CITIZEN"
     r = await client.post("/auth/entry", json={"entry": "root"}, headers=tok("a"))
@@ -96,7 +95,9 @@ async def test_citizen_cannot_reach_staff_endpoints(client, tok):
         ("GET", "/admin/users"), ("GET", "/admin/audit"), ("GET", "/admin/health"),
         ("PUT", "/admin/users/x/role"), ("PUT", "/admin/users/x/active"),
     ]:  # fmt: skip
-        r = await client.request(method, path, headers=h, json={"role": "ADMIN", "expected_role": "CITIZEN"})
+        r = await client.request(
+            method, path, headers=h, json={"role": "ADMIN", "expected_role": "CITIZEN"}
+        )
         assert r.status_code == 403, (method, path, r.status_code)
 
 
@@ -141,7 +142,9 @@ async def test_role_change_by_non_admin_forbidden(client, tok, inv):
     uid = (await client.get("/auth/session", headers=tok("a"))).json()["user"]["id"]
     for h in (tok("a"), inv):
         r = await client.put(
-            f"/admin/users/{uid}/role", json={"role": "ADMIN", "expected_role": "CITIZEN"}, headers=h
+            f"/admin/users/{uid}/role",
+            json={"role": "ADMIN", "expected_role": "CITIZEN"},
+            headers=h,
         )
         assert r.status_code == 403
 
@@ -164,11 +167,15 @@ async def test_admin_changes_role_with_audit_before_after(client, tok, admin):
 async def test_role_change_validates_enum_and_expected_role(client, tok, admin):
     uid = (await client.get("/auth/session", headers=tok("a"))).json()["user"]["id"]
     bad = await client.put(
-        f"/admin/users/{uid}/role", json={"role": "SUPERUSER", "expected_role": "CITIZEN"}, headers=admin
+        f"/admin/users/{uid}/role",
+        json={"role": "SUPERUSER", "expected_role": "CITIZEN"},
+        headers=admin,
     )
     assert bad.status_code == 422 and "SUPERUSER" not in bad.text
     stale = await client.put(
-        f"/admin/users/{uid}/role", json={"role": "INVESTIGATOR", "expected_role": "ADMIN"}, headers=admin
+        f"/admin/users/{uid}/role",
+        json={"role": "INVESTIGATOR", "expected_role": "ADMIN"},
+        headers=admin,
     )
     assert stale.status_code == 409 and stale.json()["error"] == "role_conflict"
     nf = await client.put(
@@ -180,11 +187,13 @@ async def test_role_change_validates_enum_and_expected_role(client, tok, admin):
 
 
 async def test_granting_privileged_role_requires_verified_email(client, tok, admin):
-    uid = (
-        await client.get("/auth/session", headers=tok("a", sub="unv", verified=False))
-    ).json()["user"]["id"]
+    uid = (await client.get("/auth/session", headers=tok("a", sub="unv", verified=False))).json()[
+        "user"
+    ]["id"]
     r = await client.put(
-        f"/admin/users/{uid}/role", json={"role": "INVESTIGATOR", "expected_role": "CITIZEN"}, headers=admin
+        f"/admin/users/{uid}/role",
+        json={"role": "INVESTIGATOR", "expected_role": "CITIZEN"},
+        headers=admin,
     )
     assert r.status_code == 409 and r.json()["error"] == "target_email_not_verified"
 
@@ -193,10 +202,14 @@ async def test_last_admin_protected(client, admin):
     users = (await client.get("/admin/users", headers=admin)).json()["items"]
     me = next(u for u in users if u["role"] == "ADMIN")
     r = await client.put(
-        f"/admin/users/{me['id']}/role", json={"role": "CITIZEN", "expected_role": "ADMIN"}, headers=admin
+        f"/admin/users/{me['id']}/role",
+        json={"role": "CITIZEN", "expected_role": "ADMIN"},
+        headers=admin,
     )
     assert r.status_code == 409 and r.json()["error"] == "last_admin"
-    r = await client.put(f"/admin/users/{me['id']}/active", json={"is_active": False}, headers=admin)
+    r = await client.put(
+        f"/admin/users/{me['id']}/active", json={"is_active": False}, headers=admin
+    )
     assert r.status_code == 409 and r.json()["error"] == "last_admin"
     still = await client.get("/auth/session", headers=admin)
     assert still.json()["user"]["role"] == "ADMIN"
@@ -216,7 +229,9 @@ async def test_inactive_user_blocked_everywhere(client, tok, admin):
     # reactivation restores access
     await client.put(f"/admin/users/{uid}/active", json={"is_active": True}, headers=admin)
     assert (await client.get("/auth/session", headers=h)).status_code == 200
-    actions = [a["action"] for a in (await client.get("/admin/audit", headers=admin)).json()["items"]]
+    actions = [
+        a["action"] for a in (await client.get("/admin/audit", headers=admin)).json()["items"]
+    ]
     assert actions.count("deactivate") == 1 and actions.count("activate") == 1
 
 
@@ -225,15 +240,15 @@ async def test_investigator_entry_is_audited_and_not_repeated(client, tok, admin
     for _ in range(2):
         r = await client.post("/auth/entry", json={"entry": "investigator"}, headers=h)
         assert r.status_code == 200
-    actions = [a["action"] for a in (await client.get("/admin/audit", headers=admin)).json()["items"]]
+    actions = [
+        a["action"] for a in (await client.get("/admin/audit", headers=admin)).json()["items"]
+    ]
     assert actions.count("investigator_entry") == 1
 
 
 async def test_admin_users_paginated_and_bounded(client, tok, admin):
     for i in range(5):
-        await client.get(
-            "/auth/session", headers=tok("a", sub=f"u{i}", email=f"u{i}@example.org")
-        )
+        await client.get("/auth/session", headers=tok("a", sub=f"u{i}", email=f"u{i}@example.org"))
     r = await client.get("/admin/users?limit=2", headers=admin)
     body = r.json()
     assert len(body["items"]) == 2 and body["total"] >= 6

@@ -13,8 +13,9 @@ from complaints.analysis import (
 )
 
 SCAM = (
-    "A man called claiming to be CBI officer. He said I am under digital arrest and must stay on "
-    "video call and transfer money to a safe account of RBI for verification or I will be arrested."
+    "A man called saying he is from CBI. He said: You are under digital arrest. Do not "
+    "disconnect this video call. Transfer your money to the RBI safe account for verification "
+    "or you will be arrested."
 )
 
 
@@ -32,7 +33,11 @@ class StubScorer:
             raise RuntimeError("model exploded")
         from scam_contracts.models import Reason
 
-        return self.score, [Reason(code=c, weight=w, detail=d) for c, w, d in self.reasons], "stub-1"
+        return (
+            self.score,
+            [Reason(code=c, weight=w, detail=d) for c, w, d in self.reasons],
+            "stub-1",
+        )
 
 
 def test_bands():
@@ -66,7 +71,11 @@ async def test_real_call_guard_scorer_if_installed():
     assert out.indicators and all(i["text"] for i in out.indicators)
     assert out.capabilities["text_risk_scorer"] == "available"
     assert out.classification is None
-    benign = dict(complaint, title="Lost parcel", description="My parcel arrived late and the box was damaged, please help.")
+    benign = dict(
+        complaint,
+        title="Lost parcel",
+        description="My parcel arrived late and the box was damaged, please help.",
+    )
     out2 = await svc.analyse(benign)
     assert out2.risk_level == "LOW"
 
@@ -111,7 +120,9 @@ async def test_missing_optional_fields_never_block_or_count_as_evidence():
     s = StubScorer(0.1, [("NO_RISK_INDICATORS", 0.0, "none")])
     svc = CallGuardTextAnalysis(scorer=s)
     bare = {"title": "t", "description": "w" * 20, "category": "UPI_FRAUD"}
-    full = dict(bare, amount="10", suspect_phone="+919876543210", suspicious_url="https://x.example")
+    full = dict(
+        bare, amount="10", suspect_phone="+919876543210", suspicious_url="https://x.example"
+    )
     a, b = await svc.analyse(bare), await svc.analyse(full)
     assert a.status == "COMPLETED" and a.risk_score == b.risk_score
     assert s.seen[0] == s.seen[1]  # only the text is scored
@@ -139,9 +150,13 @@ async def test_no_analysis_yet_is_404_code(client, tok):
 
 async def test_analysis_authz(client, tok, inv):
     c = await create(client, tok("a"))
-    assert (await client.post(f"/complaints/{c['id']}/analysis", headers=tok("b"))).status_code == 404
+    assert (
+        await client.post(f"/complaints/{c['id']}/analysis", headers=tok("b"))
+    ).status_code == 404
     assert (await client.post(f"/complaints/{c['id']}/analysis", headers=inv)).status_code == 201
-    assert (await client.get(f"/complaints/{c['id']}/analysis", headers=tok("b"))).status_code == 404
+    assert (
+        await client.get(f"/complaints/{c['id']}/analysis", headers=tok("b"))
+    ).status_code == 404
 
 
 async def test_high_risk_alerts_owner_once_per_version(client, tok, inv, analysis):
@@ -154,7 +169,9 @@ async def test_high_risk_alerts_owner_once_per_version(client, tok, inv, analysi
     alerts = (await client.get("/alerts", headers=tok("a"))).json()["items"]
     assert [a["kind"] for a in alerts] == ["HIGH_RISK_ANALYSIS"]
     assert (await client.get("/alerts", headers=inv)).json()["items"] == []
-    low = analysis.outcome.__class__(**{**analysis.outcome.__dict__, "risk_level": "LOW", "risk_score": 5})
+    low = analysis.outcome.__class__(
+        **{**analysis.outcome.__dict__, "risk_level": "LOW", "risk_score": 5}
+    )
     analysis.outcome = low
     await client.post(f"/complaints/{c['id']}/analysis", headers=tok("a"))
     assert len((await client.get("/alerts", headers=tok("a"))).json()["items"]) == 1

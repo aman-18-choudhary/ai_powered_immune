@@ -5,7 +5,7 @@ import logging
 
 import httpx
 import pytest
-from conftest import MIN, PNG, bearer, create
+from conftest import PNG, bearer, create
 
 
 async def test_empty_account_stats_zero(client, tok):
@@ -13,11 +13,21 @@ async def test_empty_account_stats_zero(client, tok):
     s = r.json()
     assert r.status_code == 200 and s["total"] == 0 and s["last_complaint_at"] is None
     assert s["unread_alerts"] == 0
-    assert set(s["by_status"]) == {"SUBMITTED", "UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "REJECTED"}
+    assert set(s["by_status"]) == {
+        "SUBMITTED",
+        "UNDER_REVIEW",
+        "INVESTIGATING",
+        "RESOLVED",
+        "REJECTED",
+    }
     assert all(v == 0 for v in s["by_status"].values())
     assert "DIGITAL_ARREST" in s["by_category"] and all(v == 0 for v in s["by_category"].values())
     assert (await client.get("/alerts", headers=tok("a"))).json() == {
-        "items": [], "total": 0, "unread": 0, "limit": 20, "offset": 0
+        "items": [],
+        "total": 0,
+        "unread": 0,
+        "limit": 20,
+        "offset": 0,
     }
 
 
@@ -26,7 +36,9 @@ async def test_stats_computed_from_db(client, tok, inv):
     await create(client, tok("a"), category="UPI_FRAUD")
     await create(client, tok("a"), category="PHISHING")
     await create(client, tok("b"), category="PHISHING")
-    await client.patch(f"/complaints/{a1['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv)
+    await client.patch(
+        f"/complaints/{a1['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv
+    )
     d = await create(client, tok("a"))
     await client.delete(f"/complaints/{d['id']}", headers=tok("a"))
     s = (await client.get("/me/stats", headers=tok("a"))).json()
@@ -56,7 +68,9 @@ async def test_alert_read_flow_and_ownership(client, tok, inv):
 async def test_alert_message_has_no_user_text(client, tok, inv):
     c = await create(client, tok("a"), title="My secret title 9876543210")
     await client.patch(
-        f"/complaints/{c['id']}/status", json={"status": "REJECTED", "note": "internal note"}, headers=inv
+        f"/complaints/{c['id']}/status",
+        json={"status": "REJECTED", "note": "internal note"},
+        headers=inv,
     )
     al = (await client.get("/alerts", headers=tok("a"))).json()["items"][0]
     assert "secret" not in al["message"] and "internal" not in al["message"]
@@ -105,7 +119,9 @@ async def test_db_down_is_503_without_detail(client, tok, monkeypatch):
 async def test_422_never_echoes_input(client, tok):
     secret = "SuperSecretValue-12345"
     r = await client.post(
-        "/complaints", json={"category": secret, "title": secret, "description": 7}, headers=tok("a")
+        "/complaints",
+        json={"category": secret, "title": secret, "description": 7},
+        headers=tok("a"),
     )
     assert r.status_code == 422 and secret not in r.text
     r = await client.post("/complaints", content=b'{"title": "' + secret.encode(),
@@ -157,7 +173,9 @@ async def test_logs_contain_no_tokens_emails_filenames_or_query(client, tok, cap
                       files={"file": ("my-secret-name.png", PNG, "image/png")}, headers=h)  # fmt: skip
     await client.get("/complaints?q=topsecretquery", headers=h)
     await client.get("/complaints", headers=bearer(t[:-6] + "AAAAAA"))  # rejected token
-    text = caplog.text
+    text = "\n".join(
+        r.getMessage() for r in caplog.records if r.name.startswith("complaints")
+    )  # httpx's own client logs show URLs; they are not this service
     for needle in (t, t.split(".")[1], "very.private", "my-secret-name", "topsecretquery",
                    "Private Title", "log_user", "Authorization"):  # fmt: skip
         assert needle not in text, needle

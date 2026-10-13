@@ -15,7 +15,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-from complaints.analysis import AnalysisOutcome, AnalysisService
+from complaints.analysis import CAPABILITIES_NONE, AnalysisOutcome
 from complaints.api import create_app
 from complaints.config import Settings
 
@@ -68,9 +68,7 @@ class Idp:
         claims.update(extra)
         for k in drop:
             claims.pop(k, None)
-        return jwt.encode(
-            claims, key or self.key, algorithm=alg, headers={"kid": kid or self.kid}
-        )
+        return jwt.encode(claims, key or self.key, algorithm=alg, headers={"kid": kid or self.kid})
 
 
 @pytest.fixture(scope="session")
@@ -86,7 +84,7 @@ class FakeAnalysis:
         self.outcome = AnalysisOutcome(
             status="COMPLETED",
             pipeline_version="test-pipeline",
-            capabilities={"text_risk_scorer": "available"},
+            capabilities={**CAPABILITIES_NONE, "text_risk_scorer": "available"},
             risk_score=20,
             risk_level="LOW",
             indicators=[],
@@ -124,9 +122,7 @@ def make_app(settings, idp, analysis) -> Callable[..., object]:
     def _make(**kw):
         s = kw.pop("settings", settings)
         jwks = kw.pop("jwks", idp.jwks())
-        return create_app(
-            s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw
-        )
+        return create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
 
     return _make
 

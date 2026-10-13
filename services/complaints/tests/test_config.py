@@ -6,9 +6,19 @@ from complaints.config import ConfigError, Settings
 
 
 def env(monkeypatch, tmp_path, **kv):
-    for k in ("COMPLAINTS_AUTH_MODE", "CLERK_ISSUER", "CLERK_JWKS_URL", "COMPLAINTS_DEMO_JWT_SECRET",
-              "CLERK_AUTHORIZED_PARTIES", "COMPLAINTS_CORS_ORIGINS", "INVESTIGATOR_ALLOWLIST",
-              "ADMIN_BOOTSTRAP_EMAILS", "CLERK_SECRET_KEY", "CLERK_BACKEND_LOOKUP", "GATEWAY_JWT_SECRET"):
+    for k in (
+        "COMPLAINTS_AUTH_MODE",
+        "CLERK_ISSUER",
+        "CLERK_JWKS_URL",
+        "COMPLAINTS_DEMO_JWT_SECRET",
+        "CLERK_AUTHORIZED_PARTIES",
+        "COMPLAINTS_CORS_ORIGINS",
+        "INVESTIGATOR_ALLOWLIST",
+        "ADMIN_BOOTSTRAP_EMAILS",
+        "CLERK_SECRET_KEY",
+        "CLERK_BACKEND_LOOKUP",
+        "GATEWAY_JWT_SECRET",
+    ):
         monkeypatch.delenv(k, raising=False)  # fmt: skip
     monkeypatch.setenv("COMPLAINTS_DATABASE_URL", "sqlite://")
     monkeypatch.setenv("COMPLAINTS_EVIDENCE_DIR", str(tmp_path / "ev"))
@@ -31,10 +41,14 @@ def test_default_mode_is_clerk_and_requires_issuer_and_jwks(monkeypatch, tmp_pat
 
 
 def test_insecure_urls_and_wildcard_cors_refused(monkeypatch, tmp_path):
-    env(monkeypatch, tmp_path, CLERK_ISSUER="http://c.example", CLERK_JWKS_URL="https://c.example/j")
+    env(
+        monkeypatch, tmp_path, CLERK_ISSUER="http://c.example", CLERK_JWKS_URL="https://c.example/j"
+    )
     with pytest.raises(ConfigError, match="https"):
         Settings.from_env().validate()
-    env(monkeypatch, tmp_path, CLERK_ISSUER="https://c.example", CLERK_JWKS_URL="http://c.example/j")
+    env(
+        monkeypatch, tmp_path, CLERK_ISSUER="https://c.example", CLERK_JWKS_URL="http://c.example/j"
+    )
     with pytest.raises(ConfigError, match="https"):
         Settings.from_env().validate()
     env(monkeypatch, tmp_path, CLERK_ISSUER="https://c.example", CLERK_JWKS_URL="https://c.example/j",
@@ -58,7 +72,12 @@ def test_demo_mode_needs_explicit_flag_and_strong_secret(monkeypatch, tmp_path):
 
 
 def test_database_url_required_from_env(monkeypatch, tmp_path):
-    env(monkeypatch, tmp_path, CLERK_ISSUER="https://c.example", CLERK_JWKS_URL="https://c.example/j")
+    env(
+        monkeypatch,
+        tmp_path,
+        CLERK_ISSUER="https://c.example",
+        CLERK_JWKS_URL="https://c.example/j",
+    )
     monkeypatch.delenv("COMPLAINTS_DATABASE_URL")
     with pytest.raises(ConfigError, match="COMPLAINTS_DATABASE_URL"):
         Settings.from_env().validate()

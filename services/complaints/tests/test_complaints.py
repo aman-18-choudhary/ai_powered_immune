@@ -18,7 +18,9 @@ async def test_create_with_only_mandatory_fields_stores_nulls(client, tok):
 
 
 async def test_empty_strings_normalised_to_null(client, tok):
-    c = await create(client, tok("a"), city="", state="  ", upi_id="", suspect_phone="", amount=None)
+    c = await create(
+        client, tok("a"), city="", state="  ", upi_id="", suspect_phone="", amount=None
+    )
     assert c["city"] is None and c["state"] is None and c["upi_id"] is None
     assert c["suspect_phone"] is None
 
@@ -59,7 +61,7 @@ async def test_create_with_all_optional_fields(client, tok):
         ("category", "NOPE"),
         ("title", ""),
         ("title", "x" * 201),
-        ("description", "short"),
+        ("description", "tinyval"),
         ("description", "d" * 5001),
         ("amount", -1),
         ("amount", "10.123"),
@@ -252,14 +254,18 @@ async def test_has_evidence_and_risk_level_filters(client, tok, inv, analysis):
     a = await create(client, tok("a"), title="has file")
     await create(client, tok("a"), title="no file")
     up = await client.post(
-        f"/complaints/{a['id']}/evidence", files={"file": ("shot.png", PNG, "image/png")}, headers=tok("a")
+        f"/complaints/{a['id']}/evidence",
+        files={"file": ("shot.png", PNG, "image/png")},
+        headers=tok("a"),
     )
     assert up.status_code == 201
     r = await client.get("/complaints?has_evidence=true", headers=inv)
     assert [i["title"] for i in r.json()["items"]] == ["has file"]
     r = await client.get("/complaints?has_evidence=false", headers=inv)
     assert [i["title"] for i in r.json()["items"]] == ["no file"]
-    analysis.outcome = analysis.outcome.__class__(**{**analysis.outcome.__dict__, "risk_level": "HIGH", "risk_score": 90})
+    analysis.outcome = analysis.outcome.__class__(
+        **{**analysis.outcome.__dict__, "risk_level": "HIGH", "risk_score": 90}
+    )
     await client.post(f"/complaints/{a['id']}/analysis", headers=tok("a"))
     r = await client.get("/complaints?risk_level=HIGH", headers=inv)
     assert [i["title"] for i in r.json()["items"]] == ["has file"]
@@ -295,11 +301,15 @@ async def test_status_transitions_and_history(client, tok, inv):
 async def test_status_patch_authz_and_validation(client, tok, inv, admin):
     c = await create(client, tok("a"))
     cid = c["id"]
-    r = await client.patch(f"/complaints/{cid}/status", json={"status": "UNDER_REVIEW"}, headers=tok("a"))
+    r = await client.patch(
+        f"/complaints/{cid}/status", json={"status": "UNDER_REVIEW"}, headers=tok("a")
+    )
     assert r.status_code == 403  # owner is not staff
     r = await client.patch(f"/complaints/{cid}/status", json={"status": "BOGUS"}, headers=inv)
     assert r.status_code == 422 and "BOGUS" not in r.text
-    r = await client.patch(f"/complaints/{cid}/status", json={"status": "REJECTED", "note": "n" * 501}, headers=inv)
+    r = await client.patch(
+        f"/complaints/{cid}/status", json={"status": "REJECTED", "note": "n" * 501}, headers=inv
+    )
     assert r.status_code == 422
     r = await client.patch(f"/complaints/{cid}/status", json={"status": "REJECTED"}, headers=admin)
     assert r.status_code == 200
@@ -322,9 +332,15 @@ async def test_concurrent_status_changes_one_wins(client, tok, inv, admin):
 
 async def test_status_change_alerts_owner_only(client, tok, inv):
     c = await create(client, tok("a"))
-    await client.patch(f"/complaints/{c['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv)
+    await client.patch(
+        f"/complaints/{c['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv
+    )
     mine = (await client.get("/alerts", headers=tok("a"))).json()["items"]
-    assert len(mine) == 1 and mine[0]["kind"] == "STATUS_CHANGED" and mine[0]["complaint_id"] == c["id"]
+    assert (
+        len(mine) == 1
+        and mine[0]["kind"] == "STATUS_CHANGED"
+        and mine[0]["complaint_id"] == c["id"]
+    )
     assert mine[0]["read_at"] is None
     assert (await client.get("/alerts", headers=inv)).json()["items"] == []  # no fabricated alerts
     assert (await client.get("/alerts", headers=tok("b"))).json()["items"] == []
@@ -347,7 +363,9 @@ async def test_soft_delete_rules(client, tok, inv, admin):
 
 async def test_cannot_delete_after_review_started(client, tok, inv):
     c = await create(client, tok("a"))
-    await client.patch(f"/complaints/{c['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv)
+    await client.patch(
+        f"/complaints/{c['id']}/status", json={"status": "UNDER_REVIEW"}, headers=inv
+    )
     r = await client.delete(f"/complaints/{c['id']}", headers=tok("a"))
     assert r.status_code == 409 and r.json()["error"] == "not_deletable"
     assert (await client.get(f"/complaints/{c['id']}", headers=tok("a"))).status_code == 200
