@@ -211,6 +211,7 @@ class TxnGuardService:
                 payer_token=payer, score=d.score, model_version=d.model_version,
                 decision_seq=d.decision_seq, rail=rail, amount_bucket=bucket,
                 payee_ref=_payee_ref(payee_hash), call_ref=call_ref, trigger=trigger,
+                payee_hash=payee_hash,
             )  # fmt: skip
 
     # ------------------------------------------------------------------------ transactions

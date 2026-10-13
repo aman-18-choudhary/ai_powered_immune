@@ -10,6 +10,7 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from .holds import (
     InMemoryAuditSink,
     InMemoryHoldStore,
 )
+from .hub_submit import RESULTS, hub_config_from_env
 from .model import Scorer
 from .service import DEFAULT_HOLD_DEADLINE_S, TxnGuardService
 
@@ -177,13 +179,19 @@ def create_app(
             extra=lambda: {
                 "model_version": scorer.model_version,
                 "fallback_mode": str(scorer.fallback_mode).lower(),
+                **(getattr(holds, "hub_info", None) or dict)(),  # informational only
             },
         )
     )
 
     def view(h: Hold) -> dict[str, Any]:
         overdue = holds.is_overdue(h)  # type: ignore[union-attr]
-        return h.model_dump(mode="json", exclude={"audit_pending"}) | {"overdue": overdue}
+        # the keyed payee hash and the submission outbox stay server-side; callers see whether a
+        # submission is still pending and the terminal hub_result / hub_reason
+        return h.model_dump(mode="json", exclude={"audit_pending", "payee_hash", "hub_pending"}) | {
+            "overdue": overdue,
+            "hub_pending": bool(h.hub_pending),
+        }
 
     def need(p: Principal, roles: set[str]) -> None:
         if p.role not in roles:
@@ -219,6 +227,7 @@ def create_app(
             f"txn_guard_holds_open {await holds.count_open()}\n"  # type: ignore[union-attr]
             "# TYPE txn_guard_holds_overdue gauge\n"
             f"txn_guard_holds_overdue {await holds.count_overdue()}\n"  # type: ignore[union-attr]
+            + await _hub_metrics(holds)
             + _routing_metrics(service)
             + _antibody_metrics(service)
             + "# TYPE txn_guard_holds_overdue_total counter\n"
@@ -292,6 +301,28 @@ def create_app(
     return app
 
 
+async def _hub_metrics(holds: Any) -> str:
+    stats = getattr(holds, "hub_stats", None)
+    if stats is None:
+        return ""
+    out = "# TYPE txn_guard_hub_submissions_total counter\n"
+    for result in RESULTS:
+        out += f'txn_guard_hub_submissions_total{{result="{result}"}} {int(stats.get(result, 0))}\n'
+    err = getattr(holds, "hub_last_error", None)
+    out += (
+        "# TYPE txn_guard_hub_pending gauge\n"
+        f"txn_guard_hub_pending {await holds.hub_pending_count()}\n"
+        "# TYPE txn_guard_hub_submit_auth_failures_total counter\n"
+        f"txn_guard_hub_submit_auth_failures_total {int(stats.get('auth_failures', 0))}\n"
+        "# TYPE txn_guard_hub_submit_breaker_open gauge\n"
+        f"txn_guard_hub_submit_breaker_open {int(holds.hub_breaker_open)}\n"
+        "# TYPE txn_guard_hub_last_error_info gauge\n"
+    )
+    if err and re.fullmatch(r"[A-Za-z0-9_]{1,64}", err):  # an error CLASS name, never a message
+        out += f'txn_guard_hub_last_error_info{{class="{err}"}} 1\n'
+    return out
+
+
 def _routing_metrics(service: TxnGuardService | None) -> str:
     if service is None:
         return ""
@@ -349,7 +380,6 @@ def create_service_app() -> FastAPI:
     aredis = Redis.from_url(url)
     hist_client = redis_sync.Redis.from_url(url)
     idem = RedisIdempotencyStore(aredis)
-    holds = RedisHoldStore(aredis, audit=BusAuditSink(bus))
     bank_id = os.getenv("TXN_BANK_ID", "")
     if not bank_id:
         if hub_url_env or kafka:
@@ -358,6 +388,20 @@ def create_service_app() -> FastAPI:
                 "sharing a default would share a consumer group and a Redis prefix"
             )
         bank_id = "bank"
+    # one httpx client for the read path (bootstrap) and the confirm-to-hub submission path
+    hub_url = os.getenv("HUB_URL")
+    hub_client = (
+        HttpxHubClient(hub_url, bank_id, os.getenv("HUB_GATEWAY_SECRET")) if hub_url else None
+    )
+    submit_cfg = hub_config_from_env(os.environ) if hub_client is not None else None
+    if hub_url and submit_cfg is None:
+        log.warning(
+            "antibody submission to the hub is OFF (TXN_HUB_SUBMIT=0): a confirm_block will "
+            "NOT create an antibody; other banks are not protected by this bank's confirmations"
+        )
+    holds = RedisHoldStore(
+        aredis, audit=BusAuditSink(bus), hub_submit=submit_cfg, hub_client=hub_client
+    )
     cache = RedisAntibodyCache(
         hist_client,
         capacity=int(os.getenv("ANTIBODY_CACHE_CAPACITY", str(DEFAULT_CAPACITY))),
@@ -378,9 +422,8 @@ def create_service_app() -> FastAPI:
     startup: list[Callable[[], Awaitable[Any]]] = []
     bootstrap_fn = None
     closers: list[Callable[[], Awaitable[None]]] = [aredis.aclose, _close_sync(hist_client)]
-    hub_url = os.getenv("HUB_URL")
-    if hub_url:
-        client = HttpxHubClient(hub_url, bank_id, os.getenv("HUB_GATEWAY_SECRET"))
+    if hub_client is not None:
+        client = hub_client
         closers.append(client.aclose)
 
         async def bootstrap_fn() -> int:  # noqa: F811

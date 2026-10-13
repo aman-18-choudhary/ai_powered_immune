@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -35,7 +36,17 @@ from scam_contracts.models import LedgerEntryIn, Reason
 from scam_contracts.topics import Topics
 from svckit.bus import Bus
 from svckit.drain import Drainer
-from svckit.ledger import build_or_placeholder, txn_ref, utc_ts
+from svckit.ledger import build_or_placeholder, safe_actor, txn_ref, utc_ts
+
+from .hub_submit import (
+    MAX_HUB_PENDING_PER_HOLD,
+    RESULTS,
+    HubOutcome,
+    HubSubmission,
+    HubSubmitConfig,
+    evidence_ref_for,
+    skip_reason,
+)
 
 log = logging.getLogger("txn_guard")
 
@@ -139,6 +150,14 @@ class Hold(BaseModel):
     payee_ref: str = ""  # "payee_ref:<16 hex>" from the keyed payee hash (audit linking only)
     call_ref: str = ""  # "call_ref:<16 hex>" of the call risk that influenced the decision
     audit_pending: list[AuditEntry] = []
+    # confirm-to-hub (additive; older records load with the defaults). ``payee_hash`` is the keyed
+    # payee hash (never returned by the API); ``hub_pending`` is the durable submission outbox,
+    # written in the same compare-and-set as the ``blocked`` state; ``hub_result`` / ``hub_reason``
+    # record the terminal outcome (ok, duplicate, protected, rejected, exhausted, skipped).
+    payee_hash: str = ""
+    hub_pending: list[HubSubmission] = []
+    hub_result: str | None = None
+    hub_reason: str | None = None
 
 
 # ------------------------------------------------------------------------------------ audit
@@ -204,7 +223,7 @@ class HoldStore(Protocol):
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
         payer_token: str = "", score: float = 0.0, model_version: str = "", decision_seq: int = 1,
         rail: str = "", amount_bucket: str = "", payee_ref: str = "", call_ref: str = "",
-        trigger: str | None = None,
+        trigger: str | None = None, payee_hash: str = "",
     ) -> Hold: ...  # fmt: skip
 
     async def get(self, txn_id: str) -> Hold | None: ...
@@ -223,6 +242,10 @@ class HoldStore(Protocol):
     ) -> Hold | None: ...  # fmt: skip
 
     async def drain_audit(self, txn_id: str) -> None: ...
+
+    async def drain_hub(self, txn_id: str) -> bool: ...
+
+    async def hub_pending_count(self) -> int: ...
 
     async def sweep(self) -> int: ...
 
@@ -247,16 +270,37 @@ class _BaseHoldStore:
         audit: AuditSink | None = None,
         clock: Callable[[], datetime] = _utcnow,
         drainer: Drainer | None = None,
+        *,
+        hub_submit: HubSubmitConfig | None = None,
+        hub_client: Any = None,
+        mono: Callable[[], float] = time.monotonic,
     ):
         self._audit: AuditSink = audit if audit is not None else InMemoryAuditSink()
         self._clock = clock
+        self._mono = mono
+        # confirm-to-hub: only active with both a config and a client (otherwise a confirm_block
+        # records nothing and the store behaves exactly as before)
+        self._hub_cfg = hub_submit
+        self._hub_client = hub_client
+        self.hub_stats: dict[str, int] = dict.fromkeys(RESULTS, 0) | {"auth_failures": 0}
+        self.hub_last_error: str | None = None
+        self._hub_reachable: bool | None = None
+        self._hub_next: dict[str, float] = {}  # txn_id -> monotonic time of the next attempt
+        self.hub_drainer = Drainer(
+            cap=int(os.getenv("HUB_SUBMIT_CONCURRENCY", "8")),
+            timeout_s=(hub_submit.timeout_s if hub_submit else 2.0) + 1.0,
+            cooldown_s=float(os.getenv("HUB_SUBMIT_BREAKER_COOLDOWN_S", "10")),
+            clock=mono, name="hub submission",
+        )  # fmt: skip
         # audit delivery is fire-and-forget (cap, in-flight guard, timeout, breaker): the hot path
         # never awaits the ledger; the periodic ``sweep`` retries what is left
         self.drainer = drainer or Drainer()
         self.sweep_batch = int(os.getenv("LEDGER_SWEEP_BATCH", "200"))
 
     async def aclose(self) -> None:
-        await self.drainer.aclose()  # pending audit entries stay in the hold records
+        # pending audit entries and hub submissions stay in the hold records
+        await self.drainer.aclose()
+        await self.hub_drainer.aclose()
 
     # primitives -------------------------------------------------------------------------
     async def _get(self, txn_id: str) -> Hold | None:
@@ -271,6 +315,12 @@ class _BaseHoldStore:
         raise NotImplementedError
 
     async def _pending_ids(self) -> list[str]:
+        raise NotImplementedError
+
+    async def _hub_ids(self) -> list[str]:
+        raise NotImplementedError
+
+    async def hub_pending_count(self) -> int:
         raise NotImplementedError
 
     async def count_open(self) -> int:
@@ -324,7 +374,7 @@ class _BaseHoldStore:
         self, txn_id: str, decision: Decision, reasons: list[Reason], deadline: datetime, *,
         payer_token: str = "", score: float = 0.0, model_version: str = "", decision_seq: int = 1,
         rail: str = "", amount_bucket: str = "", payee_ref: str = "", call_ref: str = "",
-        trigger: str | None = None,
+        trigger: str | None = None, payee_hash: str = "",
     ) -> Hold:  # fmt: skip
         extra = {"from_decision": "allow", "trigger": trigger} if trigger else None
         entry = make_entry(
@@ -337,6 +387,7 @@ class _BaseHoldStore:
             reasons=reasons, model_version=model_version, decision_seq=decision_seq,
             created_at=self._clock(), deadline=deadline, rail=rail, amount_bucket=amount_bucket,
             payee_ref=payee_ref, call_ref=call_ref, audit_pending=[entry],
+            payee_hash=payee_hash.strip().lower(),
         )  # fmt: skip
         created = await self._cas(txn_id, None, hold)
         await self._drain_quietly(txn_id)  # also drains a pending entry left by an earlier crash
@@ -355,6 +406,11 @@ class _BaseHoldStore:
             raise ValueError(f"unknown action {action!r}")
         actor = actor.strip()
         state = "released" if action == "release" else "blocked"
+        over_cap = (
+            action == "confirm_block"
+            and self._hub_active()
+            and await self.hub_pending_count() >= self._hub_cfg.max_pending  # type: ignore[union-attr]
+        )
         for _ in range(8):
             cur = await self._get(txn_id)
             if cur is None:
@@ -362,6 +418,7 @@ class _BaseHoldStore:
             if cur.state != "open":
                 if cur.state == state:
                     await self._drain_quietly(txn_id)
+                    self._hub_kick(txn_id, cur)  # idempotent: no second submission is queued
                     return await self._get(txn_id) or cur  # idempotent: same action again
                 raise HoldConflict(f"hold already {cur.state}")
             if (expect_decision is not None and cur.decision != expect_decision) or (
@@ -376,14 +433,161 @@ class _BaseHoldStore:
                 extra={"action": action, "resolver_role": role or "unspecified",
                        "resolver_ref": actor, "resolved_ts": utc_ts(resolved_at)},
             )  # fmt: skip
-            new = cur.model_copy(
-                update={"state": state, "resolved_by": actor, "resolved_at": resolved_at,
-                        "audit_pending": [*cur.audit_pending, entry]}
-            )  # fmt: skip
+            update: dict[str, Any] = {
+                "state": state, "resolved_by": actor, "resolved_at": resolved_at,
+                "audit_pending": [*cur.audit_pending, entry],
+            }  # fmt: skip
+            skipped: str | None = None
+            if action == "confirm_block" and self._hub_active():
+                skipped = await self._hub_plan(cur, actor, update, over_cap)
+            new = cur.model_copy(update=update)
             if await self._cas(txn_id, cur, new):
+                if skipped is not None:
+                    self.hub_stats["skipped"] += 1
+                    log.warning("antibody submission skipped (%s)", skipped)
                 await self._drain_quietly(txn_id)
+                self._hub_kick(txn_id, new)
                 return new.model_copy(update={"audit_pending": []})
         raise HoldConflict("concurrent update; retry")
+
+    # ---------------------------------------------------------------- confirm-to-hub
+    def _hub_active(self) -> bool:
+        return self._hub_cfg is not None and self._hub_client is not None
+
+    def hub_info(self) -> dict[str, str]:
+        """Informational (never a readiness failure): is submission on, did the last attempt reach
+        the hub."""
+        reach = {None: "unknown", True: "true", False: "false"}[self._hub_reachable]
+        return {"hub_submit": "enabled" if self._hub_active() else "disabled",
+                "hub_reachable": reach}  # fmt: skip
+
+    @property
+    def hub_breaker_open(self) -> bool:
+        return self.hub_drainer.breaker_open
+
+    async def _hub_plan(
+        self, cur: Hold, actor: str, update: dict[str, Any], over_cap: bool
+    ) -> str | None:
+        """Extend the resolve CAS ``update``: the durable submission (returns None) or a recorded
+        skip reason with its audit entry. Pure over the hold record."""
+        cfg = self._hub_cfg
+        assert cfg is not None
+        reason = skip_reason(cur.payee_hash, cfg.bank_id) or ("pending_cap" if over_cap else None)
+        if reason is None:
+            sub = HubSubmission(
+                key_hash=cur.payee_hash, source_bank=cfg.bank_id, actor=safe_actor(actor),
+                evidence_ref=evidence_ref_for(cur.txn_id),
+            )  # fmt: skip
+            update["hub_pending"] = [*cur.hub_pending, sub][-MAX_HUB_PENDING_PER_HOLD:]
+            return None
+        extra: dict[str, Any] = {"result": "skipped", "reason": reason, "attempts": 0}
+        update["hub_result"], update["hub_reason"] = "skipped", reason
+        update["audit_pending"] = [
+            *update["audit_pending"],
+            self._hub_entry("hold.antibody_submit_failed", cur, SYSTEM_ACTOR, extra),
+        ]  # fmt: skip
+        return reason
+
+    @staticmethod
+    def _hub_entry(event_type: str, h: Hold, actor: str, extra: dict[str, Any]) -> AuditEntry:
+        return make_entry(
+            event_type, h.txn_id, h.decision, h.decision_seq, h.score, actor, h.model_version,
+            h.reasons, deadline=h.deadline, rail=h.rail, amount_bucket=h.amount_bucket,
+            payee_ref=h.payee_ref, call_ref=h.call_ref, extra=extra,
+        )  # fmt: skip
+
+    def _hub_due(self, txn_id: str) -> bool:
+        return self._hub_next.get(txn_id, 0.0) <= self._mono()
+
+    def _hub_kick(self, txn_id: str, hold: Hold) -> None:
+        """Schedule the background delivery (synchronous, never awaits the hub)."""
+        if not hold.hub_pending or not self._hub_active() or not self._hub_due(txn_id):
+            return
+        self.hub_drainer.schedule(txn_id, lambda: self.drain_hub(txn_id))
+
+    async def hub_settle(self) -> None:
+        """Wait for scheduled hub deliveries (tests, graceful shutdown)."""
+        await self.hub_drainer.settle()
+
+    async def drain_hub(self, txn_id: str) -> bool:
+        """One delivery attempt for the hold's first pending submission. True when there is
+        nothing left to retry now (delivered, terminal outcome, or no work); False asks the
+        breaker/sweeper to try again later. At-least-once: the hub dedupes identical antibodies."""
+        cfg, client = self._hub_cfg, self._hub_client
+        if cfg is None or client is None:
+            return True
+        for _ in range(8):
+            cur = await self._get(txn_id)
+            if cur is None or not cur.hub_pending:
+                self._hub_next.pop(txn_id, None)
+                return True
+            sub = cur.hub_pending[0]
+            try:
+                out: HubOutcome = await client.submit_antibody(sub, cfg.timeout_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                out = HubOutcome("retry", None, type(e).__name__)
+            done = await self._hub_apply(cur, sub, out, cfg)
+            if done is not None:
+                return done
+        return False
+
+    async def _hub_apply(
+        self, cur: Hold, sub: HubSubmission, out: HubOutcome, cfg: HubSubmitConfig
+    ) -> bool | None:
+        """Record one outcome in a CAS (None: lost the race, caller re-reads and retries)."""
+        txn_id = cur.txn_id
+        self._hub_reachable = out.status is not None and out.status < 500
+        attempts = sub.attempts + 1
+        rest = [s for s in cur.hub_pending if s is not sub and s != sub]
+        base = {"attempts": attempts, "key_prefix": sub.key_hash[:8], "resolver_ref": sub.actor}
+        result = out.result
+        if result == "retry" and cfg.max_attempts is not None and attempts >= cfg.max_attempts:
+            result = "exhausted"  # type: ignore[assignment]
+        if result in ("ok", "duplicate", "protected"):
+            event, extra = "hold.antibody_submitted", {**base, "result": result}
+            update: dict[str, Any] = {"hub_pending": rest, "hub_result": result}
+        elif result in ("rejected", "exhausted"):
+            event = "hold.antibody_submit_failed"
+            extra = {**base, "result": result}
+            if out.status is not None:
+                extra["http_status"] = out.status
+            update = {"hub_pending": rest, "hub_result": result}
+        else:  # retry / misconfig: keep it pending, count the attempt, back off in memory
+            kept = sub.model_copy(update={"attempts": attempts, "last_error": out.error_class})
+            new = cur.model_copy(
+                update={"hub_pending": [kept if s == sub else s for s in cur.hub_pending]}
+            )
+            if not await self._cas(txn_id, cur, new):
+                return None
+            self.hub_last_error = out.error_class
+            self._hub_next[txn_id] = self._mono() + cfg.backoff_s(attempts)
+            if result == "misconfig":
+                self.hub_stats["auth_failures"] += 1
+                log.warning(
+                    "antibody hub refused the submission (HTTP %s, auth/route misconfiguration): "
+                    "check HUB_GATEWAY_SECRET, HUB_URL and that this bank is listed in the hub's "
+                    "HUB_BANKS; the submission stays pending and is retried with backoff",
+                    out.status,
+                )  # fmt: skip
+            else:
+                self.hub_stats["retried"] += 1
+            return False
+        entry = self._hub_entry(event, cur, SYSTEM_ACTOR, extra)
+        update["audit_pending"] = [*cur.audit_pending, entry]
+        if not await self._cas(txn_id, cur, cur.model_copy(update=update)):
+            return None
+        self.hub_stats[result] += 1
+        if result in ("rejected", "exhausted"):
+            self.hub_last_error = out.error_class
+            log.warning("antibody submission failed terminally (%s)", result)
+        self._hub_next.pop(txn_id, None)
+        await self._drain_quietly(txn_id)
+        return True
+
+    async def _hub_ok(self, txn_id: str) -> bool:
+        return await self.drain_hub(txn_id)
 
     async def upgrade(
         self, txn_id: str, decision: Decision, reasons: list[Reason], score: float,
@@ -436,12 +640,22 @@ class _BaseHoldStore:
                 flagged += 1
         ids = sorted(await self._pending_ids())[: self.sweep_batch]
         await self.drainer.sweep(ids, self._drain_ok)
+        if self._hub_active():
+            batch = self._hub_cfg.sweep_batch  # type: ignore[union-attr]
+            due = [t for t in sorted(await self._hub_ids()) if self._hub_due(t)][:batch]
+            await self.hub_drainer.sweep(due, self._hub_ok)
         return flagged
 
 
 class InMemoryHoldStore(_BaseHoldStore):
-    def __init__(self, audit: AuditSink | None = None, clock: Callable[[], datetime] = _utcnow):
-        super().__init__(audit, clock)
+    def __init__(
+        self, audit: AuditSink | None = None, clock: Callable[[], datetime] = _utcnow,
+        *, hub_submit: HubSubmitConfig | None = None, hub_client: Any = None,
+        mono: Callable[[], float] = time.monotonic,
+    ) -> None:  # fmt: skip
+        super().__init__(
+            audit, clock, hub_submit=hub_submit, hub_client=hub_client, mono=mono
+        )  # fmt: skip
         self._holds: dict[str, Hold] = {}
         self._overdue_total = 0
 
@@ -463,6 +677,12 @@ class InMemoryHoldStore(_BaseHoldStore):
     async def _pending_ids(self) -> list[str]:
         return [t for t, h in self._holds.items() if h.audit_pending]
 
+    async def _hub_ids(self) -> list[str]:
+        return [t for t, h in self._holds.items() if h.hub_pending]
+
+    async def hub_pending_count(self) -> int:
+        return sum(bool(h.hub_pending) for h in self._holds.values())
+
     async def count_open(self) -> int:
         return sum(h.state == "open" for h in self._holds.values())
 
@@ -480,12 +700,16 @@ class RedisHoldStore(_BaseHoldStore):
 
     KEY, INDEX = "txnguard:hold:", "txnguard:holds:open"
     AUDIT_SET, OVERDUE_KEY = "txnguard:holds:audit", "txnguard:overdue_total"
+    HUB_SET = "txnguard:holds:hub"  # holds with a pending antibody submission
 
     def __init__(
         self, client: Any, audit: AuditSink | None = None,
-        clock: Callable[[], datetime] = _utcnow,
+        clock: Callable[[], datetime] = _utcnow, *, hub_submit: HubSubmitConfig | None = None,
+        hub_client: Any = None, mono: Callable[[], float] = time.monotonic,
     ) -> None:  # fmt: skip
-        super().__init__(audit, clock)
+        super().__init__(
+            audit, clock, hub_submit=hub_submit, hub_client=hub_client, mono=mono
+        )  # fmt: skip
         self._r = client
 
     async def _get(self, txn_id: str) -> Hold | None:
@@ -512,11 +736,18 @@ class RedisHoldStore(_BaseHoldStore):
                     pipe.zadd(self.INDEX, {txn_id: new.deadline.timestamp()})
                 else:
                     pipe.zrem(self.INDEX, txn_id)
-                    pipe.expire(key, CLOSED_HOLD_TTL_S)
+                    if new.hub_pending:
+                        pipe.persist(key)  # an undelivered antibody submission must not expire
+                    else:
+                        pipe.expire(key, CLOSED_HOLD_TTL_S)
                 if new.audit_pending:
                     pipe.sadd(self.AUDIT_SET, txn_id)
                 else:
                     pipe.srem(self.AUDIT_SET, txn_id)
+                if new.hub_pending:
+                    pipe.sadd(self.HUB_SET, txn_id)
+                else:
+                    pipe.srem(self.HUB_SET, txn_id)
                 if count_overdue:
                     pipe.incr(self.OVERDUE_KEY)
                 await pipe.execute()
@@ -539,6 +770,14 @@ class RedisHoldStore(_BaseHoldStore):
             i.decode() if isinstance(i, bytes) else i
             for i in await self._r.smembers(self.AUDIT_SET)
         ]
+
+    async def _hub_ids(self) -> list[str]:
+        return [
+            i.decode() if isinstance(i, bytes) else i for i in await self._r.smembers(self.HUB_SET)
+        ]
+
+    async def hub_pending_count(self) -> int:
+        return int(await self._r.scard(self.HUB_SET))
 
     async def count_open(self) -> int:
         return int(await self._r.zcard(self.INDEX))

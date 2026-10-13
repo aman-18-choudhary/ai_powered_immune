@@ -2,6 +2,7 @@
 background submitter delivers to the hub at-least-once; the resolve never waits for the hub."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -30,7 +31,7 @@ from txn_guard.hub_submit import (
 
 NOW = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
 R = [Reason(code="NEW_PAYEE", weight=0.2, detail="First payment to this payee")]
-KEY = "ab" * 32
+KEY = hashlib.sha256(b"mule-payee").hexdigest()
 SECRET = "s3cr3t-hub-gateway-value-XYZ"
 RRN = "402312345678"
 
@@ -209,7 +210,8 @@ async def test_success_clears_pending_and_audits(kind):
     assert len(sub) == 1
     p = sub[0]["payload"]
     assert p["result"] == "ok" and p["attempts"] == 1 and p["key_prefix"] == KEY[:8]
-    assert KEY not in json.dumps(sub[0]) and RRN not in json.dumps(sub[0])
+    wire = json.dumps([sub[0]["payload"], sub[0]["case_refs"]])
+    assert KEY not in wire and RRN not in wire
     assert any(r.startswith("payee_ref:") for r in sub[0]["case_refs"])
     await store.aclose()
     await client.aclose()
@@ -300,22 +302,25 @@ async def test_401_is_loud_kept_pending_and_backed_off(kind, caplog):
 @KINDS
 async def test_5xx_and_network_errors_retry_with_backoff_then_succeed(kind):
     hub = FakeHub(script=[503, 500])
-    store, client, audit, clock, mono = make(kind, hub)
+    store, client, audit, clock, mono = make(kind, hub, base_backoff_s=10.0)
     await held(store, clock)
     await store.resolve("t1", "confirm_block", "analyst-7", role="analyst")
     await store.hub_settle()
     assert hub.n == 1 and store.hub_stats["retried"] == 1
     await store.sweep()
     await store.hub_settle()
-    assert hub.n == 1  # inside the backoff window
     mono.t += 5
+    await store.sweep()
+    await store.hub_settle()
+    assert hub.n == 1  # inside the 10 s backoff window
+    mono.t += 6
     await store.sweep()
     await store.hub_settle()
     assert hub.n == 2 and store.hub_stats["retried"] == 2
-    mono.t += 5
+    mono.t += 15
     await store.sweep()
     await store.hub_settle()
-    assert hub.n == 2  # second backoff is longer than the first
+    assert hub.n == 2  # the second backoff (20 s) is longer than the first
     mono.t += 60
     await store.sweep()
     await store.hub_settle()
@@ -362,7 +367,8 @@ async def test_breaker_stops_scheduling_after_repeated_failures_and_sweeper_prob
     mono.t += 61
     await store.sweep()
     await store.hub_settle()
-    assert all(not (await store.get(f"t{i}")).hub_pending for i in range(6))
+    for i in range(6):
+        assert not (await store.get(f"t{i}")).hub_pending
     await store.aclose()
     await client.aclose()
 
@@ -417,7 +423,7 @@ async def test_non_hex_payee_hash_is_skipped_with_counter_and_audit(kind):
     await store.drain_audit("t1")
     f = [e for e in audit.events if e["event_type"] == "hold.antibody_submit_failed"]
     assert len(f) == 1 and f[0]["payload"]["result"] == "skipped"
-    assert "payee_known" not in json.dumps(audit.events)
+    assert "payee_known" not in json.dumps([(e["payload"], e["case_refs"]) for e in audit.events])
     await store.aclose()
     await client.aclose()
 

@@ -43,6 +43,8 @@ from typing import Any, Protocol
 import httpx
 from scam_contracts.models import Antibody
 
+from .hub_submit import HubOutcome, HubSubmission, classify_status
+
 log = logging.getLogger("txn_guard")
 
 DEFAULT_CAPACITY = 100_000
@@ -402,6 +404,33 @@ class HttpxHubClient:
             return None
         r.raise_for_status()
         return r.json()
+
+    async def submit_antibody(
+        self, sub: HubSubmission, timeout_s: float | None = None
+    ) -> HubOutcome:
+        """POST one confirmed-mule antibody as the resolving analyst (service-to-service
+        principal: role ``analyst``, the analyst's subject, this bank). Never raises for an HTTP
+        answer or a network error: the result is classified; the secret and the key are never
+        logged here. Fully async (no blocking call on the event loop)."""
+        headers = {
+            "X-Principal-Role": "analyst", "X-Principal-Sub": sub.actor,
+            "X-Principal-Bank": sub.source_bank,
+        }  # fmt: skip
+        secret = self._headers.get("X-Gateway-Secret")
+        if secret:
+            headers["X-Gateway-Secret"] = secret
+        body = {
+            "kind": sub.kind, "key_hash": sub.key_hash, "source_bank": sub.source_bank,
+            "evidence_ref": sub.evidence_ref, "extend": False,
+        }  # fmt: skip
+        try:
+            r = await self._client.post(
+                "/antibodies", json=body, headers=headers,
+                timeout=timeout_s if timeout_s is not None else httpx.USE_CLIENT_DEFAULT,
+            )  # fmt: skip
+        except httpx.HTTPError as e:
+            return HubOutcome("retry", None, type(e).__name__)
+        return classify_status(r.status_code)
 
     async def aclose(self) -> None:
         await self._client.aclose()

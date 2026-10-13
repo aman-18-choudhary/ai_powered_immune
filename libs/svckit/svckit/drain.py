@@ -34,7 +34,9 @@ class Drainer:
         cooldown_s: float | None = None,
         breaker_threshold: int = 5,
         clock: Callable[[], float] = time.monotonic,
+        name: str = "ledger",
     ) -> None:
+        self.name = name  # only used in log messages (e.g. "hub submission")
         self.cap = cap if cap is not None else int(os.getenv("LEDGER_DRAIN_CONCURRENCY", "8"))
         self.timeout_s = (
             timeout_s if timeout_s is not None else float(os.getenv("LEDGER_EMIT_TIMEOUT_S", "0.5"))
@@ -80,11 +82,11 @@ class Drainer:
         try:
             ok = bool(await asyncio.wait_for(fn(), self.timeout_s))
         except TimeoutError:
-            log.warning("ledger delivery timed out")
+            log.warning("%s delivery timed out", self.name)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning("ledger delivery failed (%s)", type(e).__name__)
+            log.warning("%s delivery failed (%s)", self.name, type(e).__name__)
         finally:
             if self._inflight.get(key) is me:
                 del self._inflight[key]
