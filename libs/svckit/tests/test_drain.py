@@ -114,3 +114,19 @@ async def test_schedule_from_another_thread_raises_clearly_and_does_not_stick():
     assert len(err) == 1 and isinstance(err[0], RuntimeError) and "event loop" in str(err[0])
     assert d.schedule("k", fn) is not None  # the key was not left in flight
     await d.settle()
+
+
+async def test_drainer_name_is_used_in_log_messages(caplog):
+    import logging
+
+    from svckit.drain import Drainer
+
+    d = Drainer(cap=1, timeout_s=0.05, name="hub submission")
+
+    async def boom() -> bool:
+        raise ConnectionError("x")
+
+    caplog.set_level(logging.WARNING)
+    await d._attempt("k", boom)  # noqa: SLF001
+    assert "hub submission delivery failed" in caplog.text
+    assert "ledger" not in caplog.text
