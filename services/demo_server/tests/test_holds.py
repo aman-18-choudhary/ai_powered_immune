@@ -168,9 +168,7 @@ def test_double_resolve_race_is_single_effect(gated):
     assert sum(e["kind"] == "hold.resolved" and e["txn_ref"] == hold["txn_ref"] for e in ev) == 1
 
 
-def test_confirm_makes_exactly_one_antibody_even_with_hub_submission_env_set(
-    gated, monkeypatch
-):
+def test_confirm_makes_exactly_one_antibody_even_with_hub_submission_env_set(gated, monkeypatch):
     """The demo engine submits to the hub itself; txn-guard's confirm-to-hub submission is wired
     only by ``create_service_app`` (never by the harness), so a confirm must not double-submit
     even when the txn-guard variables are present in the environment."""
