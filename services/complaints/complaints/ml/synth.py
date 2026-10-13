@@ -190,8 +190,11 @@ def _fill(rng: random.Random) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------- generation
-def _split_assignment(category: str, keys: list[str], dev_keys: set[str], seed: int) -> dict:
-    """Seeded family permutation; re-drawn until every split has Devanagari families."""
+def _split_assignment(
+    category: str, keys: list[str], dev_keys: set[str], hard_keys: set[str], seed: int
+) -> dict:
+    """Seeded family permutation; re-drawn until every split has Devanagari families and, where
+    a category has hard-negative families, train has at least two and validation/test one."""
     rng = random.Random(f"{seed}:split:{category}")
     n_tr, n_va, _ = FAMILIES_PER_SPLIT
     for _ in range(200):
@@ -199,6 +202,9 @@ def _split_assignment(category: str, keys: list[str], dev_keys: set[str], seed: 
         rng.shuffle(perm)
         parts = (perm[:n_tr], perm[n_tr : n_tr + n_va], perm[n_tr + n_va :])
         d = [sum(k in dev_keys for k in p) for p in parts]
+        h = [sum(k in hard_keys for k in p) for p in parts]
+        if hard_keys and not (h[0] >= 2 and h[1] >= 1 and h[2] >= 1):
+            continue
         if d[0] >= 2 and d[1] >= 1 and d[2] >= 1:
             return {k: s for s, p in zip(SPLITS, parts, strict=True) for k in p}
     raise RuntimeError("no split assignment found")  # pragma: no cover
@@ -210,7 +216,8 @@ def generate(seed: int = SEED) -> list[dict[str, Any]]:
         fams = FAMILIES[cat]
         keys = [f[0] for f in fams]
         dev = {f[0] for f in fams if f[1]["dv"]}
-        assign = _split_assignment(cat, keys, dev, seed)
+        hard = {f[0] for f in fams if f[2]}
+        assign = _split_assignment(cat, keys, dev, hard, seed)
         p = FIELD_P[cat]
         per = ROWS_PER_FAMILY_OTHER if cat == "OTHER" else ROWS_PER_FAMILY
         for key, tmpls, hard in fams:

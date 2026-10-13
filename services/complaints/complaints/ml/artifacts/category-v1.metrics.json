@@ -1,0 +1,516 @@
+{
+  "DATA_IS_100_PERCENT_SYNTHETIC": true,
+  "artifact": {
+    "bytes": 431044,
+    "file": "category-v1.joblib",
+    "sha256": "5103aa0836add7bfded804d1a0f0d750f2d6d2c5a3b13cfde797d7d84f936540"
+  },
+  "augmented_rows_in_test": {
+    "accuracy": 0.7746478873239436,
+    "n": 71
+  },
+  "dataset": {
+    "families_per_split": {
+      "test": 18,
+      "train": 54,
+      "validation": 18
+    },
+    "file": "complaints_synthetic_v1.csv",
+    "generator_seed": 20261007,
+    "label_noise": 0.03,
+    "rows": 3680,
+    "rows_per_split": {
+      "test": 727,
+      "train": 2212,
+      "validation": 741
+    },
+    "sha256": "c2155443f4c67b18b64ead8a7e8e452bf4b93f2deb06fdfa7787cb979f85fd7f"
+  },
+  "disclaimer": "Synthetic-data metrics. Not a statement about real-world performance; the model has not been validated on real complaints.",
+  "hard_negatives_test": {
+    "abstained_rate": 0.22727272727272727,
+    "answered_as_fraud_category_rate": 0.1590909090909091,
+    "answered_as_other_rate": 0.6136363636363636,
+    "argmax_fraud_rate": 0.1590909090909091,
+    "n": 44
+  },
+  "headline_test_group_split": {
+    "abstention": {
+      "abstention_rate": 0.390646492434663,
+      "accuracy_on_abstained_if_forced": 0.5563380281690141,
+      "accuracy_on_answered": 0.8148984198645598,
+      "coverage": 0.609353507565337,
+      "macro_f1_abstention_counted_as_error": 0.5981450023212205,
+      "threshold": 0.25
+    },
+    "accuracy": 0.7138927097661623,
+    "accuracy_vs_clean_labels": 0.7441540577716643,
+    "confusion_matrix": {
+      "labels": [
+        "DIGITAL_ARREST",
+        "UPI_FRAUD",
+        "PHISHING",
+        "OTP_SCAM",
+        "BANK_FRAUD",
+        "INVESTMENT_SCAM",
+        "JOB_SCAM",
+        "SOCIAL_MEDIA_FRAUD",
+        "OTHER"
+      ],
+      "rows_true_cols_pred": [
+        [
+          64,
+          0,
+          0,
+          0,
+          0,
+          4,
+          8,
+          0,
+          0
+        ],
+        [
+          0,
+          76,
+          0,
+          2,
+          2,
+          0,
+          0,
+          0,
+          3
+        ],
+        [
+          0,
+          4,
+          53,
+          14,
+          0,
+          0,
+          0,
+          0,
+          3
+        ],
+        [
+          2,
+          1,
+          3,
+          70,
+          1,
+          0,
+          0,
+          0,
+          7
+        ],
+        [
+          2,
+          16,
+          2,
+          2,
+          51,
+          0,
+          0,
+          2,
+          5
+        ],
+        [
+          0,
+          2,
+          0,
+          7,
+          0,
+          56,
+          1,
+          15,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          4,
+          54,
+          19,
+          0
+        ],
+        [
+          12,
+          13,
+          0,
+          1,
+          0,
+          16,
+          2,
+          41,
+          1
+        ],
+        [
+          8,
+          6,
+          0,
+          10,
+          6,
+          0,
+          0,
+          2,
+          54
+        ]
+      ]
+    },
+    "macro_f1": 0.715286786822097,
+    "metric_basis": "argmax label vs observed (noisy) label, abstention ignored",
+    "n": 727,
+    "per_class": {
+      "BANK_FRAUD": {
+        "f1": 0.7285714285714285,
+        "precision": 0.85,
+        "recall": 0.6375,
+        "support": 80
+      },
+      "DIGITAL_ARREST": {
+        "f1": 0.7804878048780488,
+        "precision": 0.7272727272727273,
+        "recall": 0.8421052631578947,
+        "support": 76
+      },
+      "INVESTMENT_SCAM": {
+        "f1": 0.6956521739130435,
+        "precision": 0.7,
+        "recall": 0.691358024691358,
+        "support": 81
+      },
+      "JOB_SCAM": {
+        "f1": 0.7605633802816901,
+        "precision": 0.8307692307692308,
+        "recall": 0.7012987012987013,
+        "support": 77
+      },
+      "OTHER": {
+        "f1": 0.6792452830188679,
+        "precision": 0.7397260273972602,
+        "recall": 0.627906976744186,
+        "support": 86
+      },
+      "OTP_SCAM": {
+        "f1": 0.7368421052631579,
+        "precision": 0.660377358490566,
+        "recall": 0.8333333333333334,
+        "support": 84
+      },
+      "PHISHING": {
+        "f1": 0.803030303030303,
+        "precision": 0.9137931034482759,
+        "recall": 0.7162162162162162,
+        "support": 74
+      },
+      "SOCIAL_MEDIA_FRAUD": {
+        "f1": 0.49696969696969695,
+        "precision": 0.5189873417721519,
+        "recall": 0.47674418604651164,
+        "support": 86
+      },
+      "UPI_FRAUD": {
+        "f1": 0.7562189054726368,
+        "precision": 0.6440677966101694,
+        "recall": 0.9156626506024096,
+        "support": 83
+      }
+    }
+  },
+  "language_slices": {
+    "dv": {
+      "accuracy": 0.5714285714285714,
+      "macro_f1": 0.42912987099033617,
+      "n": 84
+    },
+    "en": {
+      "accuracy": 0.7160493827160493,
+      "macro_f1": 0.7041574958964866,
+      "n": 405
+    },
+    "hi": {
+      "accuracy": 0.7605042016806722,
+      "macro_f1": 0.7591640205157101,
+      "n": 238
+    }
+  },
+  "leaky_random_split": {
+    "NOT_THE_HEADLINE": "random row split; the same template families appear in train and test, so this overstates generalisation to new scenarios",
+    "accuracy": 0.9850543478260869,
+    "macro_f1": 0.9849332018948433,
+    "test_rows_whose_family_is_in_train": 1.0
+  },
+  "model_version": "category-v1",
+  "noise_robustness": {
+    "accuracy": 0.6836313617606602,
+    "clean_macro_f1": 0.715286786822097,
+    "macro_f1": 0.6829089671608297,
+    "perturbation": "synth.perturb strength=0.15 on the untouched test texts"
+  },
+  "optional_fields": {
+    "no_optional_field_present": {
+      "accuracy": 0.5714285714285714,
+      "n": 21
+    },
+    "note": "text-only model: dropping optional fields cannot change a prediction",
+    "structured_fields_used_as_features": false,
+    "three_or_more_fields_present": {
+      "accuracy": 0.7435897435897436,
+      "n": 468
+    }
+  },
+  "training": {
+    "C_rule": "largest C with validation macro-F1 within 0.02 of the best",
+    "C_search_on_validation": [
+      {
+        "C": 0.3,
+        "validation_macro_f1": 0.6363966433023267
+      },
+      {
+        "C": 1.0,
+        "validation_macro_f1": 0.62109623068967
+      },
+      {
+        "C": 3.0,
+        "validation_macro_f1": 0.6064890862449663
+      },
+      {
+        "C": 10.0,
+        "validation_macro_f1": 0.5802393696597834
+      },
+      {
+        "C": 30.0,
+        "validation_macro_f1": 0.5764104106640625
+      }
+    ],
+    "abstention_threshold_min_confidence": 0.25,
+    "algorithm": "tfidf(word1-2+char_wb3-5)+multinomial_logreg",
+    "chosen_C": 1.0,
+    "class_weight": "balanced",
+    "fitted_on": "train split only",
+    "numpy_version": "2.5.3",
+    "seed": 1729,
+    "sklearn_version": "1.9.1",
+    "threshold_rule": "smallest threshold with validation accuracy on answered >= 0.8 and coverage >= 0.5",
+    "validation_threshold_table": [
+      {
+        "abstention_rate": 0.0013495276653171517,
+        "accuracy_on_abstained_if_forced": 0.0,
+        "accuracy_on_answered": 0.6351351351351351,
+        "coverage": 0.9986504723346828,
+        "macro_f1_abstention_counted_as_error": 0.6214988071792029,
+        "threshold": 0.15
+      },
+      {
+        "abstention_rate": 0.04183535762483126,
+        "accuracy_on_abstained_if_forced": 0.1935483870967742,
+        "accuracy_on_answered": 0.6535211267605634,
+        "coverage": 0.9581646423751687,
+        "macro_f1_abstention_counted_as_error": 0.623995859702021,
+        "threshold": 0.175
+      },
+      {
+        "abstention_rate": 0.13225371120107965,
+        "accuracy_on_abstained_if_forced": 0.21428571428571427,
+        "accuracy_on_answered": 0.6982892690513219,
+        "coverage": 0.8677462887989204,
+        "macro_f1_abstention_counted_as_error": 0.6269404389340514,
+        "threshold": 0.2
+      },
+      {
+        "abstention_rate": 0.2887989203778677,
+        "accuracy_on_abstained_if_forced": 0.2897196261682243,
+        "accuracy_on_answered": 0.7741935483870968,
+        "coverage": 0.7112010796221323,
+        "macro_f1_abstention_counted_as_error": 0.6119812206888462,
+        "threshold": 0.225
+      },
+      {
+        "abstention_rate": 0.4385964912280702,
+        "accuracy_on_abstained_if_forced": 0.40307692307692305,
+        "accuracy_on_answered": 0.8149038461538461,
+        "coverage": 0.5614035087719298,
+        "macro_f1_abstention_counted_as_error": 0.5453019274812897,
+        "threshold": 0.25
+      },
+      {
+        "abstention_rate": 0.51417004048583,
+        "accuracy_on_abstained_if_forced": 0.4645669291338583,
+        "accuracy_on_answered": 0.8138888888888889,
+        "coverage": 0.48582995951417,
+        "macro_f1_abstention_counted_as_error": 0.4869989425402434,
+        "threshold": 0.275
+      },
+      {
+        "abstention_rate": 0.5560053981106612,
+        "accuracy_on_abstained_if_forced": 0.4854368932038835,
+        "accuracy_on_answered": 0.8206686930091185,
+        "coverage": 0.44399460188933876,
+        "macro_f1_abstention_counted_as_error": 0.45916501004676635,
+        "threshold": 0.3
+      },
+      {
+        "abstention_rate": 0.6248313090418354,
+        "accuracy_on_abstained_if_forced": 0.5226781857451404,
+        "accuracy_on_answered": 0.8201438848920863,
+        "coverage": 0.37516869095816463,
+        "macro_f1_abstention_counted_as_error": 0.4049641323833048,
+        "threshold": 0.325
+      },
+      {
+        "abstention_rate": 0.6936572199730094,
+        "accuracy_on_abstained_if_forced": 0.5525291828793775,
+        "accuracy_on_answered": 0.8193832599118943,
+        "coverage": 0.30634278002699056,
+        "macro_f1_abstention_counted_as_error": 0.34547955057117047,
+        "threshold": 0.35
+      },
+      {
+        "abstention_rate": 0.7422402159244265,
+        "accuracy_on_abstained_if_forced": 0.56,
+        "accuracy_on_answered": 0.8481675392670157,
+        "coverage": 0.25775978407557354,
+        "macro_f1_abstention_counted_as_error": 0.3093601356453219,
+        "threshold": 0.375
+      },
+      {
+        "abstention_rate": 0.7800269905533064,
+        "accuracy_on_abstained_if_forced": 0.5761245674740484,
+        "accuracy_on_answered": 0.8404907975460123,
+        "coverage": 0.21997300944669365,
+        "macro_f1_abstention_counted_as_error": 0.2680285881575091,
+        "threshold": 0.4
+      },
+      {
+        "abstention_rate": 0.8110661268556005,
+        "accuracy_on_abstained_if_forced": 0.5840266222961731,
+        "accuracy_on_answered": 0.85,
+        "coverage": 0.18893387314439947,
+        "macro_f1_abstention_counted_as_error": 0.2387809909376092,
+        "threshold": 0.425
+      },
+      {
+        "abstention_rate": 0.8326585695006747,
+        "accuracy_on_abstained_if_forced": 0.5899513776337115,
+        "accuracy_on_answered": 0.8548387096774194,
+        "coverage": 0.16734143049932523,
+        "macro_f1_abstention_counted_as_error": 0.21728717684002236,
+        "threshold": 0.45
+      },
+      {
+        "abstention_rate": 0.8488529014844804,
+        "accuracy_on_abstained_if_forced": 0.589825119236884,
+        "accuracy_on_answered": 0.8839285714285714,
+        "coverage": 0.15114709851551958,
+        "macro_f1_abstention_counted_as_error": 0.20483407827456956,
+        "threshold": 0.475
+      },
+      {
+        "abstention_rate": 0.8690958164642375,
+        "accuracy_on_abstained_if_forced": 0.5978260869565217,
+        "accuracy_on_answered": 0.8762886597938144,
+        "coverage": 0.13090418353576247,
+        "macro_f1_abstention_counted_as_error": 0.18061326458598412,
+        "threshold": 0.5
+      },
+      {
+        "abstention_rate": 0.8893387314439946,
+        "accuracy_on_abstained_if_forced": 0.6069802731411229,
+        "accuracy_on_answered": 0.8536585365853658,
+        "coverage": 0.1106612685560054,
+        "macro_f1_abstention_counted_as_error": 0.15081346554270755,
+        "threshold": 0.525
+      },
+      {
+        "abstention_rate": 0.9122807017543859,
+        "accuracy_on_abstained_if_forced": 0.6153846153846154,
+        "accuracy_on_answered": 0.8307692307692308,
+        "coverage": 0.08771929824561403,
+        "macro_f1_abstention_counted_as_error": 0.1216028264770403,
+        "threshold": 0.55
+      },
+      {
+        "abstention_rate": 0.9365721997300944,
+        "accuracy_on_abstained_if_forced": 0.6181556195965417,
+        "accuracy_on_answered": 0.8723404255319149,
+        "coverage": 0.06342780026990553,
+        "macro_f1_abstention_counted_as_error": 0.0944436329960239,
+        "threshold": 0.575
+      },
+      {
+        "abstention_rate": 0.9527665317139001,
+        "accuracy_on_abstained_if_forced": 0.623229461756374,
+        "accuracy_on_answered": 0.8571428571428571,
+        "coverage": 0.04723346828609987,
+        "macro_f1_abstention_counted_as_error": 0.07047796448595256,
+        "threshold": 0.6
+      },
+      {
+        "abstention_rate": 0.97165991902834,
+        "accuracy_on_abstained_if_forced": 0.6277777777777778,
+        "accuracy_on_answered": 0.8571428571428571,
+        "coverage": 0.02834008097165992,
+        "macro_f1_abstention_counted_as_error": 0.043142616786027634,
+        "threshold": 0.625
+      },
+      {
+        "abstention_rate": 0.9838056680161943,
+        "accuracy_on_abstained_if_forced": 0.6296296296296297,
+        "accuracy_on_answered": 0.9166666666666666,
+        "coverage": 0.016194331983805668,
+        "macro_f1_abstention_counted_as_error": 0.027176527176527174,
+        "threshold": 0.65
+      },
+      {
+        "abstention_rate": 0.9932523616734144,
+        "accuracy_on_abstained_if_forced": 0.6317934782608695,
+        "accuracy_on_answered": 1.0,
+        "coverage": 0.006747638326585695,
+        "macro_f1_abstention_counted_as_error": 0.012894489836741602,
+        "threshold": 0.675
+      },
+      {
+        "abstention_rate": 0.9946018893387314,
+        "accuracy_on_abstained_if_forced": 0.6322930800542741,
+        "accuracy_on_answered": 1.0,
+        "coverage": 0.005398110661268556,
+        "macro_f1_abstention_counted_as_error": 0.0104293141558482,
+        "threshold": 0.7
+      },
+      {
+        "abstention_rate": 0.9959514170040485,
+        "accuracy_on_abstained_if_forced": 0.6327913279132791,
+        "accuracy_on_answered": 1.0,
+        "coverage": 0.004048582995951417,
+        "macro_f1_abstention_counted_as_error": 0.007906134341286715,
+        "threshold": 0.725
+      },
+      {
+        "abstention_rate": 0.9986504723346828,
+        "accuracy_on_abstained_if_forced": 0.6337837837837837,
+        "accuracy_on_answered": 1.0,
+        "coverage": 0.001349527665317139,
+        "macro_f1_abstention_counted_as_error": 0.0026773761713520753,
+        "threshold": 0.75
+      },
+      {
+        "abstention_rate": 1.0,
+        "accuracy_on_abstained_if_forced": 0.6342780026990553,
+        "accuracy_on_answered": null,
+        "coverage": 0.0,
+        "macro_f1_abstention_counted_as_error": 0.0,
+        "threshold": 0.775
+      },
+      {
+        "abstention_rate": 1.0,
+        "accuracy_on_abstained_if_forced": 0.6342780026990553,
+        "accuracy_on_answered": null,
+        "coverage": 0.0,
+        "macro_f1_abstention_counted_as_error": 0.0,
+        "threshold": 0.8
+      }
+    ]
+  }
+}
