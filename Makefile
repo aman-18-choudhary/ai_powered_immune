@@ -55,19 +55,29 @@ lint: ## ruff check + format --check on python packages; eslint + tsc on the con
 console-build:
 	cd web-console && npm install --no-audit --no-fund && npm run build
 
+# Complaints (mounted at /api/complaints): COMPLAINTS_AUTH_MODE defaults to `local` (dev-only email
+# code sign-in, codes printed in this terminal) unless Clerk is configured; INVESTIGATOR_ALLOWLIST
+# and ADMIN_BOOTSTRAP_EMAILS are read from your environment (e.g. `export INVESTIGATOR_ALLOWLIST=...`).
+# Data persists in ./.data/complaints (gitignored).
+define COMPLAINTS_NOTE
+	@echo "Complaints API: http://localhost:$(PORT)/api/complaints  (auth mode: $${COMPLAINTS_AUTH_MODE:-auto: local unless Clerk is configured}; sign-in codes print here as [LOCAL DEV MAIL]; INVESTIGATOR_ALLOWLIST $(if $(INVESTIGATOR_ALLOWLIST),set,NOT set: nobody can enter as investigator))"
+endef
+
 demo: console-build ## Build the console and serve it with the demo-server on http://localhost:$(PORT)
 	@echo "ScamShield Immune demo: http://localhost:$(PORT)  (simulated data; press Play)"
-	DEMO_STATIC_DIR=$(CURDIR)/web-console/dist PORT=$(PORT) $(PY) -m demo_server
+	$(COMPLAINTS_NOTE)
+	DEMO_STATIC_DIR=$(CURDIR)/web-console/dist PORT=$(PORT) COMPLAINTS_DATA_DIR=$${COMPLAINTS_DATA_DIR:-$(CURDIR)/.data/complaints} $(PY) -m demo_server
 
 demo-server: ## Demo-server only (API + stream) on :$(PORT)
-	PORT=$(PORT) $(PY) -m demo_server
+	$(COMPLAINTS_NOTE)
+	PORT=$(PORT) COMPLAINTS_DATA_DIR=$${COMPLAINTS_DATA_DIR:-$(CURDIR)/.data/complaints} $(PY) -m demo_server
 
 console-dev: ## Vite dev server on :5173 proxying /api to :8080
 	cd web-console && npm install --no-audit --no-fund && npm run dev
 
 demo-dev: ## Demo-server in the background on :$(PORT) + Vite dev server (Ctrl-C stops both)
 	@trap 'kill 0' INT TERM EXIT; \
-	PORT=$(PORT) $(PY) -m demo_server & \
+	PORT=$(PORT) COMPLAINTS_DATA_DIR=$${COMPLAINTS_DATA_DIR:-$(CURDIR)/.data/complaints} $(PY) -m demo_server & \
 	cd web-console && npm install --no-audit --no-fund && DEMO_API=http://localhost:$(PORT) npm run dev; \
 	wait
 

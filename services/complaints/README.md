@@ -9,7 +9,8 @@ stack), plain Postgres only.
 
 | Piece | Status |
 |---|---|
-| API, RBAC, storage, validation, uploads | implemented; 175 tests on SQLite, the same suite passed against a disposable Postgres 14 (`scripts/with_postgres.sh`) |
+| API, RBAC, storage, validation, uploads, migrations, profile, local sign-in | implemented; 364 tests on SQLite (+1 Postgres-only skipped), the same suite (365) passed against a disposable Postgres 14 (`scripts/with_postgres.sh`) on 2026-10-14 |
+| Local sign-in (email + one-time code in the server terminal) | implemented and tested; **development only**, `demo`/`local` modes, absent in `clerk` mode |
 | Clerk token verification | implemented and tested ONLY with locally generated RSA keys and an injected JWKS. **Live Clerk verification has not been exercised: blocked by configuration** (no Clerk instance or keys exist for this repository) |
 | Clerk Backend API email lookup | defined, OFF by default, tested only against a mock transport |
 | Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation; optional local-Ollama explanation (not exercised live here). Score is an UNCALIBRATED heuristic. Audio transcript, screenshot OCR, document text: `unavailable` (listed as unanalysed attachments) |
@@ -63,6 +64,40 @@ Browser (Clerk sign-in)                  complaints service
   admin exists (`admin_access: "lapsed_retained"`, audit and ERROR log
   `last_admin_bootstrap_lapsed`). Appoint another administrator through the API to end this.
 
+### Local sign-in (development only, machines without Clerk keys)
+
+With `COMPLAINTS_AUTH_MODE=local` (or `demo`) the service offers an email + one-time-code sign-in
+so the console can be used without a Clerk instance:
+
+```
+POST /local-auth/start  {"email": "..."}                 -> 202 (same answer for every address)
+     server stderr: [LOCAL DEV MAIL] sign-in code for <email>: 123456
+POST /local-auth/verify {"email": "...", "code": "123456", "name"?: "..."}
+                                                          -> 200 {token, token_type, expires_in}
+```
+
+* The printed line is the local stand-in for sending an email (no mail server, no paid API).
+  Whoever can read the server terminal can sign in as any address: it exists for a developer's
+  own machine and is labelled dev-only everywhere. It is not available in `clerk` mode (404).
+* The code is 6 random digits; only a salted HMAC of it is kept, in memory, for 10 minutes; at
+  most 5 wrong attempts (then a new code is needed); a new request replaces the previous code; one
+  use. Rate limits (15-minute windows): 5 code requests per email, 20 per client address, 30
+  verifications per client address (`429` with `Retry-After`). Wrong, expired, used and
+  never-issued codes all get the same `400 invalid_code`.
+* Responses never contain the code and never reveal whether an account exists. The email, the
+  code and its hash are never logged (the stderr line is the only place the code appears).
+* The token is HS256 (8 h) signed with `COMPLAINTS_DEMO_JWT_SECRET` (in the demo server: its
+  `DEMO_JWT_SECRET`): `sub` = `local:` + a hash of the email, `email`, `email_verified: true` (the
+  code proved access to the "mailbox"), optional `name`, no role. It is verified like any demo
+  token, so the role is still decided here: CITIZEN by default, INVESTIGATOR only through
+  `POST /auth/entry` with an email in `INVESTIGATOR_ALLOWLIST`, ADMIN only through
+  `ADMIN_BOOTSTRAP_EMAILS` or an existing admin.
+* `GET /auth/config` (public) tells the console which methods exist:
+  `{"auth_mode", "clerk": {"enabled", "publishable_key"}, "local": {"enabled", "dev_only",
+  "delivery", "code_ttl_s"}}`. `publishable_key` comes from `CLERK_PUBLISHABLE_KEY`, which must look
+  like a publishable key (`pk_test_...`/`pk_live_...`, otherwise the service refuses to start so a
+  secret key is never sent to browsers).
+
 ### Clerk configuration the service needs
 
 Create a Clerk JWT template (or session-token customisation) that adds these claims:
@@ -72,7 +107,7 @@ absent the identity is still valid but `email_verified` is false, so investigato
 fails closed. Set `CLERK_ISSUER`, `CLERK_JWKS_URL` (both https) and, recommended,
 `CLERK_AUTHORIZED_PARTIES` (the console's origin; a token without a matching `azp` is rejected).
 
-`COMPLAINTS_AUTH_MODE=demo` accepts HS256 tokens (for example from the gateway demo login) signed
+`COMPLAINTS_AUTH_MODE=demo` (and `local`, which is the same plus the local sign-in above) accepts HS256 tokens (for example from the gateway demo login) signed
 with `COMPLAINTS_DEMO_JWT_SECRET`/`GATEWAY_JWT_SECRET` (>= 32 bytes). The `role` claim is ignored,
 the subject is prefixed `demo:`, and demo users are CITIZEN unless the token itself carries a
 verified `email` that matches the allowlist (a token minted by whoever holds the secret). Never use
@@ -89,13 +124,18 @@ configuration error; there is no insecure fallback.
 | `GET /healthz`, `GET /readyz` | none | readiness pings the DB and the evidence dir |
 | `GET /auth/session` | any | upserts the user, returns `{user, capabilities}` |
 | `POST /auth/entry` | any | `{entry: "citizen"}` or `{entry: "investigator"}` |
-| `POST /complaints` | CITIZEN | required: `category`, `title`, `description` (10-5000). Optional fields stay NULL when absent or blank. `Idempotency-Key` header (24 h, per user) |
-| `GET /complaints` | any | citizen: own only; staff: all non-deleted. Filters `status category city state incident_from/to created_from/to risk_level has_evidence q`, `sort`, `limit` (1-100), `offset` |
+| `GET /auth/config` | none | sign-in methods available (Clerk publishable key, local sign-in on/off) |
+| `POST /local-auth/start`, `POST /local-auth/verify` | none | development-only email + code sign-in; `demo`/`local` modes only (404 in `clerk` mode) |
+| `GET /me` | any (own) | `id, email, email_verified, display_name, role` (effective), `created_at`, `privacy: {allow_case_matching}` |
+| `PATCH /me` | any (own) | only `display_name` (1-100; `null` returns to the name from sign-in) and `privacy.allow_case_matching`; any other key (`role`, `email`, ...) is a 422 and nothing changes; audited as `profile_update` without the name |
+| `POST /complaints` | CITIZEN | required: `category`, `title`, `description` (10-5000). Optional fields stay NULL when absent or blank, including the bank details `bank_name` (<= 100), `bank_account` (suspect/beneficiary account, 6-18 digits after removing spaces) and `ifsc` (`^[A-Z]{4}0[A-Z0-9]{6}$`, upper-cased). `Idempotency-Key` header (24 h, per user) |
+| `GET /complaints` | any | citizen: own only; staff: all non-deleted. Filters `status category city state incident_from/to created_from/to risk_level has_evidence q`, `sort`, `limit` (1-100), `offset`. `q` matches title/description and, exactly, a bank account number (spaces ignored) or IFSC |
 | `GET /complaints/{id}` | owner, INVESTIGATOR, ADMIN | others get 404, identical to a missing id; includes status history, latest analysis summary, evidence list |
 | `PATCH /complaints/{id}/status` | INVESTIGATOR, ADMIN | valid transitions only, history row, alert to the owner |
 | `DELETE /complaints/{id}` | owner (CITIZEN) | soft delete, only while SUBMITTED, audited |
 | `POST /complaints/{id}/evidence` | owner (CITIZEN) | multipart, one file in field `file` |
 | `GET /complaints/{id}/evidence`, `.../{eid}/download` | owner, staff | `Content-Disposition: attachment`, `nosniff` |
+| `DELETE /complaints/{id}/evidence/{eid}` | owner while SUBMITTED, ADMIN any time | marks the row `deleted`, removes the file, audited (`evidence_delete`, no file name); an admin removal alerts the owner. `200 {id, status: "deleted", file_removed}` (`file_removed: false` = the row is deleted but the file could not be removed, logged). Foreign or unknown ids: 404; INVESTIGATOR: 403; owner after review started: 409 `evidence_not_deletable` |
 | `POST /complaints/{id}/analysis`, `GET .../analysis` | owner, staff | new version per run (pipeline v2) |
 | `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `suspicious_url`, `suspect_phone`, `upi_id`, `suspect_email`, `amount`, `payment_method`, `city`, `state`, `social_platform`; nothing stored, content not logged, `persisted: false`; own rate bucket |
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
@@ -118,6 +158,8 @@ Errors are JSON `{error, message}`; validation errors are `{error: "validation_e
 | read own complaints / evidence / analysis | yes | n/a | n/a |
 | read all complaints / evidence / analysis | no (404) | yes | yes |
 | upload evidence | own only | no | no |
+| remove evidence | own, SUBMITTED only | no | any |
+| own profile and privacy (`/me`) | yes | yes | yes |
 | change complaint status | no | yes | yes |
 | delete complaint | own, SUBMITTED only | no | no |
 | run analysis | own | any | any |
@@ -148,6 +190,37 @@ deleted.
 * **No malware or content scanning is performed.** A file that has a valid PNG/PDF header can
   still be malicious; downloads are attachments with `nosniff` and a fixed type, which limits but
   does not remove that risk. Soft-deleted complaints keep their files; there is no retention job.
+* Removal (`DELETE .../evidence/{eid}`): the row becomes `deleted` (with `deleted_at`) and stays
+  for the audit trail; the file is unlinked. Deleted evidence is excluded from lists, detail,
+  downloads, counts, the `has_evidence` filter, the per-complaint cap and analysis; uploading the
+  same bytes again creates a new record.
+
+## Bank details and privacy settings
+
+* `bank_name`, `bank_account`, `ifsc` are optional and NULL when absent. They are returned to the
+  owner and to staff only (like every complaint field; this service masks no complaint field in
+  list views). Invalid values are a 422 that does not echo the value.
+* `users.allow_case_matching` (default true, `PATCH /me`): when false, the user's complaints are to
+  be excluded from future similarity / network matching shown to other parties. **It is stored
+  now and not yet enforced: no such matching exists in this service yet; the Fraud DNA / network
+  phase (Phase D) will honour it.**
+
+## Schema migrations
+
+Versioned and additive (`complaints/migrations.py`, table `schema_migrations(version, name,
+applied_at)`). They run at startup and with `python -m complaints.migrate`, in one transaction
+behind a Postgres advisory lock (SQLite and Postgres). Every step inspects the live schema and only
+adds what is missing, so a database created before versioning (with or without `analyses.detail`)
+upgrades in place, a re-run is a no-op, and applied steps are re-checked on start (a column dropped
+by hand is restored). Data is never dropped.
+
+| Version | Change |
+|---|---|
+| 1 `baseline` | `create_all` of the current tables |
+| 2 `analyses_detail_column` | `analyses.detail` (previously an ad-hoc ALTER) |
+| 3 `complaint_bank_details` | `complaints.bank_name`, `bank_account`, `ifsc`, index on `bank_account` |
+| 4 `user_profile_privacy` | `users.allow_case_matching` (default true), `users.display_name_set` |
+| 5 `evidence_deleted_status` | evidence status `deleted` allowed (SQLite: table rebuilt with all rows; Postgres: CHECK swapped), `complaint_evidence.deleted_at` |
 
 ## Analysis pipeline v2
 
@@ -191,7 +264,7 @@ the API.
   (`source: static_guidance`): 1930 helpline, cybercrime.gov.in, bank/UPI dispute, never share an OTP.
   **They need legal and domain review (`review_required`) before production use.**
 * Optional complaint fields and files are never fraud evidence when absent. A new `analyses.detail`
-  JSON column holds the v2 extras; `create_schema` adds it to an existing table (additive, idempotent).
+  JSON column holds the v2 extras; migration 2 adds it to an existing table (additive, idempotent).
 * HIGH results (including CRITICAL) create one alert for the owner per analysis version.
 
 ### Ollama (optional local explanation)
@@ -238,11 +311,12 @@ metrics file.
 |---|---|
 | `COMPLAINTS_DATABASE_URL` | SQLAlchemy URL (required) |
 | `COMPLAINTS_EVIDENCE_DIR` | evidence directory (required) |
-| `COMPLAINTS_AUTH_MODE` | `clerk` (default) or `demo` |
+| `COMPLAINTS_AUTH_MODE` | `clerk` (default), `demo`, or `local` (= demo + the dev-only email code sign-in, which `demo` also enables) |
+| `CLERK_PUBLISHABLE_KEY` | optional `pk_...` browser key returned by `GET /auth/config` |
 | `CLERK_ISSUER`, `CLERK_JWKS_URL` | required in clerk mode (https) |
 | `CLERK_AUTHORIZED_PARTIES`, `CLERK_AUDIENCE` | optional `azp` / `aud` checks |
 | `CLERK_BACKEND_LOOKUP`, `CLERK_SECRET_KEY` | optional primary-email lookup (off; never logged) |
-| `COMPLAINTS_DEMO_JWT_SECRET` (falls back to `GATEWAY_JWT_SECRET`) | demo mode only |
+| `COMPLAINTS_DEMO_JWT_SECRET` (falls back to `GATEWAY_JWT_SECRET`) | demo/local modes only (signs and verifies local sign-in tokens) |
 | `INVESTIGATOR_ALLOWLIST` | verified emails allowed to enter as investigator |
 | `ADMIN_BOOTSTRAP_EMAILS` | verified emails promoted to ADMIN at first sign-in |
 | `COMPLAINTS_CORS_ORIGINS` | explicit origins (`*` is refused) |
@@ -274,6 +348,8 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 | DB outage | 503 `service_unavailable`; no secrets in the message | no retry/queue |
 | JWKS outage | fail closed (503); stale keys used up to 24 h after a failed refresh | |
 | SQL injection | Core with bound parameters; LIKE input escaped | |
+| local sign-in abuse (demo/local modes) | off in clerk mode; salted code hash in memory, 10 min, 5 attempts, single use, per-email and per-IP limits, uniform answers | anyone who reads the server terminal can sign in as any address; limits are per process; development only |
+| self-promotion through profile | `PATCH /me` accepts only `display_name` and `privacy`; anything else is a 422 | |
 
 ## Honest limits
 
@@ -283,8 +359,10 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 * No malware scanning; no data-retention or erasure job; evidence stays on one volume (no
   replication).
 * The rate limiter and the (optional) backend email-lookup cache are per process.
-* Create-only schema (no in-place migrations); `python -m complaints.migrate` runs `create_all`
-  behind a Postgres advisory lock.
+* Migrations are additive only (no down-migrations, no data migrations so far).
+* `allow_case_matching` is stored but nothing consumes it yet (Phase D).
+* Local sign-in is a development convenience, not an identity provider: it proves only access to
+  the server terminal.
 * No `/metrics` endpoint (not scraped by Prometheus).
 * `latitude`/`longitude` are accepted and stored but not used by any analysis here.
 
@@ -294,6 +372,6 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 pip install -e "services/complaints[dev]"          # also: pip install -e services/call_guard
 cd services/complaints && python -m pytest -W error -q
 bash scripts/with_postgres.sh                      # whole suite on a disposable local Postgres
-python -m complaints.migrate                       # one-shot schema creation (needs the env)
+python -m complaints.migrate                       # apply pending migrations (needs COMPLAINTS_DATABASE_URL)
 python -m complaints                               # uvicorn, access log off
 ```

@@ -5,7 +5,8 @@ exposes it through the `/api` REST + `/api/stream` WebSocket contract described 
 `docs/superpowers/specs/2026-10-10-console-and-demo-server-design.md`.
 
 **Everything is simulated, except the live microphone feature** (`/api/live-audio`, below),
-which processes real audio from the user's own microphone.
+which processes real audio from the user's own microphone, and the **citizen complaints service**
+(`/api/complaints`, below), which stores real complaints, evidence files and users.
 
 **The scenario is simulated.** (`scenario_kind: "hero_hard_case"` and `scenario_note` say so on the stream and in `/demo/state`: the hero run is a constructed hard case.) Transactions, calls, victims, mules and banks come from
 `sim-engine`; the hero scenario is a constructed hard case; benchmark numbers are simulator-only.
@@ -38,7 +39,7 @@ are meant to honour.
 ```
 pip install -e contracts -e libs/svckit -e services/sim_engine -e services/call_guard \
     -e services/txn_guard -e services/antibody_hub -e services/evidence_ledger -e services/geo_intel -e services/citizen_shield \
-    -e "services/demo_server[dev]"
+    -e services/live_audio -e "services/complaints[analysis]" -e "services/demo_server[dev]"
 make demo-server                          # PORT (default 8080); python -m demo_server
 DEMO_STATIC_DIR=web-console/dist make demo-server   # also serve the built console (SPA fallback)
 ```
@@ -83,6 +84,7 @@ officer and admin buckets are keyed per token subject.
 | `GET /benchmark/summary` | any | the bundled benchmark JSON; strong `ETag` (SHA-256 of the body), `If-None-Match` gives `304` |
 | `POST /citizen/assess` `{message, lang?}` | any | see Citizen assistant |
 | `GET /live-audio/capabilities`, `POST /live-audio/sessions`, `POST /live-audio/sessions/{id}/chunks?seq=`, `GET /live-audio/sessions/{id}`, `POST /live-audio/sessions/{id}/end` | any (owner-only sessions) | see Live microphone |
+| `/complaints/**` (e.g. `GET /complaints/auth/config`, `GET /complaints/auth/session`, `POST /complaints/complaints`, `GET/PATCH /complaints/me`) | decided by the complaints service | the complaints API mounted as is; see Complaints |
 
 Examples:
 
@@ -218,6 +220,38 @@ no `simulated` flag. STT or scorer failures are reported as `unavailable` / `sta
 risk. Details, measured latency, language caveats and the threat model:
 [`services/live_audio/README.md`](../live_audio/README.md).
 
+### Complaints (real persistence)
+
+`services/complaints` is mounted at `/api/complaints` (its routes are listed in
+[`services/complaints/README.md`](../complaints/README.md); `/complaints/x` there is
+`/api/complaints/complaints/x` here). It keeps its own error format (`{error, message}`), RBAC,
+per-user rate limits, request ids and access log. Storage: a SQLite file and an evidence
+directory under `./.data/complaints` (relative to the working directory, gitignored, created on
+first start; mode 0700) unless `COMPLAINTS_DATABASE_URL` / `COMPLAINTS_EVIDENCE_DIR` are set. The
+schema is migrated at startup (versioned migrations).
+
+Identity (`COMPLAINTS_AUTH_MODE`; unset = `clerk` when `CLERK_ISSUER` and `CLERK_JWKS_URL` are set,
+otherwise `local`):
+
+* `local` / `demo`: HS256 tokens signed with this server's `DEMO_JWT_SECRET`. The existing
+  `/api/auth/demo-login` tokens work and are **always CITIZEN** in the complaints service (their
+  `role` claim is ignored). The development-only sign-in `POST /api/complaints/local-auth/start
+  {email}` then `POST /api/complaints/local-auth/verify {email, code}` issues an 8 h token for a
+  verified email: the 6-digit code is printed as ONE line `[LOCAL DEV MAIL] sign-in code for
+  <email>: <code>` on this server's stderr, standing in for email delivery (anyone who can read
+  the terminal can sign in as any address, so this is for a developer's own machine only). Local
+  tokens carry no role and are not accepted by the simulator routes.
+* `clerk`: Clerk session tokens only; local sign-in answers 404. `CLERK_PUBLISHABLE_KEY` (a
+  `pk_...` browser key) is returned by `GET /api/complaints/auth/config` for the console.
+
+Roles come only from the complaints users table: INVESTIGATOR through `POST
+/api/complaints/auth/entry {"entry":"investigator"}` when the verified email is in
+`INVESTIGATOR_ALLOWLIST`, ADMIN through `ADMIN_BOOTSTRAP_EMAILS` or an existing admin (both read
+from the environment). The global 64 KiB body cap is raised only for
+`POST /api/complaints/complaints/{id}/evidence`, to the service's largest per-file cap plus
+multipart overhead; the service enforces its exact per-type caps (10 MiB images/PDF, 25 MiB audio
+by default).
+
 ### Ring graph, takedown and geography
 
 `ring.py` builds an account graph from the scenario's own transactions (accounts keyed by the
@@ -246,6 +280,11 @@ simulated citizen is exposed.
 | `LOG_LEVEL` | `INFO` | |
 | `LIVE_STT_ENGINE`, `LIVE_STT_MODEL` | `faster_whisper`, `base` | live microphone STT (`none` disables it; a model must already be cached, it is never downloaded); more in the live_audio README |
 | `OLLAMA_URL`, `OLLAMA_MODEL` | unset, `qwen2.5:3b` | optional local LLM wording for live-microphone explanations (never changes the score) |
+| `COMPLAINTS_DATA_DIR` | `./.data/complaints` | where the default complaints SQLite file (`complaints.db`) and `evidence/` live |
+| `COMPLAINTS_DATABASE_URL`, `COMPLAINTS_EVIDENCE_DIR` | under `COMPLAINTS_DATA_DIR` | override the complaints storage (a Postgres URL works) |
+| `COMPLAINTS_AUTH_MODE` | `clerk` if Clerk is configured, else `local` | `local`/`demo`: demo-login tokens + dev-only email code sign-in; `clerk`: Clerk only |
+| `INVESTIGATOR_ALLOWLIST`, `ADMIN_BOOTSTRAP_EMAILS` | empty | verified emails eligible for investigator entry / admin bootstrap |
+| `CLERK_ISSUER`, `CLERK_JWKS_URL`, `CLERK_PUBLISHABLE_KEY`, ... | unset | Clerk settings, as in the complaints README |
 
 ## Security notes
 
@@ -276,7 +315,12 @@ simulated citizen is exposed.
   account, device, payer token, full payee hash) appears in any stream event, REST body, log
   line or package; the integration test scans for them.
 * Limits: one process, in-memory rate limiter and event history (reset on restart), one run at a
-  time, SQLite files in a temp directory.
+  time, SQLite files in a temp directory (the complaints data is the exception: it persists under
+  `.data/complaints`).
+* Local sign-in codes (complaints, `local`/`demo` mode) are printed to stderr with the email
+  address, by design: it is the local stand-in for email delivery. That line is not a log record,
+  so log redaction does not apply to it. Never run `local`/`demo` mode where others can read the
+  terminal or reach the server; use `clerk` mode instead.
 
 ## Benchmark summary
 
