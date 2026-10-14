@@ -19,6 +19,11 @@ from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from live_audio.api import build_router as build_live_audio_router
+from live_audio.config import LiveAudioConfig
+from live_audio.service import LiveAudioService
+from live_audio.session import Caller
+from live_audio.stt import SttEngine, engine_from_env
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
@@ -36,6 +41,7 @@ log = logging.getLogger("demo_server")
 CASE_RE = r"^[A-Za-z0-9._:-]{1,64}$"
 TXN_REF_RE = r"^[A-Za-z0-9._:-]{1,64}$"
 NODE_RE = r"^[0-9a-f]{12}$"
+LIVE_CHUNK_PATH = re.compile(r"^/api/live-audio/sessions/[A-Za-z0-9_-]{1,64}/chunks$")
 SleepFn = Callable[[float], Awaitable[None]]
 
 
@@ -125,11 +131,21 @@ def create_app(
     *,
     sleep: SleepFn = asyncio.sleep,
     engine: Engine | None = None,
+    live_audio_config: LiveAudioConfig | None = None,
+    live_audio_engine: SttEngine | None = None,
 ) -> FastAPI:
     logredact.install()  # also applies under `uvicorn demo_server.api:create_app --factory`
     cfg = settings or Settings.from_env()
     eng = engine or Engine(cfg, sleep=sleep)
     limiter = RateLimiter(cfg.rate_limits, cfg.rate_window_s)
+    # Live microphone monitoring (real audio, not simulated): the same call-guard scorer object
+    # the engine loaded, local Whisper STT, in-memory sessions. See services/live_audio/README.md.
+    la_cfg = live_audio_config or LiveAudioConfig.from_env()
+    live_audio = LiveAudioService(
+        la_cfg,
+        live_audio_engine or engine_from_env(la_cfg.env_for_engine()),
+        lambda: eng.call_scorer,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -137,6 +153,7 @@ def create_app(
         try:
             yield
         finally:
+            await live_audio.aclose()
             await eng.aclose()
 
     app = FastAPI(
@@ -146,13 +163,18 @@ def create_app(
     app.state.engine = eng
     app.state.settings = cfg
     app.state.limiter = limiter
+    app.state.live_audio = live_audio
     app.add_middleware(
         CORSMiddleware, allow_origins=list(cfg.cors_origins), allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id", "ETag"], max_age=600,
     )  # fmt: skip
-    app.add_middleware(SecurityMiddleware, max_body_bytes=cfg.max_body_bytes)
+    app.add_middleware(
+        SecurityMiddleware,
+        max_body_bytes=cfg.max_body_bytes,
+        path_caps=((LIVE_CHUNK_PATH, la_cfg.max_chunk_bytes),),
+    )
 
     # ------------------------------------------------------------------ errors
     @app.exception_handler(ApiError)
@@ -621,6 +643,17 @@ def create_app(
         res = await citizen.assess(scorer, body.message, body.lang)
         log.info("citizen assess label=%s len=%d", res.label, len(body.message))
         return res.to_json()
+
+    # ------------------------------------------------------------- live audio
+    def live_caller(request: Request) -> Caller:
+        """Any authenticated role (it is the caller's own microphone). Owner = token subject;
+        rate/cap key = client address for citizen tokens (free to mint), else the subject.
+        Live-audio routes use their own per-user limits instead of the per-role API limit."""
+        p = _principal(request)
+        key = f"ip:{_client_ip(request)}" if p.role == "citizen" else p.sub
+        return Caller(owner=p.sub, rate_key=key)
+
+    app.include_router(build_live_audio_router(live_audio, live_caller))
 
     # ------------------------------------------------------------ static + SPA
     static_root = cfg.static_dir.resolve() if cfg.static_dir else None

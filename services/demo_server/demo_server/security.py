@@ -33,9 +33,18 @@ class _TooLarge(Exception):
 
 
 class SecurityMiddleware:
-    def __init__(self, app: Any, max_body_bytes: int) -> None:
+    """``path_caps``: (compiled path regex, cap) pairs that replace the global cap for matching
+    paths (the live-audio chunk upload carries up to 15 s of 16 kHz PCM16 audio)."""
+
+    def __init__(
+        self,
+        app: Any,
+        max_body_bytes: int,
+        path_caps: tuple[tuple[re.Pattern[str], int], ...] = (),
+    ) -> None:
         self.app = app
         self.max = max_body_bytes
+        self.path_caps = path_caps
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -48,6 +57,7 @@ class SecurityMiddleware:
         t0 = time.monotonic()
         status = 500
         is_api = scope.get("path", "").startswith("/api")
+        cap = next((n for rx, n in self.path_caps if rx.fullmatch(scope.get("path", ""))), self.max)
         try:
             declared = int(headers.get(b"content-length", b"0") or 0)
         except ValueError:
@@ -61,7 +71,7 @@ class SecurityMiddleware:
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
-                if seen > self.max and not rejected:
+                if seen > cap and not rejected:
                     rejected = True
                     await tracking_send_raw(413, "payload_too_large")
                     raise _TooLarge
@@ -102,7 +112,7 @@ class SecurityMiddleware:
             await send(msg)
 
         try:
-            if declared > self.max:
+            if declared > cap:
                 rejected = True
                 await tracking_send_raw(413, "payload_too_large")
                 return
