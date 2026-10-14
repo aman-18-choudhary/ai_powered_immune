@@ -18,10 +18,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import inspect, select, text
+from sqlalchemy import MetaData, inspect, select, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.schema import CreateTable
 
-from .schema import metadata, schema_migrations
+from .schema import EVIDENCE_STATUSES, metadata, schema_migrations
 
 ADVISORY_LOCK_SCHEMA = 727201
 
@@ -83,11 +84,71 @@ def _user_profile_privacy(conn: Connection) -> None:
     add_column(conn, "users", "display_name_set")
 
 
+def _evidence_check_current(conn: Connection) -> bool:
+    """Does the live ck_evidence_status CHECK already allow every status in the metadata?"""
+    if conn.dialect.name == "postgresql":
+        rows = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = 'complaint_evidence' AND c.conname = 'ck_evidence_status'"
+            )
+        ).scalars()
+        defs = list(rows)
+    else:
+        sql = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :n"),
+            {"n": "complaint_evidence"},
+        ).scalar()
+        defs = [sql or ""]
+    return bool(defs) and all(f"'{s}'" in d for d in defs for s in EVIDENCE_STATUSES)
+
+
+def _rebuild_sqlite_table(conn: Connection, name: str) -> None:
+    """SQLite cannot alter a CHECK constraint: copy into a table created from the current
+    metadata, drop the old one, rename, recreate the indexes. Nothing references
+    ``complaint_evidence``, so foreign keys stay valid; every row and column value is kept."""
+    table = metadata.tables[name]
+    tmp_name = f"{name}__migrating"
+    scratch = MetaData()  # the referenced tables must exist in the copy for its foreign keys
+    for t in metadata.sorted_tables:
+        t.to_metadata(scratch)
+    tmp = table.to_metadata(scratch, name=tmp_name)
+    conn.execute(text(f"DROP TABLE IF EXISTS {tmp_name}"))
+    conn.execute(CreateTable(tmp))  # no indexes yet: their names are global in SQLite
+    old_cols = _columns(conn, name)
+    cols = ", ".join(c.name for c in table.columns if c.name in old_cols)
+    conn.execute(text(f"INSERT INTO {tmp_name} ({cols}) SELECT {cols} FROM {name}"))
+    conn.execute(text(f"DROP TABLE {name}"))
+    conn.execute(text(f"ALTER TABLE {tmp_name} RENAME TO {name}"))
+    for idx in table.indexes:
+        idx.create(conn, checkfirst=True)
+
+
+def _evidence_deleted_status(conn: Connection) -> None:
+    if not _evidence_check_current(conn):
+        if conn.dialect.name == "postgresql":
+            allowed = ", ".join(f"'{s}'" for s in EVIDENCE_STATUSES)
+            conn.execute(
+                text("ALTER TABLE complaint_evidence DROP CONSTRAINT IF EXISTS ck_evidence_status")
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE complaint_evidence ADD CONSTRAINT ck_evidence_status "
+                    f"CHECK (status IN ({allowed}))"
+                )
+            )
+        else:
+            _rebuild_sqlite_table(conn, "complaint_evidence")
+    add_column(conn, "complaint_evidence", "deleted_at")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
     Migration(3, "complaint_bank_details", _complaint_bank_details),
     Migration(4, "user_profile_privacy", _user_profile_privacy),
+    Migration(5, "evidence_deleted_status", _evidence_deleted_status),
 )
 LATEST = MIGRATIONS[-1].version
 

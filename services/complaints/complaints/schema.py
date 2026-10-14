@@ -35,7 +35,9 @@ CATEGORIES = (
 )  # fmt: skip
 PAYMENT_METHODS = ("UPI", "CARD", "NETBANKING", "WALLET", "CASH", "BANK_TRANSFER", "OTHER")
 STATUSES = ("SUBMITTED", "UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "REJECTED")
-EVIDENCE_STATUSES = ("stored", "rejected")
+# "deleted": removed by the complaint owner (while SUBMITTED) or an admin; the file is gone and the
+# row stays for the audit trail (migration 5 widens the CHECK on an existing database)
+EVIDENCE_STATUSES = ("stored", "rejected", "deleted")
 ANALYSIS_STATUSES = ("COMPLETED", "PARTIAL", "UNAVAILABLE")
 RISK_LEVELS = ("LOW", "MEDIUM", "HIGH")
 
@@ -201,6 +203,7 @@ complaint_evidence = Table(
     Column("storage_key", String(64), nullable=False, unique=True),
     Column("status", String(16), nullable=False),
     Column("created_at", UTCDateTime, nullable=False),
+    Column("deleted_at", UTCDateTime),  # migration 5
     CheckConstraint(_in("status", EVIDENCE_STATUSES), name="ck_evidence_status"),
     CheckConstraint("size_bytes >= 0", name="ck_evidence_size"),
     Index("ix_evidence_complaint", "complaint_id", "status"),

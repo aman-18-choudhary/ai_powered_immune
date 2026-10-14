@@ -807,6 +807,53 @@ class ComplaintStore:
             ).one()
             return {**dict(row._mapping), "created_at": _aware(row.created_at)}, True
 
+    def delete_evidence(
+        self, complaint_id: str, evidence_id: str, actor_id: str, *, as_admin: bool,
+        now: datetime,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Mark stored evidence ``deleted`` (the caller removes the file afterwards). The owner may
+        do this only while the complaint is SUBMITTED; an admin at any time (the owner is then
+        alerted). Anyone else, or an id that is not stored evidence of this complaint, gets
+        NotFound. Audited without the file name."""
+        with self._tx() as conn:
+            cur = self._get_complaint(conn, complaint_id, lock=True)
+            if cur is None or (not as_admin and cur["owner_user_id"] != actor_id):
+                raise NotFound()
+            row = conn.execute(
+                select(complaint_evidence).where(
+                    complaint_evidence.c.id == evidence_id,
+                    complaint_evidence.c.complaint_id == complaint_id,
+                    complaint_evidence.c.status == "stored",
+                )
+            ).first()
+            if row is None:
+                raise NotFound()
+            if not as_admin and cur["status"] != "SUBMITTED":
+                raise Conflict("evidence_not_deletable")
+            res = conn.execute(
+                update(complaint_evidence)
+                .where(
+                    and_(
+                        complaint_evidence.c.id == evidence_id,
+                        complaint_evidence.c.status == "stored",
+                    )
+                )
+                .values(status="deleted", deleted_at=now)
+            )
+            if res.rowcount != 1:
+                raise NotFound()
+            self._audit(
+                conn, actor_id, "evidence_delete", cur["owner_user_id"],
+                {"complaint_id": complaint_id, "evidence_id": evidence_id, "status": "stored"},
+                {"status": "deleted"}, now,
+            )  # fmt: skip
+            if as_admin and actor_id != cur["owner_user_id"]:
+                self._alert(
+                    conn, cur["owner_user_id"], complaint_id, "EVIDENCE_REMOVED",
+                    "An administrator removed an evidence file from your complaint.", now,
+                )  # fmt: skip
+            return {**dict(row._mapping), "status": "deleted", "deleted_at": now}
+
     def list_evidence(self, complaint_id: str) -> list[dict[str, Any]]:
         with self.engine.connect() as c:
             rows = c.execute(

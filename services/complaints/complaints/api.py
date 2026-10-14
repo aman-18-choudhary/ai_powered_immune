@@ -843,6 +843,23 @@ def create_app(
         rows = await asyncio.to_thread(store.list_evidence, complaint_id)
         return {"items": [_evidence_view(e) for e in rows]}
 
+    @app.delete("/complaints/{complaint_id}/evidence/{evidence_id}")
+    async def delete_evidence(complaint_id: str, evidence_id: str, user: User) -> Response:
+        """Owner (while SUBMITTED) or ADMIN. Foreign or unknown ids are 404 (never 403)."""
+        if user.role == "INVESTIGATOR":
+            raise ApiError(403, "forbidden_role", "Your role cannot do this.")
+        throttle("write", user)
+        if len(complaint_id) > 64 or len(evidence_id) > 64:
+            raise ApiError(404, "not_found", "Not found.")
+        ev = await asyncio.to_thread(
+            store.delete_evidence, complaint_id, evidence_id, user.id,
+            as_admin=user.role == "ADMIN", now=now(),
+        )  # fmt: skip
+        removed = await asyncio.to_thread(storage.remove_checked, ev["storage_key"])
+        if not removed:
+            log.error("evidence file could not be removed after delete")  # no name, no key
+        return JSONResponse({"id": ev["id"], "status": "deleted", "file_removed": removed})
+
     @app.get("/complaints/{complaint_id}/evidence/{evidence_id}/download")
     async def download_evidence(complaint_id: str, evidence_id: str, user: User) -> Response:
         throttle("read", user)
@@ -1098,6 +1115,8 @@ _CONFLICT_TEXT = {
     "not_deletable": "Only a complaint that has not been picked up for review can be deleted.",
     "complaint_closed": "This complaint is closed and can no longer be changed.",
     "evidence_limit_reached": "The complaint already has the maximum number of evidence files.",
+    "evidence_not_deletable": "Evidence can only be removed before the complaint is picked up "
+    "for review.",
     "idempotency_key_reuse": "This Idempotency-Key was already used with a different request.",
     "idempotent_target_deleted": "The complaint created with this key has been deleted.",
     "role_conflict": "The user's role changed. Reload and try again.",

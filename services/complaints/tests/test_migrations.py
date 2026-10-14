@@ -105,6 +105,23 @@ def _legacy_db(url: str, *, with_detail: bool) -> None:
             ),
             {"t": True},
         )
+        conn.execute(
+            sa.text(
+                "INSERT INTO complaints (id, owner_user_id, category, title, description, "
+                "reported_at, status, created_at, updated_at) VALUES ('c1', 'u1', 'PHISHING', "
+                "'Old one', 'An older complaint row', '2026-01-01 00:00:00', 'SUBMITTED', "
+                "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO complaint_evidence (id, complaint_id, uploader_user_id, "
+                "original_filename, mime_type, size_bytes, sha256, storage_key, status, "
+                "created_at) VALUES ('e1', 'c1', 'u1', 'a.png', 'image/png', 3, :h, :k, "
+                "'stored', '2026-01-01 00:00:00')"
+            ),
+            {"h": "0" * 64, "k": "a" * 32},
+        )
     eng.dispose()
 
 
@@ -116,7 +133,16 @@ def test_pre_versioning_database_upgrades_cleanly(tmp_path, with_detail):
     st = ComplaintStore(url)
     try:
         assert st.get_user("u1")["email"] == "old@example.org"  # data kept
+        assert st.get_user("u1")["allow_case_matching"] is True  # server default
+        assert st.get_complaint("c1")["bank_account"] is None
+        assert [e["id"] for e in st.list_evidence("c1")] == ["e1"]
         assert st.migrate() == []
+        # the widened evidence CHECK accepts "deleted" and still refuses unknown values
+        with st.engine.begin() as c:
+            c.execute(sa.text("UPDATE complaint_evidence SET status = 'deleted' WHERE id = 'e1'"))
+        with pytest.raises(sa.exc.IntegrityError), st.engine.begin() as c:
+            c.execute(sa.text("UPDATE complaint_evidence SET status = 'bogus' WHERE id = 'e1'"))
+        assert st.list_evidence("c1") == []
     finally:
         st.close()
     assert _applied(url) == ALL

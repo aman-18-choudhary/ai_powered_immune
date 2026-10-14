@@ -134,6 +134,20 @@ class EvidenceStorage:
         with contextlib.suppress(OSError, ValueError):
             self.path_for(key).unlink()
 
+    def remove_checked(self, key: str) -> bool:
+        """Delete the stored file; True when no file remains under the key afterwards."""
+        try:
+            path = self.path_for(key)
+        except ValueError:
+            return False
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass  # already gone
+        except OSError:
+            return False
+        return not path.exists()
+
 
 def _rehash(path: Path) -> tuple[str, int]:
     h, n = hashlib.sha256(), 0
