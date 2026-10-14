@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+from complaints.config import Settings as ComplaintsSettings
 from fastapi import Depends, FastAPI, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -29,7 +30,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from txn_guard.holds import HoldConflict, HoldNotFound
 
-from . import benchmark, citizen, evidence, geo, logredact
+from . import benchmark, citizen, complaints_mount, evidence, geo, logredact
 from .auth import AuthError, Principal, code_ok, decode_token, issue_token
 from .config import ROLES, Settings
 from .engine import SPEED_MAX, SPEED_MIN, Engine, Run
@@ -133,6 +134,7 @@ def create_app(
     engine: Engine | None = None,
     live_audio_config: LiveAudioConfig | None = None,
     live_audio_engine: SttEngine | None = None,
+    complaints_settings: ComplaintsSettings | None = None,
 ) -> FastAPI:
     logredact.install()  # also applies under `uvicorn demo_server.api:create_app --factory`
     cfg = settings or Settings.from_env()
@@ -146,12 +148,18 @@ def create_app(
         live_audio_engine or engine_from_env(la_cfg.env_for_engine()),
         lambda: eng.call_scorer,
     )
+    # Citizen complaints service (real persistence; not simulated), mounted at /api/complaints.
+    # See complaints_mount.py and services/complaints/README.md.
+    c_settings = complaints_settings or complaints_mount.complaints_settings(cfg)
+    complaints_app = complaints_mount.build(cfg, c_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await eng.start()
         try:
-            yield
+            # a mounted app's lifespan is not run by Starlette: drive it from here
+            async with complaints_app.router.lifespan_context(complaints_app):
+                yield
         finally:
             await live_audio.aclose()
             await eng.aclose()
@@ -164,16 +172,21 @@ def create_app(
     app.state.settings = cfg
     app.state.limiter = limiter
     app.state.live_audio = live_audio
+    app.state.complaints = complaints_app
     app.add_middleware(
         CORSMiddleware, allow_origins=list(cfg.cors_origins), allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-Id", "Idempotency-Key"],
         expose_headers=["X-Request-Id", "ETag"], max_age=600,
     )  # fmt: skip
     app.add_middleware(
         SecurityMiddleware,
         max_body_bytes=cfg.max_body_bytes,
-        path_caps=((LIVE_CHUNK_PATH, la_cfg.max_chunk_bytes),),
+        path_caps=(
+            (LIVE_CHUNK_PATH, la_cfg.max_chunk_bytes),
+            # evidence uploads: the complaints service enforces its exact per-type caps
+            (complaints_mount.UPLOAD_PATH, complaints_mount.upload_cap(c_settings)),
+        ),
     )
 
     # ------------------------------------------------------------------ errors
@@ -654,6 +667,10 @@ def create_app(
         return Caller(owner=p.sub, rate_key=key)
 
     app.include_router(build_live_audio_router(live_audio, live_caller))
+
+    # --------------------------------------------------------------- complaints
+    # registered before the SPA catch-all below, which would otherwise answer GETs under /api
+    app.mount(complaints_mount.PREFIX, complaints_app)
 
     # ------------------------------------------------------------ static + SPA
     static_root = cfg.static_dir.resolve() if cfg.static_dir else None

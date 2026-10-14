@@ -8,3 +8,4 @@ node_modules/
 .ruff_cache/
 *.egg-info/
 docs/benchmark_report.quick.md
+.data/

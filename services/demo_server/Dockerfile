@@ -27,13 +27,17 @@ COPY services/evidence_ledger ./services/evidence_ledger
 COPY services/geo_intel ./services/geo_intel
 COPY services/citizen_shield ./services/citizen_shield
 COPY services/live_audio ./services/live_audio
+COPY services/complaints ./services/complaints
 COPY services/demo_server ./services/demo_server
 # live_audio is installed WITHOUT its [stt] extra: the image has no Whisper model, so the live
 # microphone feature reports STT "unavailable" (never a low risk). To enable it, install
 # faster-whisper and mount a pre-downloaded model cache (see services/live_audio/README.md).
+# complaints (mounted at /api/complaints) keeps its SQLite file and evidence under
+# /home/app/.data/complaints unless COMPLAINTS_DATABASE_URL / COMPLAINTS_EVIDENCE_DIR are set;
+# mount a volume there to keep them across container restarts.
 RUN pip install ./contracts ./libs/svckit ./services/sim_engine ./services/call_guard \
     ./services/txn_guard ./services/antibody_hub ./services/evidence_ledger ./services/geo_intel ./services/citizen_shield \
-    ./services/live_audio ./services/demo_server
+    ./services/live_audio "./services/complaints[analysis]" ./services/demo_server
 
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH \

@@ -60,6 +60,11 @@ class Settings:
     work_dir: Path | None = None
     secret_generated: bool = False
     trust_proxy: bool = False
+    # complaints service mounted at /api/complaints (see complaints_mount.py). None = under
+    # work_dir (tests); from_env defaults to ./.data/complaints (gitignored).
+    complaints_database_url: str | None = None
+    complaints_evidence_dir: Path | None = None
+    complaints_auth_mode: str | None = None  # None = clerk if configured, else demo
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -83,6 +88,12 @@ class Settings:
             raise ConfigError("DEMO_CORS_ORIGINS must list explicit origins, not '*'")
         static = e.get("DEMO_STATIC_DIR")
         work = e.get("DEMO_WORK_DIR")
+        data = Path(e.get("COMPLAINTS_DATA_DIR") or ".data/complaints").expanduser().resolve()
+        db_url = (e.get("COMPLAINTS_DATABASE_URL") or "").strip() or (
+            f"sqlite:///{data / 'complaints.db'}"
+        )
+        evidence = (e.get("COMPLAINTS_EVIDENCE_DIR") or "").strip()
+        mode = (e.get("COMPLAINTS_AUTH_MODE") or "").strip().lower() or None
         return cls(
             jwt_secret=secret,
             cors_origins=origins or DEFAULT_CORS,
@@ -94,6 +105,9 @@ class Settings:
             work_dir=Path(work) if work else None,
             secret_generated=generated,
             trust_proxy=e.get("DEMO_TRUST_PROXY") == "1",
+            complaints_database_url=db_url,
+            complaints_evidence_dir=Path(evidence) if evidence else data / "evidence",
+            complaints_auth_mode=mode,
         )
 
     def ensure_work_dir(self) -> Path:
