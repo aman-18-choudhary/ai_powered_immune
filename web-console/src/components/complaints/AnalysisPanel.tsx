@@ -107,18 +107,20 @@ function AnalysisBody({ a }: { a: Analysis }) {
 }
 
 /** Latest analysis (GET .../analysis) and "Run analysis" (POST .../analysis). */
-export function AnalysisPanel({ complaintId, onRan }: { complaintId: string; onRan?: () => void }) {
+export function AnalysisPanel({ complaintId, hasAnalysis, onRan }: { complaintId: string; hasAnalysis: boolean; onRan?: () => void }) {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  // the complaint detail says whether an analysis exists; only then is the full result fetched
   const res = useResource(async (s) => {
+    if (!hasAnalysis) return null;
     try {
       return await complaintsApi.analysis(complaintId, s);
     } catch (e) {
       if (e instanceof ComplaintsApiError && e.status === 404 && e.serverCode === "analysis_not_found") return null;
       throw e;
     }
-  }, complaintId);
+  }, `${complaintId}:${hasAnalysis}`);
 
   const run = async () => {
     setRunning(true);

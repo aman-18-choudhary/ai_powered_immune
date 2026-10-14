@@ -109,7 +109,8 @@ export default function NewComplaint() {
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    setFiles((cur) => [...cur, ...Array.from(list)].slice(0, MAX_FILES));
+    const picked = Array.from(list); // copy now: clearing the input below empties the live FileList
+    setFiles((cur) => [...cur, ...picked].slice(0, MAX_FILES));
     if (fileRef.current) fileRef.current.value = "";
   };
 

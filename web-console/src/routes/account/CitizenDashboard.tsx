@@ -72,53 +72,51 @@ export default function CitizenDashboard() {
         }
       />
       <Stats nonce={nonce} />
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
         <Panel
           title="Complaint history"
           icon={<FileText className="h-3.5 w-3.5" aria-hidden />}
-          actions={
-            <div className="flex flex-wrap gap-2">
-              <label className="sr-only" htmlFor="f-status">
-                Filter by status
-              </label>
-              <select
-                id="f-status"
-                value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value as ComplaintStatus | "");
-                  setOffset(0);
-                }}
-                className={cn(inputCls, "h-8 w-auto py-0 text-xs")}
-              >
-                <option value="">All statuses</option>
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {STATUS_LABEL[s]}
-                  </option>
-                ))}
-              </select>
-              <label className="sr-only" htmlFor="f-cat">
-                Filter by category
-              </label>
-              <select
-                id="f-cat"
-                value={category}
-                onChange={(e) => {
-                  setCategory(e.target.value);
-                  setOffset(0);
-                }}
-                className={cn(inputCls, "h-8 w-auto py-0 text-xs")}
-              >
-                <option value="">All categories</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY_LABEL[c]}
-                  </option>
-                ))}
-              </select>
-            </div>
-          }
         >
+          <div className="flex flex-wrap gap-2 border-b border-line px-4 py-2.5">
+            <label className="sr-only" htmlFor="f-status">
+              Filter by status
+            </label>
+            <select
+              id="f-status"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value as ComplaintStatus | "");
+                setOffset(0);
+              }}
+              className={cn(inputCls, "h-8 w-auto max-w-full py-0 text-xs")}
+            >
+              <option value="">All statuses</option>
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABEL[s]}
+                </option>
+              ))}
+            </select>
+            <label className="sr-only" htmlFor="f-cat">
+              Filter by category
+            </label>
+            <select
+              id="f-cat"
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setOffset(0);
+              }}
+              className={cn(inputCls, "h-8 w-auto max-w-full py-0 text-xs")}
+            >
+              <option value="">All categories</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_LABEL[c]}
+                </option>
+              ))}
+            </select>
+          </div>
           {list.loading && !list.data ? (
             <LoadingBlock label="Loading complaints" />
           ) : list.error && !list.data ? (

@@ -34,7 +34,7 @@ export function SimulationGate() {
       </p>
       {token ? (
         <p className="text-sm">
-          A demo role is active. <Link to="/" className="text-flow underline-offset-2 hover:underline">Open the live page</Link>.
+          A demo role is active. <Link to="/" className="text-flow underline underline-offset-2">Open the live page</Link>.
         </p>
       ) : (
         <DemoRoleCards />
@@ -101,7 +101,7 @@ export function RequireAccount({ roles, children }: { roles?: readonly AccountRo
           <p className="text-sm text-muted">
             It is for {roles.map((r) => ROLE_LABEL[r]).join(" or ")} accounts. Your account role is {ROLE_LABEL[role]}.
           </p>
-          <Link to={homeFor(role)} className="inline-block text-sm font-medium text-flow underline-offset-2 hover:underline">
+          <Link to={homeFor(role)} className="inline-block text-sm font-medium text-flow underline underline-offset-2">
             Go to your dashboard
           </Link>
         </div>

@@ -118,7 +118,7 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
         </p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
         <div className="space-y-5">
           <Panel title="Complaint details" icon={<ClipboardList className="h-3.5 w-3.5" aria-hidden />} data-testid="complaint-fields">
             <div className="space-y-5 p-4">
@@ -169,7 +169,7 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
             </div>
           </Panel>
           <EvidenceManager complaintId={c.id} status={c.status} items={c.evidence} role={role} onChanged={onReload} />
-          <AnalysisPanel complaintId={c.id} onRan={onReload} />
+          <AnalysisPanel complaintId={c.id} hasAnalysis={c.latest_analysis !== null} onRan={onReload} />
         </div>
         <div className="space-y-5">
           {staff && <StatusUpdate c={c} onUpdated={onReplace} />}

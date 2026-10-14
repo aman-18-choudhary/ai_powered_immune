@@ -22,7 +22,7 @@ export function ResourcesPanel() {
               <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-safe" aria-hidden />
               <span>
                 <strong>National Cyber Crime Reporting Portal:</strong>{" "}
-                <a href="https://cybercrime.gov.in" target="_blank" rel="noopener noreferrer" className="text-flow underline-offset-2 hover:underline">
+                <a href="https://cybercrime.gov.in" target="_blank" rel="noopener noreferrer" className="text-flow underline underline-offset-2">
                   cybercrime.gov.in
                 </a>
                 . File the official complaint there; this service does not file it for you.

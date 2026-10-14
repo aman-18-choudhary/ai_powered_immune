@@ -100,7 +100,7 @@ export function AlertsPanel({ complaintBase = "/me/complaints", onChange }: { co
                   {a.complaint_id && (
                     <>
                       {" · "}
-                      <Link to={`${complaintBase}/${a.complaint_id}`} className="text-flow underline-offset-2 hover:underline">
+                      <Link to={`${complaintBase}/${a.complaint_id}`} className="text-flow underline underline-offset-2">
                         Open complaint
                       </Link>
                     </>

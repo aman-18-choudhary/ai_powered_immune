@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation, useOutlet } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Activity, BadgeCheck, LogIn, LogOut, Moon, Search, Sun, Waves, X } from "lucide-react";
 import { BrandMark, BrandWord } from "@/components/common/Brand";
@@ -144,7 +144,7 @@ function TopBar() {
               <span className="rounded-md border border-line bg-chip px-2 py-0.5 text-xs font-medium capitalize">{role}</span>
             </div>
           ) : (
-            <Link to="/simulation" className="block text-sm text-flow underline-offset-2 hover:underline">
+            <Link to="/simulation" className="block text-sm text-flow underline underline-offset-2">
               Open the simulation demo
             </Link>
           )}
@@ -187,7 +187,7 @@ function AccountBanner() {
         <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-warn/40 bg-warn-soft p-3 text-sm" data-testid="investigator-denied">
           <p>
             <strong>Investigator access not approved.</strong> {denied}{" "}
-            <Link to={homeFor(session?.user.role ?? null)} className="font-medium text-flow underline-offset-2 hover:underline">
+            <Link to={homeFor(session?.user.role ?? null)} className="font-medium text-flow underline underline-offset-2">
               Go to your dashboard
             </Link>
           </p>
@@ -203,6 +203,17 @@ function AccountBanner() {
       )}
     </div>
   );
+}
+
+/**
+ * The route element captured when this page mounted. Without it the page that is animating out
+ * would already render the NEW route (an Outlet reads the current location), which then remounts
+ * when the exit finishes and loses anything typed during the transition.
+ */
+function FrozenOutlet() {
+  const outlet = useOutlet();
+  const [frozen] = useState(outlet);
+  return frozen;
 }
 
 function RouteFallback() {
@@ -260,7 +271,7 @@ export function Shell() {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={pathname} variants={routeVariants} initial="initial" animate="enter" exit="exit">
               <Suspense fallback={<RouteFallback />}>
-                <Outlet />
+                <FrozenOutlet />
               </Suspense>
             </motion.div>
           </AnimatePresence>
