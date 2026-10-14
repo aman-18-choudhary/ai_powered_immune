@@ -2,7 +2,8 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Command as CommandIcon, Pause, Play, Search, SunMoon, Waves } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { NAV } from "./nav";
+import { navItems } from "./nav";
+import { useAccount, useAccountRole } from "@/state/account";
 import { filterPalette, nextIndex, type PaletteItem } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { useMotionPrefs } from "@/lib/motion/prefs";
@@ -23,6 +24,8 @@ export function CommandPalette() {
   const { toggle: toggleTheme, theme } = useTheme();
   const { reduced, setReduced } = useMotionPrefs();
   const role = useSession((s) => s.role);
+  const acctRole = useAccountRole();
+  const acctSignedIn = useAccount((s) => s.status !== "none");
   const status = useRunStore((s) => s.run.status);
   const control = canControl(role);
   const running = status === "running" || status === "starting" || status === "seeking";
@@ -52,7 +55,7 @@ export function CommandPalette() {
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
-    const list: PaletteItem[] = NAV.map((n) => ({ id: `go:${n.to}`, label: n.title, hint: n.to, group: "Go to" as const, keywords: n.label }));
+    const list: PaletteItem[] = navItems(role !== null, acctRole, acctSignedIn).map((n) => ({ id: `go:${n.to}`, label: n.title, hint: n.to, group: "Go to" as const, keywords: n.label }));
     if (control) {
       list.push({ id: "demo:start", label: hasRun ? "Restart the demo" : "Start the demo", hint: "Play the hero scenario", group: "Demo", keywords: "play run scenario" });
       if (hasRun && status !== "finished" && status !== "stopped" && status !== "error")
@@ -61,7 +64,7 @@ export function CommandPalette() {
     list.push({ id: "pref:theme", label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme", group: "Preferences", keywords: "dark light appearance" });
     list.push({ id: "pref:motion", label: reduced ? "Turn animations on" : "Reduce motion", group: "Preferences", keywords: "animation accessibility" });
     return list;
-  }, [control, hasRun, running, status, theme, reduced]);
+  }, [control, hasRun, running, status, theme, reduced, role, acctRole, acctSignedIn]);
 
   const shown = useMemo(() => filterPalette(items, q), [items, q]);
   useEffect(() => setActive(0), [q]);
