@@ -193,6 +193,10 @@ class ComplaintStore:
         d = dict(row._mapping)
         d["email_verified"] = bool(d["email_verified"])
         d["is_active"] = bool(d["is_active"])
+        d["allow_case_matching"] = bool(d.get("allow_case_matching", True))
+        d["display_name_set"] = bool(d.get("display_name_set", False))
+        d["created_at"] = _aware(d.get("created_at"))
+        d["last_login_at"] = _aware(d.get("last_login_at"))
         return d
 
     # ------------------------------------------------------------------ users
@@ -244,7 +248,11 @@ class ComplaintStore:
                 changes["email"] = ident.email
             if user["email_verified"] != ident.email_verified:
                 changes["email_verified"] = ident.email_verified
-            if ident.display_name and user["display_name"] != ident.display_name:
+            if (
+                ident.display_name
+                and not user["display_name_set"]  # a name chosen by the user is kept
+                and user["display_name"] != ident.display_name
+            ):
                 changes["display_name"] = ident.display_name
             last = _aware(user["last_login_at"])
             if last is None or now - last >= LAST_LOGIN_REFRESH:
@@ -362,6 +370,47 @@ class ComplaintStore:
                         {"role": "INVESTIGATOR"}, now)  # fmt: skip
             user["role"], user["role_source"] = "INVESTIGATOR", "allowlist"
             return user, True
+
+    def update_profile(
+        self, user_id: str, changes: dict[str, Any], now: datetime,
+        idp_display_name: str | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Self-service profile update. ``changes`` may hold only ``display_name`` (None = go
+        back to the name from sign-in, ``idp_display_name``) and ``allow_case_matching``. Never
+        touches role, email or activation. Audited without the name itself."""
+        allowed = {"display_name", "allow_case_matching"}
+        if not set(changes) <= allowed:  # defence in depth: the API model already forbids it
+            raise ValueError("unsupported profile field")
+        with self._tx() as conn:
+            row = conn.execute(select(users).where(users.c.id == user_id)).first()
+            if row is None:
+                raise NotFound()
+            user = self._user(row)
+            values: dict[str, Any] = {}
+            if "display_name" in changes:
+                name = changes["display_name"]
+                if name is None:
+                    values.update(display_name=idp_display_name, display_name_set=False)
+                else:
+                    values.update(display_name=name, display_name_set=True)
+            if "allow_case_matching" in changes:
+                values["allow_case_matching"] = bool(changes["allow_case_matching"])
+            values = {k: v for k, v in values.items() if user.get(k) != v}
+            if values:
+                conn.execute(update(users).where(users.c.id == user_id).values(**values))
+                changed = sorted(k for k in values if k != "display_name_set")
+                if "display_name_set" in values and "display_name" not in changed:
+                    changed.append("display_name")
+                self._audit(
+                    conn, user_id, "profile_update", user_id,
+                    {"allow_case_matching": user["allow_case_matching"]},
+                    {"allow_case_matching": values.get("allow_case_matching",
+                                                       user["allow_case_matching"]),
+                     "changed": changed},
+                    now,
+                )  # fmt: skip
+                user.update(values)
+            return user
 
     def list_users(
         self, limit: int, offset: int, role: str | None = None, active: bool | None = None

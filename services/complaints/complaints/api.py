@@ -60,6 +60,7 @@ from .validation import (
     AnalyzeIn,
     ComplaintIn,
     EntryBody,
+    MeUpdate,
     RoleBody,
     StatusBody,
 )
@@ -947,6 +948,38 @@ def create_app(
             raise ApiError(404, "not_found", "Not found.")
         a = await asyncio.to_thread(store.mark_alert_read, user.id, alert_id, now())
         return _alert_view(a)
+
+    def _me_view(u: dict[str, Any], user: CurrentUser) -> dict[str, Any]:
+        return {
+            "id": u["id"], "email": u["email"], "email_verified": u["email_verified"],
+            "display_name": u["display_name"], "role": user.role,  # effective role
+            "created_at": _iso(u["created_at"]),
+            "privacy": {"allow_case_matching": u["allow_case_matching"]},
+            **(user.notice or {}),
+        }  # fmt: skip
+
+    @app.get("/me")
+    async def get_me(user: User) -> dict[str, Any]:
+        throttle("read", user)
+        u = await asyncio.to_thread(store.get_user, user.id)
+        if u is None:  # pragma: no cover - the user row was just upserted
+            raise ApiError(404, "not_found", "Not found.")
+        return _me_view(u, user)
+
+    @app.patch("/me")
+    async def patch_me(body: MeUpdate, request: Request, user: User) -> dict[str, Any]:
+        """display_name and privacy settings only; the role is never read from the body."""
+        throttle("write", user)
+        changes: dict[str, Any] = {}
+        if "display_name" in body.model_fields_set:
+            changes["display_name"] = body.display_name
+        if "privacy" in body.model_fields_set:
+            changes["allow_case_matching"] = body.privacy.allow_case_matching
+        ident: Identity = request.state.ident
+        u = await asyncio.to_thread(
+            store.update_profile, user.id, changes, now(), ident.display_name
+        )
+        return _me_view(u, user)
 
     @app.get("/me/stats")
     async def my_stats(user: User) -> dict[str, Any]:

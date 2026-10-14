@@ -78,10 +78,16 @@ def _complaint_bank_details(conn: Connection) -> None:
     ensure_index(conn, "complaints", "ix_complaints_bank_account")
 
 
+def _user_profile_privacy(conn: Connection) -> None:
+    add_column(conn, "users", "allow_case_matching")
+    add_column(conn, "users", "display_name_set")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
     Migration(3, "complaint_bank_details", _complaint_bank_details),
+    Migration(4, "user_profile_privacy", _user_profile_privacy),
 )
 LATEST = MIGRATIONS[-1].version
 

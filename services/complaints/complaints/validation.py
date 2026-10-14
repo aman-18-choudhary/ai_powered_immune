@@ -16,6 +16,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     model_validator,
 )
@@ -234,6 +235,28 @@ class ComplaintIn(BaseModel):
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("latitude and longitude must be given together")
         return self
+
+
+class PrivacyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    allow_case_matching: StrictBool
+
+
+class MeUpdate(BaseModel):
+    """Self-service profile. Only these keys exist; anything else (role, email, ...) is a 422,
+    so a body can never change a role or an identity attribute."""
+
+    model_config = ConfigDict(extra="forbid")
+    # null = go back to the name from sign-in
+    display_name: (
+        Annotated[
+            str,
+            StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+            AfterValidator(lambda v: _clean(v) or ""),
+        ]
+        | None
+    ) = None
+    privacy: PrivacyIn = Field(default=None)  # type: ignore[assignment]  # null is refused
 
 
 class EntryBody(BaseModel):

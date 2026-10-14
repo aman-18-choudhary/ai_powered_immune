@@ -22,6 +22,8 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
+    true,
 )
 from sqlalchemy.types import TypeDecorator
 
@@ -106,6 +108,10 @@ users = Table(
     Column("last_login_at", UTCDateTime),
     # how the current INVESTIGATOR/ADMIN role was granted: bootstrap | allowlist | admin
     Column("role_source", String(16)),
+    # migration 4: privacy setting (stored now; similarity/network matching honours it in a later
+    # phase) and whether the display name was chosen by the user (sign-in then keeps it)
+    Column("allow_case_matching", Boolean, nullable=False, default=True, server_default=true()),
+    Column("display_name_set", Boolean, nullable=False, default=False, server_default=false()),
     CheckConstraint(_in("role", ROLES), name="ck_users_role"),
     CheckConstraint(
         "role_source IS NULL OR " + _in("role_source", ROLE_SOURCES), name="ck_users_role_source"
