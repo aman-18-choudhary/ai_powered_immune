@@ -15,7 +15,20 @@ vi.mock("@/lib/api/endpoints", () => ({
   },
 }));
 
+vi.mock("@/lib/liveAudio/api", () => ({
+  liveAudioApi: {
+    capabilities: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    createSession: vi.fn(),
+    sendChunk: vi.fn(),
+    endSession: vi.fn(),
+  },
+}));
+
 import Landing from "./Landing";
+
+const SIM = "/?mode=simulation";
 import { useRunStore } from "@/state/runStore";
 import { useSession } from "@/state/session";
 import { endpoints } from "@/lib/api/endpoints";
@@ -27,16 +40,30 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Landing / live interception", () => {
-  it("idle: hero with Play, headline and honest label", () => {
+describe("Landing / mode switch", () => {
+  it("defaults to the live microphone mode; the simulation is a labelled tab", () => {
     renderApp(<Landing />);
+    expect(screen.getByTestId("mode-live")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("mode-simulation")).toHaveTextContent("Simulated scenario (demo)");
+    expect(screen.getByTestId("mode-simulation")).toHaveTextContent("SIMULATION");
+    expect(screen.getByTestId("consent-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("hero-play")).not.toBeInTheDocument();
+    // no simulated bank / mule content in live mode
+    expect(screen.queryByText(/Bank A/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/mule/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("Landing / simulated interception (SIMULATION tab)", () => {
+  it("idle: hero with Play, headline and honest label", () => {
+    renderApp(<Landing />, SIM);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("protects every bank");
     expect(screen.getByTestId("hero-play")).toBeEnabled();
     expect(screen.getByText(/only the shared threat memory saves victim B/)).toBeInTheDocument();
   });
 
   it("starts a run through the API on Play", async () => {
-    renderApp(<Landing />);
+    renderApp(<Landing />, SIM);
     await act(async () => {
       screen.getByTestId("hero-play").click();
     });
@@ -45,13 +72,13 @@ describe("Landing / live interception", () => {
 
   it("read-only roles cannot start and are told why", () => {
     useSession.setState({ role: "citizen" });
-    renderApp(<Landing />);
+    renderApp(<Landing />, SIM);
     expect(screen.getByTestId("hero-play")).toBeDisabled();
     expect(screen.getByText(/Sign in as Officer or Admin/)).toBeInTheDocument();
   });
 
   it("renders the recorded finished run: panes, finale card and verify controls", async () => {
-    renderApp(<Landing />);
+    renderApp(<Landing />, SIM);
     act(() => {
       useRunStore.getState().apply(heroEvents());
     });

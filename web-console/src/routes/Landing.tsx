@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Eye, FlaskConical, Loader2, Play, Radio } from "lucide-react";
+import { Eye, FlaskConical, Loader2, Mic, Play, Radio } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LiveMonitor } from "@/components/live/LiveMonitor";
+import { lt } from "@/lib/i18n/liveAudio";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/common/Panel";
 import { PhonePane } from "@/components/player/PhonePane";
@@ -66,7 +70,44 @@ function Hero({ onPlay, disabled, starting, note }: { onPlay: () => void; disabl
   );
 }
 
+/**
+ * Live Interception page. Two modes: "Live microphone" (default; real audio from this device,
+ * transcribed and analysed by the server) and the original cinematic player, kept intact behind
+ * a clearly labelled SIMULATION tab (`?mode=simulation`).
+ */
 export default function Landing() {
+  const [params, setParams] = useSearchParams();
+  const mode = params.get("mode") === "simulation" ? "simulation" : "live";
+  return (
+    <Tabs
+      value={mode}
+      onValueChange={(v) => setParams(v === "simulation" ? { mode: "simulation" } : {}, { replace: true })}
+      className="mx-auto w-full min-w-0 max-w-[1680px]"
+    >
+      <div className="px-4 pt-4 md:px-6">
+        <TabsList aria-label={lt("en", "modesLabel")}>
+          <TabsTrigger value="live" data-testid="mode-live">
+            <Mic className="mr-1 inline h-3.5 w-3.5" aria-hidden />
+            {lt("en", "modeLive")}
+          </TabsTrigger>
+          <TabsTrigger value="simulation" data-testid="mode-simulation">
+            <FlaskConical className="mr-1 inline h-3.5 w-3.5 text-warn" aria-hidden />
+            {lt("en", "modeSim")}
+            <span className="ml-1.5 rounded border border-warn/50 px-1 text-[10px] font-semibold tracking-wider text-warn">{lt("en", "modeSimBadge")}</span>
+          </TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="live" className="px-4 py-3 md:px-6">
+        <LiveMonitor />
+      </TabsContent>
+      <TabsContent value="simulation">
+        <SimulatedInterception />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function SimulatedInterception() {
   const run = useRunStore((s) => s.run);
   const conn = useRunStore((s) => s.conn);
   const role = useSession((s) => s.role);

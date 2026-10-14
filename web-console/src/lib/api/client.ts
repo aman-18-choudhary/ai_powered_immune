@@ -71,6 +71,8 @@ export interface RequestOptions {
   /** When true the raw response text is returned (callers that need number source text). */
   text?: boolean;
   auth?: boolean;
+  /** Binary request body (e.g. a WAV audio chunk) sent as-is with this content type. */
+  raw?: { body: Blob | ArrayBuffer | Uint8Array; contentType: string };
 }
 
 export class ApiClient {
@@ -86,8 +88,11 @@ export class ApiClient {
     const headers: Record<string, string> = { Accept: o.blob ? "*/*" : "application/json" };
     const token = this.opts.getToken();
     if (token && o.auth !== false) headers.Authorization = `Bearer ${token}`;
-    let body: string | undefined;
-    if (o.body !== undefined) {
+    let body: BodyInit | undefined;
+    if (o.raw) {
+      headers["Content-Type"] = o.raw.contentType;
+      body = o.raw.body as BodyInit;
+    } else if (o.body !== undefined) {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(o.body);
     }
