@@ -144,7 +144,7 @@ def test_from_env_defaults_to_a_local_data_dir(tmp_path, monkeypatch):
     data = (tmp_path / ".data" / "complaints").resolve()
     assert s.complaints_database_url == f"sqlite:///{data / 'complaints.db'}"
     assert s.complaints_evidence_dir == data / "evidence"
-    assert s.complaints_auth_mode is None
+    assert s.complaints_auth_mode is None  # decided at mount time: clerk if configured, else local
     assert not (tmp_path / ".data").exists()  # nothing is created until the app is built
     s2 = Settings.from_env({"COMPLAINTS_DATABASE_URL": "sqlite:///x.db",
                             "COMPLAINTS_EVIDENCE_DIR": "/tmp/ev", "COMPLAINTS_AUTH_MODE": "Demo"})  # fmt: skip
@@ -156,7 +156,7 @@ def test_auth_mode_selection(tmp_path, monkeypatch):
     for k in ("CLERK_ISSUER", "CLERK_JWKS_URL", "COMPLAINTS_AUTH_MODE"):
         monkeypatch.delenv(k, raising=False)
     s = complaints_mount.complaints_settings(make_settings(tmp_path))
-    assert s.auth_mode == "demo" and s.demo_jwt_secret == make_settings(tmp_path).jwt_secret
+    assert s.auth_mode == "local" and s.demo_jwt_secret == make_settings(tmp_path).jwt_secret
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
     s = complaints_mount.complaints_settings(make_settings(tmp_path))

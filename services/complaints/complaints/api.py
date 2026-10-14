@@ -51,7 +51,9 @@ from .identity import (
     IdentityError,
     IdentityUnavailable,
     IdentityVerifier,
+    normalise_email,
 )
+from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
 from .validation import (
@@ -60,6 +62,8 @@ from .validation import (
     AnalyzeIn,
     ComplaintIn,
     EntryBody,
+    LocalStartBody,
+    LocalVerifyBody,
     MeUpdate,
     RoleBody,
     StatusBody,
@@ -359,6 +363,7 @@ def create_app(
     ollama: OllamaClient | None = None,
     clock: Callable[[], datetime] | None = None,
     backend_client: ClerkBackendClient | None = None,
+    local_auth: LocalAuth | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate()
@@ -367,11 +372,14 @@ def create_app(
     closers: list[Callable[[], Awaitable[None]]] = []
     jwks_status = "not_configured"
     if verifier is None:
-        if settings.auth_mode == "demo":
+        if settings.auth_mode in ("demo", "local"):
             assert settings.demo_jwt_secret
             verifier = DemoVerifier(settings.demo_jwt_secret)
             jwks_status = "demo_mode"
-            log.warning("COMPLAINTS_AUTH_MODE=demo: demo tokens accepted. Never use in production.")
+            log.warning(
+                "COMPLAINTS_AUTH_MODE=%s: demo tokens and local sign-in codes accepted. "
+                "Never use in production.", settings.auth_mode,
+            )  # fmt: skip
         else:
             assert settings.clerk_issuer
             fetcher = jwks_fetcher
@@ -399,6 +407,11 @@ def create_app(
     analysis_service: AnalysisService = analysis or ComplaintAnalysisPipeline(
         explainer=ollama_client
     )
+
+    local_codes: LocalAuth | None = None
+    if settings.local_auth_enabled:
+        assert settings.demo_jwt_secret
+        local_codes = local_auth or LocalAuth(settings.demo_jwt_secret)
 
     storage = EvidenceStorage(settings.evidence_dir)  # type: ignore[arg-type]
     try:
@@ -437,6 +450,7 @@ def create_app(
                   openapi_url=None)  # fmt: skip
     app.state.store = store
     app.state.settings = settings
+    app.state.local_auth = local_codes
     app.include_router(make_health_router(ready))
 
     # ------------------------------------------------------------------ errors
@@ -627,6 +641,68 @@ def create_app(
             "capabilities": CAPABILITIES[row.role],
             **(row.notice or {}),
         }  # fmt: skip
+
+    # ------------------------------------------------------------------ sign-in methods
+    @app.get("/auth/config")
+    async def auth_config() -> dict[str, Any]:
+        """Public: which sign-in methods this deployment offers (no secrets; the Clerk key is the
+        publishable browser key and is validated to be one)."""
+        clerk_on = settings.auth_mode == "clerk"
+        return {
+            "auth_mode": settings.auth_mode,
+            "clerk": {
+                "enabled": clerk_on,
+                "publishable_key": settings.clerk_publishable_key if clerk_on else None,
+            },
+            "local": {
+                "enabled": local_codes is not None,
+                "dev_only": True,
+                "delivery": "server_terminal",
+                "code_ttl_s": local_codes.code_ttl_s if local_codes else None,
+            },
+        }
+
+    def _client_ip(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    if local_codes is not None:
+        codes = local_codes
+
+        @app.post("/local-auth/start", status_code=202)
+        async def local_start(body: LocalStartBody, request: Request) -> dict[str, Any]:
+            """DEV ONLY. The code goes to the server terminal; the response is the same whether
+            or not an account exists for the address and never contains the code."""
+            email = normalise_email(body.email)
+            if email is None:
+                raise _field_error("email", "not a valid email address")
+            try:
+                codes.start(email, _client_ip(request))
+            except LocalAuthRateLimited as exc:
+                raise ApiError(429, "rate_limited", "Too many requests. Try again shortly.",
+                               {"Retry-After": str(exc.retry_after)}) from None  # fmt: skip
+            return {
+                "status": "code_sent",
+                "delivery": "server_terminal",
+                "expires_in": codes.code_ttl_s,
+                "message": "A sign-in code was issued. Local development mode: the code is "
+                "printed in the server terminal instead of being emailed.",
+            }
+
+        @app.post("/local-auth/verify")
+        async def local_verify(body: LocalVerifyBody, request: Request) -> dict[str, Any]:
+            email = normalise_email(body.email)
+            if email is None:
+                raise _field_error("email", "not a valid email address")
+            try:
+                token = codes.verify(email, body.code, _client_ip(request), body.name)
+            except LocalAuthRateLimited as exc:
+                raise ApiError(429, "rate_limited", "Too many requests. Try again shortly.",
+                               {"Retry-After": str(exc.retry_after)}) from None  # fmt: skip
+            except LocalAuthInvalid:
+                raise ApiError(
+                    400, "invalid_code", "The code is wrong or has expired. Request a new code."
+                ) from None
+            return {"token": token, "token_type": "Bearer", "expires_in": codes.token_ttl_s}
 
     @app.get("/auth/session")
     async def auth_session(user: User) -> dict[str, Any]:

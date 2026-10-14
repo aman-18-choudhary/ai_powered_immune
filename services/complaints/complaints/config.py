@@ -60,13 +60,15 @@ def _https_or_loopback(url: str) -> bool:
 @dataclass(frozen=True)
 class Settings:
     database_url: str = ""
-    auth_mode: str = "clerk"  # "clerk" (default) | "demo"
+    auth_mode: str = "clerk"  # "clerk" (default) | "demo" | "local" (demo + local sign-in codes)
     clerk_issuer: str | None = None
     clerk_jwks_url: str | None = None
     clerk_authorized_parties: tuple[str, ...] = ()
     clerk_audience: str | None = None
     clerk_secret_key: str | None = field(default=None, repr=False)
     clerk_backend_lookup: bool = False
+    # publishable (browser) key, only echoed by GET /auth/config so the console can load Clerk
+    clerk_publishable_key: str | None = None
     demo_jwt_secret: str | None = field(default=None, repr=False)
     investigator_allowlist: frozenset[str] = frozenset()
     admin_bootstrap_emails: frozenset[str] = frozenset()
@@ -97,6 +99,7 @@ class Settings:
             clerk_audience=(os.getenv("CLERK_AUDIENCE") or "").strip() or None,
             clerk_secret_key=os.getenv("CLERK_SECRET_KEY") or None,
             clerk_backend_lookup=os.getenv("CLERK_BACKEND_LOOKUP", "0") == "1",
+            clerk_publishable_key=(os.getenv("CLERK_PUBLISHABLE_KEY") or "").strip() or None,
             demo_jwt_secret=(
                 os.getenv("COMPLAINTS_DEMO_JWT_SECRET") or os.getenv("GATEWAY_JWT_SECRET") or None
             ),
@@ -122,6 +125,11 @@ class Settings:
             ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 20.0, 1.0, 120.0),
         )
 
+    @property
+    def local_auth_enabled(self) -> bool:
+        """Email + one-time-code sign-in (development only): demo/local modes, never clerk."""
+        return self.auth_mode in ("demo", "local")
+
     def validate(self) -> None:
         if not self.database_url:
             raise ConfigError("COMPLAINTS_DATABASE_URL must be set")
@@ -138,7 +146,7 @@ class Settings:
                 raise ConfigError("CLERK_JWKS_URL must be an https URL")
             if self.clerk_backend_lookup and not self.clerk_secret_key:
                 raise ConfigError("CLERK_BACKEND_LOOKUP=1 needs CLERK_SECRET_KEY")
-        elif self.auth_mode == "demo":
+        elif self.auth_mode in ("demo", "local"):
             if not self.demo_jwt_secret:
                 raise ConfigError(
                     "COMPLAINTS_DEMO_JWT_SECRET (or GATEWAY_JWT_SECRET) must be set in demo mode"
@@ -148,7 +156,12 @@ class Settings:
                     f"the demo JWT secret must be at least {MIN_DEMO_SECRET_BYTES} bytes"
                 )
         else:
-            raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk' or 'demo'")
+            raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk', 'demo' or 'local'")
+        if self.clerk_publishable_key is not None and not re.fullmatch(
+            r"pk_(test|live)_[A-Za-z0-9+/=_-]{1,200}", self.clerk_publishable_key
+        ):
+            # never echo a secret key (sk_...) to browsers by mistake
+            raise ConfigError("CLERK_PUBLISHABLE_KEY must be a Clerk publishable key (pk_...)")
         if self.ollama_url is not None:
             parts = urlsplit(self.ollama_url)
             if parts.scheme not in ("http", "https") or not parts.hostname or parts.username:

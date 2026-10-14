@@ -5,11 +5,12 @@ directory under ``.data/complaints`` (gitignored); ``COMPLAINTS_DATABASE_URL`` /
 ``COMPLAINTS_EVIDENCE_DIR`` override them (a Postgres URL works too).
 
 Identity: unless Clerk is configured (``CLERK_ISSUER`` + ``CLERK_JWKS_URL``) or
-``COMPLAINTS_AUTH_MODE`` says otherwise, the mounted service runs in ``demo`` mode with this
-server's own JWT secret, so the existing ``/api/auth/demo-login`` tokens are accepted. Their
-``role`` claim is ignored: every such token is a CITIZEN in the complaints service. Roles come only
-from the complaints ``users`` table (+ ``INVESTIGATOR_ALLOWLIST`` / ``ADMIN_BOOTSTRAP_EMAILS``,
-read from the environment).
+``COMPLAINTS_AUTH_MODE`` says otherwise, the mounted service runs in ``local`` mode with this
+server's own JWT secret: the existing ``/api/auth/demo-login`` tokens are accepted (their ``role``
+claim is ignored: every such token is a CITIZEN in the complaints service) and the development-only
+email + one-time-code sign-in (``/api/complaints/local-auth/*``, code printed to this terminal) is
+on. In ``clerk`` mode the local sign-in is off (404). Roles come only from the complaints ``users``
+table (+ ``INVESTIGATOR_ALLOWLIST`` / ``ADMIN_BOOTSTRAP_EMAILS``, read from the environment).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from .config import ConfigError, Settings
 
 PREFIX = "/api/complaints"
 UPLOAD_PATH = re.compile(r"^/api/complaints/complaints/[^/]{1,64}/evidence$")
-AUTH_MODES = ("clerk", "demo")
+AUTH_MODES = ("clerk", "demo", "local")
 
 
 def complaints_settings(cfg: Settings) -> ComplaintsSettings:
@@ -46,7 +47,7 @@ def complaints_settings(cfg: Settings) -> ComplaintsSettings:
     evidence = cfg.complaints_evidence_dir or (cfg.ensure_work_dir() / "complaints" / "evidence")
     mode = cfg.complaints_auth_mode
     if mode is None:
-        mode = "clerk" if base.clerk_issuer and base.clerk_jwks_url else "demo"
+        mode = "clerk" if base.clerk_issuer and base.clerk_jwks_url else "local"
     if mode not in AUTH_MODES:
         raise ConfigError(f"COMPLAINTS_AUTH_MODE must be one of {', '.join(AUTH_MODES)}")
     return dataclasses.replace(

@@ -259,6 +259,18 @@ class MeUpdate(BaseModel):
     privacy: PrivacyIn = Field(default=None)  # type: ignore[assignment]  # null is refused
 
 
+class LocalStartBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=254)]
+
+
+class LocalVerifyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=254)]
+    code: Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
+    name: _opt(100) = None  # type: ignore[valid-type]
+
+
 class EntryBody(BaseModel):
     # unknown keys (e.g. a client-sent "role") are ignored, never read
     entry: Literal["citizen", "investigator"]

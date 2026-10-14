@@ -64,7 +64,7 @@ class Settings:
     # work_dir (tests); from_env defaults to ./.data/complaints (gitignored).
     complaints_database_url: str | None = None
     complaints_evidence_dir: Path | None = None
-    complaints_auth_mode: str | None = None  # None = clerk if configured, else demo
+    complaints_auth_mode: str | None = None  # None = clerk if configured, else local
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
