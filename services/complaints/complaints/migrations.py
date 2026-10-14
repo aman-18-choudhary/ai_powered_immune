@@ -72,9 +72,16 @@ def _analyses_detail(conn: Connection) -> None:
     add_column(conn, "analyses", "detail")
 
 
+def _complaint_bank_details(conn: Connection) -> None:
+    for col in ("bank_name", "bank_account", "ifsc"):
+        add_column(conn, "complaints", col)
+    ensure_index(conn, "complaints", "ix_complaints_bank_account")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
+    Migration(3, "complaint_bank_details", _complaint_bank_details),
 )
 LATEST = MIGRATIONS[-1].version
 

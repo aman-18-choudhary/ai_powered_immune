@@ -139,6 +139,10 @@ complaints = Table(
     Column("longitude", Numeric(9, 6, asdecimal=False)),
     Column("social_platform", String(50)),
     Column("social_account", String(100)),
+    # migration 3: optional bank details of the suspect / beneficiary account
+    Column("bank_name", String(100)),
+    Column("bank_account", String(18)),  # digits only, 6-18
+    Column("ifsc", String(11)),  # ^[A-Z]{4}0[A-Z0-9]{6}$
     Column("status", String(16), nullable=False, default="SUBMITTED"),
     Column("created_at", UTCDateTime, nullable=False),
     Column("updated_at", UTCDateTime, nullable=False),
@@ -160,6 +164,7 @@ complaints = Table(
     Index("ix_complaints_category", "category"),
     Index("ix_complaints_created", "created_at"),
     Index("ix_complaints_city", "city"),
+    Index("ix_complaints_bank_account", "bank_account"),  # migration 3
 )  # fmt: skip
 
 complaint_status_history = Table(

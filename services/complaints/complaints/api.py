@@ -54,7 +54,15 @@ from .identity import (
 )
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
-from .validation import ActiveBody, AnalyzeIn, ComplaintIn, EntryBody, RoleBody, StatusBody
+from .validation import (
+    BANK_FIELDS,
+    ActiveBody,
+    AnalyzeIn,
+    ComplaintIn,
+    EntryBody,
+    RoleBody,
+    StatusBody,
+)
 
 log = logging.getLogger("complaints")
 access_log = logging.getLogger("complaints.access")
@@ -240,6 +248,10 @@ def complaint_view(
         "location_text": c["location_text"], "city": c["city"], "state": c["state"],
         "latitude": c["latitude"], "longitude": c["longitude"],
         "social_platform": c["social_platform"], "social_account": c["social_account"],
+        # bank details: only ever returned to the owner and to staff (like every other field
+        # here; no complaint field is masked in list views)
+        "bank_name": c.get("bank_name"), "bank_account": c.get("bank_account"),
+        "ifsc": c.get("ifsc"),
         "created_at": _iso(c["created_at"]), "updated_at": _iso(c["updated_at"]),
     }  # fmt: skip
     if staff:
@@ -686,9 +698,13 @@ def create_app(
         fields["reported_at"] = reported_at or now()
         if fields["amount"] is not None and fields["currency"] is None:
             fields["currency"] = "INR"
-        request_hash = hashlib.sha256(
-            json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()
-        ).hexdigest()
+        # optional keys added after the first release are left out of the hash while empty, so
+        # an Idempotency-Key replay of a request without them hashes as it did before
+        hashed = body.model_dump(mode="json")
+        for k in BANK_FIELDS:
+            if hashed.get(k) is None:
+                hashed.pop(k, None)
+        request_hash = hashlib.sha256(json.dumps(hashed, sort_keys=True).encode()).hexdigest()
         c, created = await asyncio.to_thread(
             store.create_complaint, user.id, fields, now(), idempotency_key, request_hash
         )

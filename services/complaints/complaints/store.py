@@ -12,6 +12,7 @@ Invariants
 """
 
 import hashlib
+import re
 import threading
 import uuid
 from collections.abc import Iterator
@@ -52,6 +53,8 @@ from .schema import (
 )
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
+_ACCOUNT_Q = re.compile(r"^[0-9]{6,18}$")
+_IFSC_Q = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
 LAST_LOGIN_REFRESH = timedelta(minutes=5)
 ADVISORY_LOCK_ADMIN = 727202
 
@@ -588,12 +591,17 @@ class ComplaintStore:
             cond.append(complaints.c.created_at <= f["created_to"])
         if f.get("q"):
             pat = f"%{_like_escape(f['q'].casefold())}%"
-            cond.append(
-                or_(
-                    func.lower(complaints.c.title).like(pat, escape="\\"),
-                    func.lower(complaints.c.description).like(pat, escape="\\"),
-                )
-            )
+            terms = [
+                func.lower(complaints.c.title).like(pat, escape="\\"),
+                func.lower(complaints.c.description).like(pat, escape="\\"),
+            ]
+            # exact matches on the bank identifiers (an account number or IFSC typed as q)
+            digits = f["q"].replace(" ", "")
+            if _ACCOUNT_Q.fullmatch(digits):
+                terms.append(complaints.c.bank_account == digits)
+            if _IFSC_Q.fullmatch(f["q"].strip().upper()):
+                terms.append(complaints.c.ifsc == f["q"].strip().upper())
+            cond.append(or_(*terms))
         stored_ev = exists().where(
             complaint_evidence.c.complaint_id == complaints.c.id,
             complaint_evidence.c.status == "stored",

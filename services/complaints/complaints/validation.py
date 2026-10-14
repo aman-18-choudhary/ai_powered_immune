@@ -36,6 +36,9 @@ _UPI_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,255}@[a-z][a-z0-9]{1,63}$")
 _UTR_RE = re.compile(r"^[A-Z0-9]{6,30}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _PHONE_STRIP = re.compile(r"[\s\-().]")
+_ACCOUNT_RE = re.compile(r"^[0-9]{6,18}$")
+_IFSC_RE = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
+BANK_FIELDS = ("bank_name", "bank_account", "ifsc")
 MAX_AMOUNT = Decimal("999999999999.99")
 
 
@@ -132,6 +135,27 @@ def _url(v: str | None) -> str | None:
     return v
 
 
+def _bank_account(v: str | None) -> str | None:
+    """Suspect / beneficiary account number: 6-18 digits once spaces are removed."""
+    v = _clean(v)
+    if v is None:
+        return None
+    v = v.replace(" ", "")
+    if not _ACCOUNT_RE.fullmatch(v):
+        raise ValueError("account number must be 6-18 digits")
+    return v
+
+
+def _ifsc(v: str | None) -> str | None:
+    v = _clean(v)
+    if v is None:
+        return None
+    v = v.upper()
+    if not _IFSC_RE.fullmatch(v):
+        raise ValueError("not a valid IFSC (4 letters, 0, then 6 letters or digits)")
+    return v
+
+
 def _currency(v: str | None) -> str | None:
     v = _clean(v)
     if v is None:
@@ -201,6 +225,9 @@ class ComplaintIn(BaseModel):
     )
     social_platform: _opt(50) = None  # type: ignore[valid-type]
     social_account: _opt(100) = None  # type: ignore[valid-type]
+    bank_name: _opt(100) = None  # type: ignore[valid-type]
+    bank_account: _opt(40, _bank_account) = None  # type: ignore[valid-type]
+    ifsc: _opt(20, _ifsc) = None  # type: ignore[valid-type]
 
     @model_validator(mode="after")
     def _coords_together(self) -> "ComplaintIn":
