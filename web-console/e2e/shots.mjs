@@ -70,7 +70,7 @@ for (const theme of THEMES) {
   await api("POST", "/demo/control", { action: "seek", t: 1250 });
   await waitState(["paused"]);
   for (const vp of Object.keys(VP)) {
-    if (want("player")) { await go("/"); await shot("player-live", vp); }
+    if (want("player")) { await go("/?mode=simulation"); await shot("player-live", vp); }
     if (want("command")) { await go("/command"); await shot("command", vp, { settle: 2000 }); }
     if (want("analyst")) { await go("/analyst"); await shot("analyst", vp); }
     if (want("evidence")) { await go("/evidence"); await shot("evidence", vp, { settle: 1800 }); }
@@ -80,7 +80,7 @@ for (const theme of THEMES) {
   await api("POST", "/demo/control", { action: "resume", speed: 20 });
   await waitState(["finished"]);
   if (want("player")) {
-    await go("/");
+    await go("/?mode=simulation");
     await page.getByTestId("verify-offline").click({ timeout: 20000 }).catch(() => undefined);
     await page.getByTestId("verify-status").waitFor({ timeout: 20000 }).catch(() => undefined);
     await shot("player-finale", "1440x900", { settle: 1500 });

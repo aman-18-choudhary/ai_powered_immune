@@ -133,7 +133,7 @@ test("unknown route shows the 404 page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
 });
 
-const PAGES = ["/", "/command", "/analyst", "/evidence", "/citizen", "/insights", "/about"];
+const PAGES = ["/", "/?mode=simulation", "/command", "/analyst", "/evidence", "/citizen", "/insights", "/about"];
 for (const theme of ["dark", "light"] as const) {
   test(`axe: no serious or critical violations on every page (${theme})`, async ({ page }) => {
     await page.addInitScript((t) => {

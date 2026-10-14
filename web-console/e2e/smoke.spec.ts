@@ -7,6 +7,9 @@ test("golden path: officer -> play -> call alert -> hold -> antibody applied -> 
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
   await page.goto("/");
   await page.getByTestId("role-officer").click();
+  // The page opens in the Live microphone mode; the cinematic player is the SIMULATION tab.
+  await page.getByTestId("mode-simulation").click();
+  await expect(page).toHaveURL(/\?mode=simulation$/);
   // A previous run may already exist on the server: the player then shows Restart instead of the hero.
   const start = page.getByTestId("hero-play").or(page.getByTestId("restart"));
   await expect(start).toBeEnabled();

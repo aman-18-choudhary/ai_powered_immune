@@ -105,6 +105,8 @@ await page.waitForLoadState("networkidle");
 mark("live_idle");
 await wander([[1000, 300], [420, 520]], 700);
 
+// the cinematic player is the SIMULATION tab of Live Interception
+await clickEl(page.getByTestId("mode-simulation"));
 // reset any previous run, then Play at 1x
 const start = page.getByTestId("hero-play").or(page.getByTestId("restart"));
 await clickEl(start);
