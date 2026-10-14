@@ -285,6 +285,7 @@ simulated citizen is exposed.
 | `COMPLAINTS_AUTH_MODE` | `clerk` if Clerk is configured, else `local` | `local`/`demo`: demo-login tokens + dev-only email code sign-in; `clerk`: Clerk only |
 | `INVESTIGATOR_ALLOWLIST`, `ADMIN_BOOTSTRAP_EMAILS` | empty | verified emails eligible for investigator entry / admin bootstrap |
 | `CLERK_ISSUER`, `CLERK_JWKS_URL`, `CLERK_PUBLISHABLE_KEY`, ... | unset | Clerk settings, as in the complaints README |
+| `COMPLAINTS_LOCAL_AUTH_OUTBOX` | unset | **test only**: also append local sign-in codes to this file (used by the console's Playwright suite); refused in `clerk` mode |
 
 ## Security notes
 

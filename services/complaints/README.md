@@ -325,6 +325,7 @@ metrics file.
 | `COMPLAINTS_RATE_ANALYZE_PER_MIN` | per-user limit for `POST /analyze` (default 10) |
 | `OLLAMA_URL`, `OLLAMA_MODEL` (default `qwen2.5:3b`), `OLLAMA_TIMEOUT_S` (default 20) | optional local LLM explanation |
 | `CATEGORY_MIN_CONFIDENCE` | overrides the artifact's abstention threshold (0-1) |
+| `COMPLAINTS_LOCAL_AUTH_OUTBOX` | **TEST ONLY.** A file path: local sign-in codes are also appended there as JSON lines `{"email", "code"}` (file mode 0600) so automated end-to-end tests can sign in. Refused (`ConfigError`) unless the mode is `local`/`demo`; never set it outside a test run |
 | `PORT`, `LOG_LEVEL` | listen port, log level |
 
 ## Gateway

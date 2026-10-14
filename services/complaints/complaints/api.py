@@ -53,7 +53,7 @@ from .identity import (
     IdentityVerifier,
     normalise_email,
 )
-from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited
+from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited, file_outbox
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
 from .validation import (
@@ -411,7 +411,16 @@ def create_app(
     local_codes: LocalAuth | None = None
     if settings.local_auth_enabled:
         assert settings.demo_jwt_secret
-        local_codes = local_auth or LocalAuth(settings.demo_jwt_secret)
+        if local_auth is not None:
+            local_codes = local_auth
+        elif settings.local_auth_outbox is not None:
+            log.warning("COMPLAINTS_LOCAL_AUTH_OUTBOX is set: sign-in codes are also written to a "
+                        "file. Test-only option.")  # fmt: skip
+            local_codes = LocalAuth(
+                settings.demo_jwt_secret, deliver=file_outbox(settings.local_auth_outbox)
+            )
+        else:
+            local_codes = LocalAuth(settings.demo_jwt_secret)
 
     storage = EvidenceStorage(settings.evidence_dir)  # type: ignore[arg-type]
     try:

@@ -291,3 +291,26 @@ async def test_demo_mode_also_offers_local_sign_in(settings, analysis):
         assert (await c.get("/auth/config")).json()["local"]["enabled"] is True
     finally:
         app.state.store.close()
+
+
+async def test_test_only_file_outbox_writes_the_code(local_settings, analysis, tmp_path, capsys):
+    import json as _json
+    import stat
+
+    box = tmp_path / "outbox.jsonl"
+    app = create_app(dataclasses.replace(local_settings, local_auth_outbox=box), analysis=analysis)
+    try:
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        r = await c.post("/local-auth/start", json={"email": "E2E@Example.org"})
+        assert r.status_code == 202
+        rec = _json.loads(box.read_text().splitlines()[-1])
+        assert rec["email"] == "e2e@example.org" and len(rec["code"]) == 6
+        assert stat.S_IMODE(box.stat().st_mode) == 0o600
+        assert rec["code"] in capsys.readouterr().err  # the terminal line is still printed
+        assert rec["code"] not in r.text
+        r = await c.post(
+            "/local-auth/verify", json={"email": "e2e@example.org", "code": rec["code"]}
+        )
+        assert r.status_code == 200
+    finally:
+        app.state.store.close()

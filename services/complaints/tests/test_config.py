@@ -18,6 +18,7 @@ def env(monkeypatch, tmp_path, **kv):
         "CLERK_SECRET_KEY",
         "CLERK_BACKEND_LOOKUP",
         "GATEWAY_JWT_SECRET",
+        "COMPLAINTS_LOCAL_AUTH_OUTBOX",
     ):
         monkeypatch.delenv(k, raising=False)  # fmt: skip
     monkeypatch.setenv("COMPLAINTS_DATABASE_URL", "sqlite://")
@@ -96,3 +97,15 @@ def test_service_refuses_to_start_without_env(monkeypatch, tmp_path):
 
     with pytest.raises(ConfigError):
         create_service_app()
+
+
+def test_local_auth_outbox_is_test_only_and_refused_in_clerk_mode(monkeypatch, tmp_path):
+    env(monkeypatch, tmp_path, CLERK_ISSUER="https://clerk.example", CLERK_JWKS_URL="https://clerk.example/jwks",
+        COMPLAINTS_LOCAL_AUTH_OUTBOX=str(tmp_path / "outbox.jsonl"))  # fmt: skip
+    with pytest.raises(ConfigError, match="test-only"):
+        Settings.from_env().validate()
+    env(monkeypatch, tmp_path, COMPLAINTS_AUTH_MODE="local", COMPLAINTS_DEMO_JWT_SECRET="s" * 40,
+        COMPLAINTS_LOCAL_AUTH_OUTBOX=str(tmp_path / "outbox.jsonl"))  # fmt: skip
+    s = Settings.from_env()
+    s.validate()
+    assert s.local_auth_outbox == tmp_path / "outbox.jsonl"

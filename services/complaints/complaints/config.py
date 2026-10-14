@@ -86,6 +86,9 @@ class Settings:
     ollama_url: str | None = None  # local Ollama server; None = LLM explanation not configured
     ollama_model: str = "qwen2.5:3b"
     ollama_timeout_s: float = 20.0
+    # TEST ONLY: also append local sign-in codes to this file (end-to-end tests read it). Refused
+    # in clerk mode; never set it outside an automated test run.
+    local_auth_outbox: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -123,6 +126,11 @@ class Settings:
             ollama_url=(os.getenv("OLLAMA_URL") or "").strip().rstrip("/") or None,
             ollama_model=(os.getenv("OLLAMA_MODEL") or "").strip() or "qwen2.5:3b",
             ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 20.0, 1.0, 120.0),
+            local_auth_outbox=(
+                Path(os.environ["COMPLAINTS_LOCAL_AUTH_OUTBOX"].strip())
+                if (os.getenv("COMPLAINTS_LOCAL_AUTH_OUTBOX") or "").strip()
+                else None
+            ),
         )
 
     @property
@@ -157,6 +165,10 @@ class Settings:
                 )
         else:
             raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk', 'demo' or 'local'")
+        if self.local_auth_outbox is not None and not self.local_auth_enabled:
+            raise ConfigError(
+                "COMPLAINTS_LOCAL_AUTH_OUTBOX is a test-only option for local/demo mode"
+            )
         if self.clerk_publishable_key is not None and not re.fullmatch(
             r"pk_(test|live)_[A-Za-z0-9+/=_-]{1,200}", self.clerk_publishable_key
         ):

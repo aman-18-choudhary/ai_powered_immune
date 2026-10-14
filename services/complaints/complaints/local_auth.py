@@ -21,12 +21,15 @@ reveal whether an account exists for the address.
 
 import hashlib
 import hmac
+import json
+import os
 import secrets
 import sys
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import jwt
 
@@ -55,6 +58,21 @@ class LocalAuthInvalid(Exception):
 def print_to_terminal(email: str, code: str) -> None:
     """The dev-only "mail delivery": one marked line on stderr (not through ``logging``)."""
     print(f"[LOCAL DEV MAIL] sign-in code for {email}: {code}", file=sys.stderr, flush=True)
+
+
+def file_outbox(path: Path) -> Callable[[str, str], None]:
+    """TEST ONLY (``COMPLAINTS_LOCAL_AUTH_OUTBOX``): print to the terminal as usual and also
+    append ``{"email", "code"}`` as one JSON line to ``path`` (created 0600) so an automated
+    end-to-end test can read the code. Only reachable in local/demo mode (config refuses it in
+    clerk mode)."""
+
+    def deliver(email: str, code: str) -> None:
+        print_to_terminal(email, code)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"email": email, "code": code}) + "\n")
+
+    return deliver
 
 
 def local_subject(email: str) -> str:
