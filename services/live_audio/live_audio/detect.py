@@ -88,23 +88,45 @@ _SECRET_ITEM = r"(?:otp|o\.?t\.?p|one time password|pin|cvv|password|passcode|ve
 _X: dict[str, list[re.Pattern[str]]] = {
     "OTP_PIN_REQUEST": [
         cg._rx(rf"\b{_ASK}\b.{{0,30}}{_SECRET_ITEM}"),
-        cg._rx(rf"{_SECRET_ITEM}.{{0,30}}\b(?:bata\w*|batay\s?ye|bhej\w*|bol\w*|tell me|read (?:it )?out|share (?:it|karo|kijiye)|dijiye|de do)\b"),
-        cg._rx(r"\b(?:otp|code)\b.{0,20}\b(?:you (?:just )?(?:received|got)|aaya|aya|aayega|came)\b"),
+        cg._rx(
+            rf"{_SECRET_ITEM}.{{0,30}}\b(?:bata\w*|batay\s?ye|bhej\w*|bol\w*|tell me|read (?:it )?out|share (?:it|karo|kijiye)|dijiye|de do)\b"
+        ),
+        cg._rx(
+            r"\b(?:otp|code)\b.{0,20}\b(?:you (?:just )?(?:received|got)|aaya|aya|aayega|came)\b"
+        ),
         cg._rx(r"(?:ओटीपी|OTP|पिन|पासवर्ड).{0,20}(?:बताइए|बताइये|बताओ|भेजिए|भेजो|बोलिए)"),
     ],
     "MONEY_TRANSFER_INSTRUCTION": [
-        cg._rx(r"(?:^|[,.;:]\s*|\bplease\s+|\bjust\s+|\bnow\s+|\bimmediately\s+)(?:transfer|send|pay|deposit|move)\b.{0,40}\b(?:money|rupees|rs\.?|inr|amount|lakh|lakhs|thousand|funds|payment|upi|account|qr)\b"),
-        cg._rx(r"\byou (?:must|have to|need to|should|will have to)\s+(?:transfer|send|pay|deposit|move)\b"),
-        cg._rx(r"\b(?:paise|paisa|rupaye|rupees|amount|payment|funds)\b.{0,40}\b(?:transfer|bhej|jama|daal|dal)\w*\s*(?:kar\s?(?:do|dijiye|dijie|de|ke)|kijiye|kariye|karo|dijiye|do|dijie)\b"),
-        cg._rx(r"\b(?:transfer|bhej|jama)\w*\s*(?:kar\s?(?:do|dijiye|dijie|de)|kijiye|kariye|karo|dijiye)\b"),
-        cg._rx(r"(?:पैसे|रुपये|रकम|राशि|पेमेंट).{0,30}(?:ट्रांसफर|भेज|जमा|डाल)\S*\s*(?:कीजिए|कीजिये|करो|करें|कर दो|कर दीजिए|दीजिए|दो)"),
+        cg._rx(
+            r"(?:^|[,.;:]\s*|\bplease\s+|\bjust\s+|\bnow\s+|\bimmediately\s+)(?:transfer|send|pay|deposit|move)\b.{0,40}\b(?:money|rupees|rs\.?|inr|amount|lakh|lakhs|thousand|funds|payment|upi|account|qr)\b"
+        ),
+        cg._rx(
+            r"\byou (?:must|have to|need to|should|will have to)\s+(?:transfer|send|pay|deposit|move)\b"
+        ),
+        cg._rx(
+            r"\b(?:paise|paisa|rupaye|rupees|amount|payment|funds)\b.{0,40}\b(?:transfer|bhej|jama|daal|dal)\w*\s*(?:kar\s?(?:do|dijiye|dijie|de|ke)|kijiye|kariye|karo|dijiye|do|dijie)\b"
+        ),
+        cg._rx(
+            r"\b(?:transfer|bhej|jama)\w*\s*(?:kar\s?(?:do|dijiye|dijie|de)|kijiye|kariye|karo|dijiye)\b"
+        ),
+        cg._rx(
+            r"(?:पैसे|रुपये|रकम|राशि|पेमेंट).{0,30}(?:ट्रांसफर|भेज|जमा|डाल)\S*\s*(?:कीजिए|कीजिये|करो|करें|कर दो|कर दीजिए|दीजिए|दो)"
+        ),
         cg._rx(r"(?:ट्रांसफर|भेजिए|जमा)\s*(?:कीजिए|कीजिये|करो|करें|कर दो|कर दीजिए)"),
     ],
     "UPI_BANK_FRAUD": [
-        cg._rx(r"\bkyc\b.{0,30}\b(?:expire\w*|pending|update|band|block\w*|suspend\w*|incomplete)\b"),
-        cg._rx(r"\b(?:account|card|sim|upi)\b.{0,30}\b(?:will be|has been|is being|is|get|gets)\s+(?:blocked|frozen|suspended|deactivated|closed)\b"),
-        cg._rx(r"\b(?:account|khata|card|sim)\b.{0,20}\b(?:band|block|freeze)\s*(?:ho\s*ja\w*|kar\s*di\w*|hone\s*wala)"),
-        cg._rx(r"\b(?:enter|type|daal\w*|dal\w*)\b.{0,20}\b(?:upi\s*)?pin\b.{0,30}\b(?:receive|get|refund|cashback|prize|milega|paane)\b"),
+        cg._rx(
+            r"\bkyc\b.{0,30}\b(?:expire\w*|pending|update|band|block\w*|suspend\w*|incomplete)\b"
+        ),
+        cg._rx(
+            r"\b(?:account|card|sim|upi)\b.{0,30}\b(?:will be|has been|is being|is|get|gets)\s+(?:blocked|frozen|suspended|deactivated|closed)\b"
+        ),
+        cg._rx(
+            r"\b(?:account|khata|card|sim)\b.{0,20}\b(?:band|block|freeze)\s*(?:ho\s*ja\w*|kar\s*di\w*|hone\s*wala)"
+        ),
+        cg._rx(
+            r"\b(?:enter|type|daal\w*|dal\w*)\b.{0,20}\b(?:upi\s*)?pin\b.{0,30}\b(?:receive|get|refund|cashback|prize|milega|paane)\b"
+        ),
         cg._rx(r"\bscan\b.{0,25}\bqr\b.{0,25}\b(?:receive|get|refund|cashback|prize)\b"),
         cg._rx(r"\b(?:approve|accept)\b.{0,20}\bcollect request\b"),
         cg._rx(r"(?:केवाईसी|KYC).{0,25}(?:अपडेट|एक्सपायर|बंद|ब्लॉक)"),
@@ -118,15 +140,23 @@ _X: dict[str, list[re.Pattern[str]]] = {
     ],
     "SECRECY_DEMAND": [
         cg._rx(r"\b(?:keep|kept)\b.{0,20}\b(?:secret|confidential|between us)\b"),
-        cg._rx(r"\bnot even (?:to )?your (?:family|wife|husband|children|son|daughter|parents|bank)\b"),
-        cg._rx(r"\b(?:do not|don't|dont|never) (?:tell|inform|discuss with|call) (?:your )?(?:family|wife|husband|children|son|daughter|parents|bank|friends?|relatives)\b"),
-        cg._rx(r"\b(?:ghar\s?wal\w*|family|parivar|bank)\b.{0,15}\b(?:ko\s+)?(?:mat|na|nahi)\s+(?:bata\w*|bol\w*)"),
+        cg._rx(
+            r"\bnot even (?:to )?your (?:family|wife|husband|children|son|daughter|parents|bank)\b"
+        ),
+        cg._rx(
+            r"\b(?:do not|don't|dont|never) (?:tell|inform|discuss with|call) (?:your )?(?:family|wife|husband|children|son|daughter|parents|bank|friends?|relatives)\b"
+        ),
+        cg._rx(
+            r"\b(?:ghar\s?wal\w*|family|parivar|bank)\b.{0,15}\b(?:ko\s+)?(?:mat|na|nahi)\s+(?:bata\w*|bol\w*)"
+        ),
         cg._rx(r"\b(?:gupt|secret)\s+(?:rakh\w*)\b"),
         cg._rx(r"(?:घर\s?वालों|परिवार|बैंक)\s*को\s*(?:मत|न|ना)\s*(?:बताइए|बताइये|बताना|बताओ|बोलना)"),
         cg._rx(r"(?:गुप्त|सीक्रेट)\s*(?:रखिए|रखना|रखें)"),
     ],
     "INTIMIDATION": [
-        cg._rx(r"\b(?:police|cbi|officers?|we) (?:will|are going to|is going to) (?:come|arrest|pick you up|take you)\b"),
+        cg._rx(
+            r"\b(?:police|cbi|officers?|we) (?:will|are going to|is going to) (?:come|arrest|pick you up|take you)\b"
+        ),
         cg._rx(r"\byou will (?:be arrested|go to jail|be jailed|be taken)\b"),
         cg._rx(r"\b(?:last|final) warning\b"),
         cg._rx(r"\bgiraftar\w*\b|\bgirftar\w*\b|\bjail (?:bhej|ja)\w*"),
@@ -161,7 +191,9 @@ _SPOKEN = [
     (re.compile(r"\b(?:कॉम|काम)\b"), "com"),
 ]
 _TLD = r"(?:com|in|net|org|co|xyz|top|info|online|site|link|app|io|me|ly|live|club|shop|gov|bank)"
-_LINK = re.compile(rf"\b(?:https?://)?(?:www\.)?[a-z0-9-]{{2,}}(?:\.[a-z0-9-]+)*\.{_TLD}\b(?:/[\w./-]*)?", re.I)
+_LINK = re.compile(
+    rf"\b(?:https?://)?(?:www\.)?[a-z0-9-]{{2,}}(?:\.[a-z0-9-]+)*\.{_TLD}\b(?:/[\w./-]*)?", re.I
+)
 _UPI_HANDLE = r"(?:ybl|ibl|axl|apl|upi|paytm|okaxis|oksbi|okhdfcbank|okicici|sbi|icici|hdfcbank|axisbank|airtel|jio|freecharge|ptyes|ptsbi|pthdfc|ptaxis|kotak|yesbank|idfcbank|federal)"
 _UPI = re.compile(rf"\b[a-z0-9][a-z0-9._-]{{1,40}}@{_UPI_HANDLE}\b", re.I)
 
@@ -204,12 +236,20 @@ def extra_hits(text: str) -> list[tuple[str, float, str]]:
                     break
         spoken = normalise_spoken(clause)
         if "SPOKEN_PAYMENT_ID" not in found and (m := _UPI.search(spoken)):
-            found["SPOKEN_PAYMENT_ID"] = ("SPOKEN_PAYMENT_ID", EXTRA_WEIGHTS["SPOKEN_PAYMENT_ID"], m.group(0)[:EXCERPT_MAX])
+            found["SPOKEN_PAYMENT_ID"] = (
+                "SPOKEN_PAYMENT_ID",
+                EXTRA_WEIGHTS["SPOKEN_PAYMENT_ID"],
+                m.group(0)[:EXCERPT_MAX],
+            )
         if "SPOKEN_LINK" not in found:
             for m in _LINK.finditer(spoken):
                 if "@" in spoken[max(0, m.start() - 1) : m.start()]:
                     continue  # domain part of an e-mail / UPI id
-                found["SPOKEN_LINK"] = ("SPOKEN_LINK", EXTRA_WEIGHTS["SPOKEN_LINK"], m.group(0)[:EXCERPT_MAX])
+                found["SPOKEN_LINK"] = (
+                    "SPOKEN_LINK",
+                    EXTRA_WEIGHTS["SPOKEN_LINK"],
+                    m.group(0)[:EXCERPT_MAX],
+                )
                 break
     return list(found.values())
 
@@ -283,7 +323,16 @@ class LiveDetector:
             for code in sorted(seg_codes & cg_codes):
                 explained.add(code)
                 w = next(r.weight for r in cg_reasons if r.code == code)
-                hits.append(Hit(code, LABELS.get(code, code), "call_guard", w, sid, cg_excerpt(code, seg_text)))
+                hits.append(
+                    Hit(
+                        code,
+                        LABELS.get(code, code),
+                        "call_guard",
+                        w,
+                        sid,
+                        cg_excerpt(code, seg_text),
+                    )
+                )
             for code, w, ex in extra_hits(seg_text):
                 if OVERLAPS.get(code) in seg_codes:
                     continue
@@ -292,7 +341,9 @@ class LiveDetector:
         for r in cg_reasons:  # chunk-level codes no single segment explains
             if r.code in cg_codes and r.code not in explained:
                 for sid, _ in segments:
-                    hits.append(Hit(r.code, LABELS.get(r.code, r.code), "call_guard", r.weight, sid, None))
+                    hits.append(
+                        Hit(r.code, LABELS.get(r.code, r.code), "call_guard", r.weight, sid, None)
+                    )
         extra_reasons = [
             Reason(code=c, weight=w, detail=LABELS[c]) for c, w in sorted(extra_codes.items())
         ]

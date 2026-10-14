@@ -123,7 +123,9 @@ def run_audio(c: TestClient, pcm: bytes, language: str) -> dict:
 
 def test_english_scam_script(client, tmp_path):
     out = run_audio(client, synth(tmp_path, "Samantha", SCAM_EN, "scam"), "auto")
-    hits = fuzzy_hits(out["text"], ["officer", "CBI", "digital", "arrest", "OTP", "transfer", "account"])
+    hits = fuzzy_hits(
+        out["text"], ["officer", "CBI", "digital", "arrest", "OTP", "transfer", "account"]
+    )
     assert len(hits) >= 6, (hits, out)
     assert out["level"] in ("HIGH", "CRITICAL")
     assert "DIGITAL_ARREST_PHRASE" in out["codes"]

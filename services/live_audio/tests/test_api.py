@@ -197,7 +197,10 @@ def test_scam_script_raises_risk_with_warnings_and_segment_links(make_client, en
     assert all("at_s" in w and "wall" in w for w in all_warnings)
     ind = {i["code"]: i for i in j["indicators"]}
     assert "AUTHORITY_IMPERSONATION" in ind and "DIGITAL_ARREST_PHRASE" in ind
-    seg_ids = {s["id"] for s in c.get(f"/api/live-audio/sessions/{sid}", headers=auth()).json()["transcript"]}
+    seg_ids = {
+        s["id"]
+        for s in c.get(f"/api/live-audio/sessions/{sid}", headers=auth()).json()["transcript"]
+    }
     for i in j["indicators"]:
         assert set(i["segment_ids"]) <= seg_ids
         assert i["status"] == "detected_not_confirmed"
@@ -310,7 +313,8 @@ def test_no_transcript_in_logs(make_client, engine, caplog):
     sid = start_session(c)
     send_chunk(c, sid, 0)
     c.post(f"/api/live-audio/sessions/{sid}/end", headers=auth())
-    text = "\n".join(r.getMessage() for r in caplog.records)
+    # server-side records only (the test client's own httpx request log is not the server's)
+    text = "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith("httpx"))
     assert "pineapple" not in text
     assert sid not in text
 
@@ -354,3 +358,70 @@ def test_state_endpoint_for_reconnect(make_client, engine):
     assert s["transcript"][0]["text"] == "This is officer Sharma from the CBI."
     assert s["risk"]["level"] in ("MEDIUM", "HIGH")
     assert "indicators" in s and "warnings" in s and "actions" in s
+
+
+# ------------------------------------------------------------------ LLM explanation
+def _run_scam(c):
+    sid = start_session(c)
+    out = [send_chunk(c, sid, i, start_ms=4000 * i).json() for i in range(3)]
+    return sid, out
+
+
+def test_llm_explanation_never_changes_score(make_client, engine):
+    import time as _t
+
+    import httpx
+
+    from live_audio.explain import OllamaExplainer
+
+    prompts = []
+
+    def h(req: httpx.Request):
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": []})
+        prompts.append(req.content.decode())
+        return httpx.Response(200, json={"response": "The caller used scam phrases. Hang up."})
+
+    engine.script = list(SCAM)
+    plain = make_client()
+    _, base = _run_scam(plain)
+    engine.script = list(SCAM)
+    ex = OllamaExplainer("http://ollama.test", transport=httpx.MockTransport(h))
+    c = make_client(explainer=ex)
+    sid, out = _run_scam(c)
+    assert [o["risk"]["score"] for o in out] == [o["risk"]["score"] for o in base]
+    assert [o["risk"]["level"] for o in out] == [o["risk"]["level"] for o in base]
+    for _ in range(50):
+        s = c.get(f"/api/live-audio/sessions/{sid}", headers=auth()).json()
+        if s["explanation"]["llm"]:
+            break
+        _t.sleep(0.02)
+    assert s["explanation"]["llm"] == "The caller used scam phrases. Hang up."
+    assert s["explanation"]["llm_status"] == "available"
+    assert s["risk"]["score"] == base[-1]["risk"]["score"]
+    # rate limited: one call within 20 s even though the level rose more than once
+    assert len(prompts) == 1
+    assert "officer Sharma" not in prompts[0]  # only indicators + excerpts, not the transcript
+    caps = c.get("/api/live-audio/capabilities", headers=auth()).json()
+    assert caps["llm"]["status"] == "reachable"
+
+
+def test_llm_unreachable_degrades(make_client, engine):
+    import httpx
+
+    from live_audio.explain import OllamaExplainer
+
+    def down(req):
+        raise httpx.ConnectError("refused")
+
+    engine.script = list(SCAM)
+    c = make_client(
+        explainer=OllamaExplainer("http://127.0.0.1:9", transport=httpx.MockTransport(down))
+    )
+    sid, out = _run_scam(c)
+    assert out[-1]["risk"]["level"] == "CRITICAL"
+    assert out[-1]["explanation"]["rules"]
+    assert (
+        c.get("/api/live-audio/capabilities", headers=auth()).json()["llm"]["status"]
+        == "unreachable"
+    )

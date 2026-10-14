@@ -32,7 +32,9 @@ class FakeModel:
     def transcribe(self, audio, **kw):
         self.calls.append(kw)
         segs = self.segs or [
-            SimpleNamespace(start=0.0, end=1.0, text=" hello there", avg_logprob=-0.2, no_speech_prob=0.01)
+            SimpleNamespace(
+                start=0.0, end=1.0, text=" hello there", avg_logprob=-0.2, no_speech_prob=0.01
+            )
         ]
         return iter(segs), SimpleNamespace(language=kw.get("language"), language_probability=0.9)
 
@@ -83,8 +85,16 @@ def test_filters_no_speech_and_prompt_echo():
     segs = [
         SimpleNamespace(start=0.0, end=1.0, text=" ", avg_logprob=-0.1, no_speech_prob=0.0),
         SimpleNamespace(start=1.0, end=2.0, text=" mumble", avg_logprob=-1.5, no_speech_prob=0.9),
-        SimpleNamespace(start=2.0, end=3.0, text=" " + HI_PROMPT, avg_logprob=-0.1, no_speech_prob=0.1),
-        SimpleNamespace(start=3.0, end=4.0, text=" Aap digital arrest mein ho", avg_logprob=-0.3, no_speech_prob=0.1),
+        SimpleNamespace(
+            start=2.0, end=3.0, text=" " + HI_PROMPT, avg_logprob=-0.1, no_speech_prob=0.1
+        ),
+        SimpleNamespace(
+            start=3.0,
+            end=4.0,
+            text=" Aap digital arrest mein ho",
+            avg_logprob=-0.3,
+            no_speech_prob=0.1,
+        ),
     ]
     e, _ = make_engine(FakeModel(segs=segs))
     r = e.transcribe(pcm_tone(1.0), 16000, "hi")
@@ -127,7 +137,10 @@ def test_whisper_cpp_engine_with_fake_transport():
         assert b"RIFF" in req.content
         return httpx.Response(
             200,
-            json={"segments": [{"start": 0.0, "end": 1.2, "text": " share the OTP"}], "language": "en"},
+            json={
+                "segments": [{"start": 0.0, "end": 1.2, "text": " share the OTP"}],
+                "language": "en",
+            },
         )
 
     e = WhisperCppHttpEngine("http://127.0.0.1:8178", transport=httpx.MockTransport(h))

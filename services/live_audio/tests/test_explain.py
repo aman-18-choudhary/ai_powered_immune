@@ -10,8 +10,11 @@ FACTS = {
     "level": "HIGH",
     "score": 64,
     "indicators": [
-        {"code": "DIGITAL_ARREST_PHRASE", "label": "Says you are under 'digital arrest'",
-         "excerpts": ["under digital arrest"]},
+        {
+            "code": "DIGITAL_ARREST_PHRASE",
+            "label": "Says you are under 'digital arrest'",
+            "excerpts": ["under digital arrest"],
+        },
         {"code": "SPOKEN_PAYMENT_ID", "label": "UPI ID mentioned", "excerpts": ["ramesh@ybl"]},
     ],
 }
@@ -35,7 +38,12 @@ async def test_present():
         if req.url.path == "/api/tags":
             return httpx.Response(200, json={"models": []})
         seen["body"] = json.loads(req.content)
-        return httpx.Response(200, json={"response": "The caller used phrases common in scam calls. Hang up and call your bank."})
+        return httpx.Response(
+            200,
+            json={
+                "response": "The caller used phrases common in scam calls. Hang up and call your bank."
+            },
+        )
 
     ex = OllamaExplainer("http://ollama.local:11434", transport=transport(h))
     r = await ex.explain(FACTS)

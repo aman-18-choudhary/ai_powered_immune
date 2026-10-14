@@ -162,7 +162,9 @@ class FasterWhisperEngine:
                 )  # fmt: skip
             except Exception as e:  # not cached, corrupt, unsupported CPU...
                 self._failed = "model_not_available"
-                log.warning("faster-whisper model %s unavailable (%s)", self.model, type(e).__name__)
+                log.warning(
+                    "faster-whisper model %s unavailable (%s)", self.model, type(e).__name__
+                )
                 raise SttUnavailable(self._failed) from None
             log.info("faster-whisper model %s loaded", self.model)
             return self._model
