@@ -4,7 +4,10 @@ The console's backend: one Python process that runs the platform's **real servic
 exposes it through the `/api` REST + `/api/stream` WebSocket contract described in
 `docs/superpowers/specs/2026-10-10-console-and-demo-server-design.md`.
 
-**Everything is simulated.** (`scenario_kind: "hero_hard_case"` and `scenario_note` say so on the stream and in `/demo/state`: the hero run is a constructed hard case.) Transactions, calls, victims, mules and banks come from
+**Everything is simulated, except the live microphone feature** (`/api/live-audio`, below),
+which processes real audio from the user's own microphone.
+
+**The scenario is simulated.** (`scenario_kind: "hero_hard_case"` and `scenario_note` say so on the stream and in `/demo/state`: the hero run is a constructed hard case.) Transactions, calls, victims, mules and banks come from
 `sim-engine`; the hero scenario is a constructed hard case; benchmark numbers are simulator-only.
 `GET /api/demo/state` and every REST body carry `"simulated": true`.
 
@@ -79,6 +82,7 @@ officer and admin buckets are keyed per token subject.
 | `GET /geo/hotspots` | analyst, officer, admin | cells (city, lat, lon, `count`, `prev_count`, `trend`) and cash-out points |
 | `GET /benchmark/summary` | any | the bundled benchmark JSON; strong `ETag` (SHA-256 of the body), `If-None-Match` gives `304` |
 | `POST /citizen/assess` `{message, lang?}` | any | see Citizen assistant |
+| `GET /live-audio/capabilities`, `POST /live-audio/sessions`, `POST /live-audio/sessions/{id}/chunks?seq=`, `GET /live-audio/sessions/{id}`, `POST /live-audio/sessions/{id}/end` | any (owner-only sessions) | see Live microphone |
 
 Examples:
 
@@ -198,6 +202,22 @@ true for empty text, text over 4,000 characters (the first 4,000 are scored), an
 `lang`, fewer than four words, a score within 0.08 of a threshold, or a rules-only scorer. The
 message is scored in memory; it is not stored, logged (only its length is) or echoed.
 
+### Live microphone (real audio)
+
+Mounted from `services/live_audio` (`build_router`) with this server's token check (any role: it
+is the caller's own microphone). Session owner = token subject; caps and the chunk rate limit are
+keyed by client address for citizen tokens (free to mint) and by subject otherwise, and replace
+the per-role API limit on these routes. The global 64 KiB body cap is raised to 512 KiB only for
+`/api/live-audio/sessions/{id}/chunks` (15 s of 16 kHz PCM16 is 480,000 bytes). Chunks are
+transcribed locally by Whisper (`LIVE_STT_ENGINE`, `LIVE_STT_MODEL`; model loaded in a worker
+thread when the first session is created) and analysed with the same call-guard `Scorer` object
+the engine loads for the scenario. Mode `incremental_chunked` (about 4 s chunks, about 1 s
+processing each on CPU with `base`), not streaming. Audio is never written to disk; transcripts
+are not logged or persisted and are deleted on `/end` or after 10 idle minutes. Responses carry
+no `simulated` flag. STT or scorer failures are reported as `unavailable` / `stale`, never as low
+risk. Details, measured latency, language caveats and the threat model:
+[`services/live_audio/README.md`](../live_audio/README.md).
+
 ### Ring graph, takedown and geography
 
 `ring.py` builds an account graph from the scenario's own transactions (accounts keyed by the
@@ -224,6 +244,8 @@ simulated citizen is exposed.
 | `DEMO_CLIENT_QUEUE` | 256 | per-WebSocket queue |
 | `DEMO_MAX_WS_CLIENTS` | 50 | concurrent stream clients |
 | `LOG_LEVEL` | `INFO` | |
+| `LIVE_STT_ENGINE`, `LIVE_STT_MODEL` | `faster_whisper`, `base` | live microphone STT (`none` disables it; a model must already be cached, it is never downloaded); more in the live_audio README |
+| `OLLAMA_URL`, `OLLAMA_MODEL` | unset, `qwen2.5:3b` | optional local LLM wording for live-microphone explanations (never changes the score) |
 
 ## Security notes
 

@@ -4,7 +4,7 @@ Premium, animated frontend for the demo server. Seven pages, all in one shell:
 
 | Route | Page | What it does |
 |---|---|---|
-| `/` | Live Interception | cinematic scenario player (about 75 s at 1x), phone, two bank consoles, map, finale with verify |
+| `/` | Live Interception | **Live microphone** (default): consent, real mic capture, live transcript, risk, indicators, warnings, safety actions (real audio, see below). **Simulated scenario (demo)** tab (`/?mode=simulation`): the cinematic scenario player (about 75 s at 1x), phone, two bank consoles, map, finale with verify |
 | `/command` | Command Centre | KPIs, India map (size-scaled cells, mule-hop arcs), incident feed, ring takedown simulator |
 | `/analyst` | Analyst Console | deadline-sorted virtualised hold queue, countdown rings, reason meanings, upgrade history, guarded resolve, optimistic UI |
 | `/evidence` | Evidence | animated hash chain, entry inspector (hash recomputed in the browser), case builder, package export (ETag), verify |
@@ -12,14 +12,44 @@ Premium, animated frontend for the demo server. Seven pages, all in one shell:
 | `/insights` | Insights | benchmark with Wilson CIs, rail table + NEFT callout, ablations, delay sensitivity, hero case, prevalence table |
 | `/about` | About | animated architecture diagram, real vs simulated, limits, how to run, credits |
 
-Everything on screen is simulated; the SIMULATION pill and "About these numbers" popover are always visible.
+Everything on screen is simulated except the Live microphone mode; the SIMULATION pill and "About these numbers" popover are always visible.
+
+## Live microphone mode
+
+`src/components/live/LiveMonitor.tsx`, state in `src/state/liveAudio.ts`, audio helpers in
+`src/lib/liveAudio/` (capture via AudioWorklet with a ScriptProcessor fallback, streaming
+resampler to 16 kHz, Int16 + WAV encoder, chunker), strings in `src/lib/i18n/liveAudio.ts` (en, hi).
+
+* The microphone is requested only when the user ticks the consent box and presses **Start
+  monitoring**. Friendly messages for permission denied (with how to re-enable), no microphone,
+  microphone in use, insecure context (https or localhost needed) and server/STT unavailable.
+* Chunks (`chunk_ms` from the server, default 4 s) go through an ordered upload queue: one request
+  at a time, seq numbers, retry with backoff on network errors, 5xx and 429; a lost session stops
+  monitoring. **Pause** disables the track and stops sending; **Resume**; **Stop** stops every
+  track, closes the AudioContext, sends the last partial chunk, ends the server session and drops
+  audio buffers. Leaving the page or switching tab stops the microphone.
+* Everything displayed comes from server responses: transcript with timestamps and language,
+  segments highlighted and linked to the indicators they triggered, risk gauge (uncalibrated
+  0-100) with a per-chunk sparkline, indicators labelled "detected, not confirmed", timestamped
+  warnings (announced through an `aria-live` region), static safety actions, service status,
+  processing errors. No transactions, holds, mule matches or analyst actions appear here.
+* Browser test: `e2e/live-audio.spec.ts` (needs a server with `LIVE_STT_ENGINE=faster_whisper` and
+  `LIVE_AUDIO_WAV` = a 16 kHz mono speech WAV; Chromium's fake device, or
+  `LIVE_E2E_DEVICE_SHIM=1` where the fake capture device does not work, which replaces only the
+  device with a MediaStream playing the WAV) and `e2e/live-audio-denied.spec.ts`.
+
+```
+say -v Samantha -o scam.aiff "This is officer Sharma from the CBI. You are under digital arrest. Share the OTP now."
+ffmpeg -i scam.aiff -ar 16000 -ac 1 -c:a pcm_s16le scam-16k.wav
+LIVE_AUDIO_WAV=$PWD/scam-16k.wav CONSOLE_URL=http://localhost:8080 npx playwright test e2e/live-audio.spec.ts e2e/live-audio-denied.spec.ts
+```
 
 ## Shortcuts
 
 | Where | Keys |
 |---|---|
 | Anywhere | `Ctrl/Cmd + K` command palette (pages, start/pause demo, theme, motion) |
-| Live | `Space` play/pause, `Left/Right` step, `F` fullscreen |
+| Live (Simulated scenario tab) | `Space` play/pause, `Left/Right` step, `F` fullscreen |
 | Analyst | `J`/`K` move, `C` confirm mule, `R` release (both ask for a reason note), `?` help |
 
 ## Run

@@ -7,6 +7,14 @@ the ring, and seals the case in a tamper-evident ledger an outside expert can ve
 
 > Everything in this repository runs on simulator-generated data. No real calls, customers,
 > banks or telecom feeds are involved, and no number below is a real-world performance claim.
+> The one exception is opt-in: **Live Interception -> Live microphone** (the console's default
+> mode) analyses real speech from your own microphone after an explicit consent step. Audio is
+> sent in about 4 s chunks to the demo server, transcribed locally by Whisper (Hindi, English,
+> Hinglish; quality limited on CPU), scored by the same call-guard rules and classifier, and
+> shown as a live transcript, risk level and indicators (detected, not confirmed fraud). It is
+> chunked incremental analysis, not streaming, and nothing is stored. The cinematic scenario
+> player below is the **Simulated scenario (demo)** tab. See
+> [services/live_audio/README.md](services/live_audio/README.md).
 
 ![Live interception: the hero scenario mid-run](docs/screenshots/player-live-1440x900-dark.png)
 
