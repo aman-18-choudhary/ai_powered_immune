@@ -38,6 +38,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool, StaticPool
 
+from . import migrations
 from .identity import Identity
 from .schema import (
     admin_audit,
@@ -47,13 +48,11 @@ from .schema import (
     complaint_status_history,
     complaints,
     idempotency_keys,
-    metadata,
     users,
 )
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
 LAST_LOGIN_REFRESH = timedelta(minutes=5)
-ADVISORY_LOCK_SCHEMA = 727201
 ADVISORY_LOCK_ADMIN = 727202
 
 TRANSITIONS: dict[str, frozenset[str]] = {
@@ -131,21 +130,24 @@ class ComplaintStore:
 
     # ------------------------------------------------------------------ infra
     def create_schema(self) -> None:
-        """Idempotent DDL; on Postgres concurrent starters serialise on an advisory lock."""
-        with self.engine.begin() as conn:
-            if conn.dialect.name == "postgresql":
-                conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": ADVISORY_LOCK_SCHEMA})
-            metadata.create_all(conn)
-            self._ensure_additive_columns(conn)
+        """Bring the schema to the latest version (see ``complaints.migrations``)."""
+        self.migrate()
 
-    @staticmethod
-    def _ensure_additive_columns(conn: Connection) -> None:
-        """Add columns introduced after a table was first created (idempotent, additive only)."""
-        from sqlalchemy import inspect
+    def migrate(self) -> list[int]:
+        """Apply pending versioned migrations in one transaction; on Postgres concurrent
+        starters serialise on an advisory lock. Returns the versions applied by this call."""
+        if self._lock:
+            self._lock.acquire()
+        try:
+            with self.engine.begin() as conn:
+                return migrations.run(conn)
+        finally:
+            if self._lock:
+                self._lock.release()
 
-        cols = {c["name"] for c in inspect(conn).get_columns("analyses")}
-        if "detail" not in cols:
-            conn.execute(text("ALTER TABLE analyses ADD COLUMN detail JSON"))
+    def schema_version(self) -> int | None:
+        with self.engine.connect() as c:
+            return migrations.current_version(c)
 
     def close(self) -> None:
         self.engine.dispose()

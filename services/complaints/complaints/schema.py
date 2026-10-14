@@ -82,6 +82,17 @@ class Money(TypeDecorator):
 
 metadata = MetaData()
 
+# Versioned migrations (``complaints.migrations``): one row per applied version. Part of
+# ``metadata`` so a test ``drop_all`` also forgets the applied versions.
+schema_migrations = Table(
+    "schema_migrations", metadata,
+    Column("version", Integer, primary_key=True, autoincrement=False),
+    Column("name", String(100), nullable=False),
+    Column("applied_at", UTCDateTime, nullable=False),
+)  # fmt: skip
+
+# Columns added after the first release carry a comment naming the migration that adds them to an
+# existing database (``complaints.migrations``); ``create_all`` creates them on a fresh one.
 users = Table(
     "users", metadata,
     Column("id", String(36), primary_key=True),
@@ -203,8 +214,7 @@ analyses = Table(
     Column("limitations", JSON, nullable=False),
     Column("status", String(16), nullable=False),
     # pipeline v2 extras (stages, reasons, URL/entity detail, LLM text). Added after the first
-    # release: NULL for rows written by v1; ``ComplaintStore.create_schema`` adds the column to
-    # an existing table (additive, idempotent).
+    # release: NULL for rows written by v1; migration 2 adds the column to an existing table.
     Column("detail", JSON),
     UniqueConstraint("complaint_id", "version", name="uq_analysis_version"),
     CheckConstraint(_in("status", ANALYSIS_STATUSES), name="ck_analysis_status"),
