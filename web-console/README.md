@@ -12,7 +12,28 @@ Premium, animated frontend for the demo server. Seven pages, all in one shell:
 | `/insights` | Insights | benchmark with Wilson CIs, rail table + NEFT callout, ablations, delay sensitivity, hero case, prevalence table |
 | `/about` | About | animated architecture diagram, real vs simulated, limits, how to run, credits |
 
-Everything on screen is simulated except the Live microphone mode; the SIMULATION pill and "About these numbers" popover are always visible.
+Everything on the simulator pages is simulated except the Live microphone mode; the SIMULATION pill and "About these numbers" popover are visible on every simulator page.
+
+## Accounts and complaints (real records)
+
+The sign-in screen has two parts: **Sign in to report and track complaints** (the real complaints
+service at `/api/complaints`) and **Simulation demo** (the demo role cards above, unchanged, no
+password, no real data). Account pages show no SIMULATION pill.
+
+| Route | Who (effective role from `GET /auth/session`) | What |
+|---|---|---|
+| `/sign-in` | signed out | Citizen or Investigator entry; method from `GET /auth/config`: Clerk (`@clerk/clerk-react`, its own lazily loaded chunk, configured only with the publishable key from `/auth/config`) or the local email + 6-digit code flow ("the code is printed in the server terminal, not emailed"). Investigator entry calls `POST /auth/entry`; a 403 shows the service's message and you stay a citizen |
+| `/me` | CITIZEN | stats (`/me/stats`), complaint history (status/category filters, pagination, empty state), alerts (unread count, mark as read), official resources (1930, cybercrime.gov.in, your bank) |
+| `/me/complaints/new` | CITIZEN | required category/title/description; every other field labelled optional; client checks mirror the service, 422 errors land on their fields; `Idempotency-Key`; evidence uploaded one file at a time with stored / rejected / failed per file |
+| `/me/complaints/:id`, `/investigator/complaints/:id` | owner / staff | all fields ("Not provided" when empty), status history, evidence download (authorised fetch) / remove (owner while SUBMITTED, admin) / add, analysis (uncalibrated score, sources, unavailable capabilities, Run analysis), staff status update with note |
+| `/me/profile` | any | display name and `allow_case_matching` (`PATCH /me`) |
+| `/investigator` | INVESTIGATOR, ADMIN | queue with search and filters (status, category, risk level, dates, city, state), sort, pagination |
+| `/admin` | ADMIN | users (role change with confirmation, activate/deactivate, service errors shown), audit log, service health |
+
+The console never sends or stores a role: the local token is kept in `sessionStorage`
+(`ssi.account`), Clerk keeps its own session, and the role is re-read from `/auth/session` on every
+load. Sign out clears it. Code: `src/lib/complaints/`, `src/state/account.ts`, `src/app/auth/`,
+`src/app/gates.tsx`, `src/components/complaints/`, `src/routes/account/`.
 
 ## Live microphone mode
 
@@ -78,6 +99,7 @@ Admin can press **Confirm mule**; Citizen is read-only here.
 | `npm run typecheck` / `npm run lint` | strict TS (`noUncheckedIndexedAccess`) / ESLint (typescript-eslint) |
 | `npm test` | Vitest + Testing Library (unit + component, uses the recorded fixture) |
 | `npm run test:e2e` | Playwright against a running console + demo server (`CONSOLE_URL`, default 5173): smoke (golden path, about 75 s) and `pages.spec.ts` (analyst, evidence, citizen, insights, palette, 404, axe-core in dark and light; about 2.5 minutes in all). Any console error or warning fails a test |
+| `e2e/complaints.spec.ts` | account flows against a real demo server in local sign-in mode. The server must run with the TEST-ONLY `COMPLAINTS_LOCAL_AUTH_OUTBOX=<file>` (codes are also written there; refused outside local/demo mode), `INVESTIGATOR_ALLOWLIST=investigator.e2e@example.org` and, for the admin test, `ADMIN_BOOTSTRAP_EMAILS=admin.e2e@example.org`; run with `COMPLAINTS_OUTBOX=<file> E2E_ADMIN_EMAIL=admin.e2e@example.org`. Start a fresh server per run: local sign-in allows 20 code requests per address per 15 minutes |
 | `node e2e/shots.mjs` | screenshots of every page x 3 viewports x 2 themes into `docs/screenshots/` (`ONLY=`, `THEMES=`, `OUT=`); then `python3 e2e/optimise-shots.py` |
 
 ## Structure
