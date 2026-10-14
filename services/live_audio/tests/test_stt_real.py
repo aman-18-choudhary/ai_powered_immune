@@ -60,7 +60,7 @@ def synth(tmp: Path, voice: str, text: str, name: str) -> bytes:
          "-c:a", "pcm_s16le", str(wav)],
         check=True,
     )  # fmt: skip
-    return parse_wav(wav.read_bytes())
+    return parse_wav(wav.read_bytes(), max_seconds=600, max_bytes=64 * 1024 * 1024)
 
 
 def fuzzy_hits(transcript: str, words: list[str]) -> list[str]:
