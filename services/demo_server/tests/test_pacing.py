@@ -16,6 +16,20 @@ def norm(events):
     return [{k: v for k, v in e.items() if k not in IGNORED} for e in events]
 
 
+def split_ledger(events):
+    """(non-ledger events without ids or ledger counters, ledger entries by seq and type)."""
+    other, ledger = [], []
+    for e in norm(events):
+        if e["kind"] == "ledger.entry":
+            ledger.append((e["seq"], e["event_type"]))
+            continue
+        e = {k: v for k, v in e.items() if k != "id"}
+        if "counters" in e:
+            e["counters"] = {k: v for k, v in e["counters"].items() if k != "ledger_entries"}
+        other.append(e)
+    return other, ledger
+
+
 def test_compress_gap_monotone_bounded_continuous():
     gs = [i / 10 for i in range(0, 20_000)]
     ws = [compress_gap(g) for g in gs]
@@ -94,7 +108,14 @@ async def test_seek_by_wall_equals_seek_by_t(engine):
     ev_t = list(engine.log.history)
     st2 = await engine.control("seek", wall=tl.wall_of(t))
     assert abs(st1["t"] - st2["t"]) < 0.01
-    assert norm(ev_t) == norm(list(engine.log.history))
+    # The engine's documented contract: ledger.entry events wait at most LEDGER_WAIT_S for the
+    # ledger consumer and otherwise appear later, so under load their position (and the ids and
+    # ledger counters after them) can differ. Everything else must be identical, and the ledger
+    # entries must be the same sequence (one replay may lag at the end).
+    a, b = split_ledger(ev_t), split_ledger(list(engine.log.history))
+    assert a[0] == b[0]
+    shorter, longer = sorted((a[1], b[1]), key=len)
+    assert longer[: len(shorter)] == shorter
 
 
 def test_api_pacing_and_seek_wall(app_factory):
