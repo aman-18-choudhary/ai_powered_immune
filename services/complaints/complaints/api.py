@@ -1140,6 +1140,32 @@ def create_app(
             "total": total, "limit": limit, "offset": offset,
         }  # fmt: skip
 
+    @app.get("/models")
+    async def models(user: User) -> dict[str, Any]:
+        """The trained models behind the analysis, from their shipped metrics and model card,
+        with the runtime status seen by this process. Any signed-in role."""
+        throttle("read", user)
+        from .models_info import SYNTHETIC_WARNING, call_guard_entry, category_entry
+
+        if isinstance(analysis_service, ComplaintAnalysisPipeline):
+            cg_rt = await analysis_service.text_scorer_runtime()
+            cat_rt = await analysis_service.category_runtime()
+        else:
+            cg_rt = cat_rt = {"status": "not_used", "reason": "analysis_service_without_models"}
+        cat, cg = await asyncio.gather(
+            asyncio.to_thread(category_entry, cat_rt), asyncio.to_thread(call_guard_entry, cg_rt)
+        )
+        llm = await ollama_client.status()
+        return {
+            "synthetic_data_warning": SYNTHETIC_WARNING,
+            "score_semantics": SCORE_SEMANTICS,
+            "models": [cat, cg],
+            "llm": {
+                "provider": "ollama", **llm,
+                "used_for": "explanation wording only; never the score, level or category",
+            },
+        }  # fmt: skip
+
     # ------------------------------------------------------------------ alerts / stats
     @app.get("/alerts")
     async def list_alerts(

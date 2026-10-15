@@ -325,6 +325,22 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "version": getattr(self._cat, "version", None),
         }  # fmt: skip
 
+    async def text_scorer_runtime(self) -> dict[str, Any]:
+        """Runtime state of the call-guard script classifier (loads the scorer if needed)."""
+        scorer = await self._get_scorer()
+        if scorer is None:
+            return {"status": "unavailable", "reason": self._failed or "not_loadable"}
+        if getattr(scorer, "fallback_mode", False):
+            return {"status": "fallback_rules_only", "reason": "classifier_artifact_not_loaded"}
+        return {"status": "loaded", "reason": None}
+
+    async def category_runtime(self) -> dict[str, Any]:
+        await self._get_category_model()
+        st = self.category_model_status
+        if st["status"] == "loaded":
+            return {"status": "loaded", "reason": None}
+        return {"status": "unavailable", "reason": st["reason"] or "unavailable"}
+
     async def category_health(self) -> dict[str, Any]:
         await self._get_category_model()
         st = self.category_model_status

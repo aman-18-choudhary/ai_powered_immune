@@ -277,7 +277,7 @@ async def test_attachments_listed_as_unanalysed_and_make_partial():
 
 # ------------------------------------------------------------------ Ollama (fake transport)
 def ollama(handler, **kw) -> OllamaClient:
-    return OllamaClient("http://ollama.test:11434", "qwen2.5:3b", 5.0,
+    return OllamaClient("http://localhost:11434", "qwen2.5:3b", 5.0,
                         transport=httpx.MockTransport(handler), **kw)  # fmt: skip
 
 

@@ -16,12 +16,14 @@ a fake HTTP transport.
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -113,11 +115,32 @@ class OllamaClient:
         self._transport = transport
         self._clock = clock
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
-        self._probe_cache: tuple[float, str] | None = None
+        self._probe_cache: tuple[float, tuple[str, list[str]]] | None = None
 
     @property
     def configured(self) -> bool:
         return self.url is not None
+
+    @property
+    def is_local(self) -> bool:
+        """Only a LOCAL Ollama is ever contacted: loopback, ``*.localhost``, a private or
+        link-local IP literal, or a single-label host name (a container on the same compose
+        network, e.g. ``ollama``). Anything else is refused as ``non_local_host``."""
+        if self.url is None:
+            return False
+        try:
+            host = (urlsplit(self.url).hostname or "").casefold()
+        except ValueError:
+            return False
+        if not host:
+            return False
+        if host == "localhost" or host.endswith(".localhost"):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return ip.is_loopback or ip.is_private or ip.is_link_local
+        except ValueError:
+            return "." not in host
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -127,6 +150,8 @@ class OllamaClient:
     async def explain(self, description: str, facts: dict[str, Any]) -> LlmResult:
         if not self.configured:
             return LlmResult("unavailable", None, "not_configured")
+        if not self.is_local:
+            return LlmResult("unavailable", None, "non_local_host")
         prompt = build_prompt(description, facts)
         body = {
             "model": self.model, "prompt": prompt, "stream": False,
@@ -161,19 +186,47 @@ class OllamaClient:
         """``not_configured`` | ``reachable`` | ``unreachable``; cached for 30 s."""
         if not self.configured:
             return "not_configured"
+        if not self.is_local:
+            return "non_local_host"
+        tags = await self._tags()
+        return "reachable" if tags[0] == "ok" else "unreachable"
+
+    async def _tags(self) -> tuple[str, list[str]]:
+        """``GET /api/tags`` (cached 30 s): (``ok`` | ``unreachable`` | ``bad_response``, names).
+        Never called for a non-local host; never pulls or loads a model."""
         now = self._clock()
         if self._probe_cache and now - self._probe_cache[0] < PROBE_TTL_SECONDS:
             return self._probe_cache[1]
-        status = "unreachable"
+        out: tuple[str, list[str]] = ("unreachable", [])
         try:
             async with self._client() as c:
                 r = await asyncio.wait_for(c.get(f"{self.url}/api/tags"), min(self.timeout_s, 5.0))
             if r.status_code == 200:
-                status = "reachable"
+                try:
+                    data = r.json()
+                    models = data.get("models") if isinstance(data, dict) else None
+                    names = [str(m.get("name")) for m in models or [] if isinstance(m, dict)]
+                    out = ("ok", names) if isinstance(models, list) else ("bad_response", [])
+                except ValueError:
+                    out = ("bad_response", [])
         except Exception:  # connection refused, timeout, DNS...
-            status = "unreachable"
-        self._probe_cache = (now, status)
-        return status
+            out = ("unreachable", [])
+        self._probe_cache = (now, out)
+        return out
+
+    async def status(self) -> dict[str, Any]:
+        """``not_configured`` | ``unavailable`` (with a reason) | ``ready`` (the model is pulled
+        on the local server)."""
+        if not self.configured:
+            return {"status": "not_configured", "model": None, "reason": None}
+        if not self.is_local:
+            return {"status": "unavailable", "model": self.model, "reason": "non_local_host"}
+        state, names = await self._tags()
+        if state != "ok":
+            return {"status": "unavailable", "model": self.model, "reason": state}
+        pulled = self.model in names or f"{self.model}:latest" in names
+        return {"status": "ready" if pulled else "unavailable", "model": self.model,
+                "reason": None if pulled else "model_not_pulled"}  # fmt: skip
 
 
 # ----------------------------------------------------------------------------- rules text
