@@ -22,7 +22,14 @@ from sqlalchemy import MetaData, inspect, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateTable
 
-from .schema import EVIDENCE_STATUSES, RISK_LEVELS, analyses, metadata, schema_migrations
+from .schema import (
+    ANALYSIS_STATUSES,
+    EVIDENCE_STATUSES,
+    RISK_LEVELS,
+    analyses,
+    metadata,
+    schema_migrations,
+)
 
 ADVISORY_LOCK_SCHEMA = 727201
 
@@ -184,6 +191,27 @@ def _analyses_critical_level(conn: Connection) -> None:
     _backfill_critical(conn)
 
 
+def _analyses_insufficient_input(conn: Connection) -> None:
+    """Allow status INSUFFICIENT_INPUT (18 characters): Postgres widens the column to 24 and
+    swaps the CHECK; SQLite (no length limits) rebuilds the table with every row."""
+    if conn.dialect.name == "postgresql":
+        length = conn.execute(
+            text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name = 'analyses' AND column_name = 'status'"
+            )
+        ).scalar()
+        if length is not None and int(length) < 24:
+            conn.execute(text("ALTER TABLE analyses ALTER COLUMN status TYPE VARCHAR(24)"))
+    if _check_current(conn, "analyses", "ck_analysis_status", ANALYSIS_STATUSES):
+        return
+    if conn.dialect.name == "postgresql":
+        _swap_pg_check(conn, "analyses", "ck_analysis_status", "status", ANALYSIS_STATUSES,
+                       nullable=False)  # fmt: skip
+    else:
+        _rebuild_sqlite_table(conn, "analyses")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -191,6 +219,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(4, "user_profile_privacy", _user_profile_privacy),
     Migration(5, "evidence_deleted_status", _evidence_deleted_status),
     Migration(6, "analyses_critical_level", _analyses_critical_level),
+    Migration(7, "analyses_insufficient_input", _analyses_insufficient_input),
 )
 LATEST = MIGRATIONS[-1].version
 

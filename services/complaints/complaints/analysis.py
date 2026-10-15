@@ -13,6 +13,7 @@ fails the status is UNAVAILABLE with no level (never LOW).
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -222,6 +223,9 @@ CATEGORY_PRIOR: dict[str, int] = {
 }  # fmt: skip
 URL_ADJUSTMENT_MAX = 25
 UNAVAILABLE_STATES = ("unavailable", "timeout", "error")
+MIN_WORDS = 4  # below this the text models are not run (call-guard's classifier needs 4 words)
+SKIPPED_SHORT = "skipped_insufficient_input"
+_WORD = re.compile(r"\w+")
 _FIELD_NAMES = {
     "suspect_phone": "phone number", "suspicious_url": "URL", "upi_id": "UPI id",
     "amount": "amount", "city": "location", "suspect_email": "email",
@@ -340,6 +344,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             complaint.get("_text_field") or "description",
         )  # fmt: skip
         text = layout.text
+        # fewer than MIN_WORDS words: the text models are not asked and no level is given
+        insufficient = len(_WORD.findall(text)) < MIN_WORDS
         selected = complaint.get("category")
         caps: dict[str, str] = dict(CAPABILITIES_NONE)
         reasons: dict[str, str] = {}
@@ -358,8 +364,11 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         # (a) text scam scoring (call-guard rules + clf-v1 script classifier)
         text_score: int | None = None
         text_version = "text-scorer-unavailable"
-        scorer = await self._get_scorer()
-        if scorer is None:
+        scorer = None if insufficient else await self._get_scorer()
+        if insufficient:
+            caps["text_risk_scorer"] = SKIPPED_SHORT
+            reasons["text_risk_scorer"] = "insufficient_input"
+        elif scorer is None:
             reasons["text_risk_scorer"] = self._failed or "not_installed_or_not_loadable"
         else:
             try:
@@ -371,7 +380,11 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 log.warning("text scoring failed: %s", type(exc).__name__)
                 reasons["text_risk_scorer"] = "scoring_error"
         rules_version = _rules_version()
-        if text_score is None:
+        if insufficient:
+            stage("text_rules", "rule", pv.RULES_METHOD, "skipped", "insufficient_input")
+            stage("script_classifier", "ml", pv.classifier_method(None), "skipped",
+                  "insufficient_input")  # fmt: skip
+        elif text_score is None:
             why = reasons["text_risk_scorer"]
             stage("text_rules", "rule", pv.RULES_METHOD, "unavailable", why)
             stage("script_classifier", "ml", pv.classifier_method(None), "unavailable", why)
@@ -391,9 +404,12 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         classification: str | None = None
         confidence: float | None = None
         cat_detail: dict[str, Any] | None = None
-        cat_model = await self._get_category_model()
+        cat_model = None if insufficient else await self._get_category_model()
         cat_method = str(getattr(cat_model, "version", None) or pv.CATEGORY_METHOD)
-        if cat_model is None:
+        if insufficient:
+            caps["category_classifier"] = SKIPPED_SHORT
+            reasons["category_classifier"] = "insufficient_input"
+        elif cat_model is None:
             reasons["category_classifier"] = self._cat_reason or "unavailable"
         else:
             try:
@@ -415,7 +431,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             except Exception as exc:
                 log.warning("category classification failed: %s", type(exc).__name__)
                 reasons["category_classifier"] = "inference_error"
-        if cat_detail is not None:
+        if insufficient:
+            stage("category_classifier", "ml", cat_method, "skipped", "insufficient_input")
+        elif cat_detail is not None:
             stage("category_classifier", "ml", cat_method, "ran", version=versions["category"])
         else:
             stage("category_classifier", "ml", cat_method, "unavailable",
@@ -487,8 +505,11 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         )  # fmt: skip
         level: str | None = band_v2(risk) if risk is not None else None
         withheld = False
-        if text_score is None and level in (None, "LOW"):
-            risk, level, withheld = None, None, True  # never LOW without the text scorer
+        if insufficient:
+            risk, level = None, None
+        elif (text_score is None or cat_detail is None) and level in (None, "LOW"):
+            # never LOW unless both core text stages (scorer and category model) ran
+            risk, level, withheld = None, None, True
 
         # status: applicable stages that were not available are named
         applicable_failed: list[str] = []
@@ -516,6 +537,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "absent_fields": absent,
             "unavailable": [c.replace("_", " ") for c in applicable_failed],
             "category_model_version": versions["category"],
+            "insufficient_input": insufficient,
         }  # fmt: skip
         parts = explanation_parts(facts)
         explanation = " ".join(p["text"] for p in parts)
@@ -525,7 +547,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         llm_configured = bool(self._explainer is not None and self._explainer.configured)
         llm_method = f"ollama:{getattr(self._explainer, 'model', None) or 'not_configured'}"
         if llm_configured:
-            if not scored:
+            if not scored or insufficient:
                 caps["llm_explanation"] = "skipped_no_input"
                 reasons["llm_explanation"] = "nothing_to_explain"
             else:
@@ -552,7 +574,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                   reasons.get("llm_explanation"))  # fmt: skip
 
         status = "UNAVAILABLE" if not scored else ("PARTIAL" if applicable_failed else "COMPLETED")
-        if status == "UNAVAILABLE":
+        if insufficient:
+            status = "INSUFFICIENT_INPUT"
+        if status in ("UNAVAILABLE", "INSUFFICIENT_INPUT"):
             risk, level = None, None
 
         # limitations (exact, no overclaims)
@@ -573,8 +597,15 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         ]
         if withheld:
             limitations.append(
-                "No risk level is given because the text scorer did not run and the other "
-                "evidence did not reach MEDIUM; this is not a finding that the report is low risk."
+                "No risk level is given because a core text stage (the text scorer or the "
+                "category model) did not run and the other evidence did not reach MEDIUM; this "
+                "is not a finding that the report is low risk."
+            )
+        if insufficient:
+            limitations.append(
+                f"The text has fewer than {MIN_WORDS} words, so the text scorer and the category "
+                "model were not run and no risk level is given; this is not a finding that the "
+                "message is safe."
             )
         for cap in applicable_failed:
             limitations.append(

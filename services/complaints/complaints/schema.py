@@ -38,7 +38,8 @@ STATUSES = ("SUBMITTED", "UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "REJECTED"
 # "deleted": removed by the complaint owner (while SUBMITTED) or an admin; the file is gone and the
 # row stays for the audit trail (migration 5 widens the CHECK on an existing database)
 EVIDENCE_STATUSES = ("stored", "rejected", "deleted")
-ANALYSIS_STATUSES = ("COMPLETED", "PARTIAL", "UNAVAILABLE")
+# INSUFFICIENT_INPUT: migration 7 widens the CHECK (and the column on Postgres)
+ANALYSIS_STATUSES = ("COMPLETED", "PARTIAL", "UNAVAILABLE", "INSUFFICIENT_INPUT")
 # CRITICAL: migration 6 widens the CHECK on an existing database (before it, CRITICAL was stored
 # as HIGH with the exact level in ``analyses.detail``; the migration backfills those rows)
 RISK_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
@@ -228,7 +229,7 @@ analyses = Table(
     Column("explanation", Text),
     Column("recommended_actions", JSON, nullable=False),
     Column("limitations", JSON, nullable=False),
-    Column("status", String(16), nullable=False),
+    Column("status", String(24), nullable=False),  # migration 7 widens 16 -> 24 on Postgres
     # pipeline v2 extras (stages, reasons, URL/entity detail, LLM text). Added after the first
     # release: NULL for rows written by v1; migration 2 adds the column to an existing table.
     Column("detail", JSON),
