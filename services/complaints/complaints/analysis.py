@@ -331,18 +331,31 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         }  # fmt: skip
 
     async def analyse(self, complaint: dict[str, Any]) -> AnalysisOutcome:  # noqa: C901
-        from .explain import rules_explanation
+        from . import provenance as pv
+        from .explain import explanation_parts
         from .signals import analyse_url, check_entities, context_fields
 
-        text = f"{complaint.get('title') or ''}\n{complaint.get('description') or ''}".strip()
-        text = text[:MAX_TEXT_CHARS]
+        layout = pv.TextLayout(
+            complaint.get("title"), complaint.get("description"), MAX_TEXT_CHARS,
+            complaint.get("_text_field") or "description",
+        )  # fmt: skip
+        text = layout.text
         selected = complaint.get("category")
         caps: dict[str, str] = dict(CAPABILITIES_NONE)
         reasons: dict[str, str] = {}
         indicators: list[dict[str, Any]] = []
         limitations: list[str] = []
+        versions: dict[str, str | None] = {
+            "call_guard_rules": None, "call_guard_classifier": None, "category": None, "llm": None,
+        }  # fmt: skip
+        stages: list[dict[str, Any]] = []
 
-        # (a) text scam scoring (call-guard)
+        def stage(name: str, source: str, method: str, status: str, reason: str | None = None,
+                  version: str | None = None) -> None:  # fmt: skip
+            stages.append({"stage": name, "source": source, "method": method, "status": status,
+                           "reason": reason, "version": version})  # fmt: skip
+
+        # (a) text scam scoring (call-guard rules + clf-v1 script classifier)
         text_score: int | None = None
         text_version = "text-scorer-unavailable"
         scorer = await self._get_scorer()
@@ -352,21 +365,34 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             try:
                 score, rs, text_version = await asyncio.to_thread(scorer.score_text, text)
                 text_score = max(0, min(100, round(float(score) * 100)))
-                indicators += [
-                    {"code": r.code, "weight": r.weight, "text": r.detail or _humanise(r.code),
-                     "source": "call_guard"}
-                    for r in rs if r.code != "NO_RISK_INDICATORS"
-                ]  # fmt: skip
+                indicators += pv.tag_call_guard(list(rs), layout, text_version, _humanise)
                 caps["text_risk_scorer"] = "available"
             except Exception as exc:
                 log.warning("text scoring failed: %s", type(exc).__name__)
                 reasons["text_risk_scorer"] = "scoring_error"
+        rules_version = _rules_version()
+        if text_score is None:
+            why = reasons["text_risk_scorer"]
+            stage("text_rules", "rule", pv.RULES_METHOD, "unavailable", why)
+            stage("script_classifier", "ml", pv.classifier_method(None), "unavailable", why)
+        else:
+            versions["call_guard_rules"] = rules_version
+            stage("text_rules", "rule", pv.RULES_METHOD, "ran", version=rules_version)
+            if text_version == rules_version:  # the scorer answered rules-only
+                why = "fallback_rules_only" if getattr(scorer, "fallback_mode", False) else (
+                    "classifier_inference_error")  # fmt: skip
+                stage("script_classifier", "ml", pv.classifier_method(None), "unavailable", why)
+            else:
+                versions["call_guard_classifier"] = text_version
+                stage("script_classifier", "ml", pv.classifier_method(text_version), "ran",
+                      version=text_version)  # fmt: skip
 
         # (b) category classification with abstention
         classification: str | None = None
         confidence: float | None = None
         cat_detail: dict[str, Any] | None = None
         cat_model = await self._get_category_model()
+        cat_method = str(getattr(cat_model, "version", None) or pv.CATEGORY_METHOD)
         if cat_model is None:
             reasons["category_classifier"] = self._cat_reason or "unavailable"
         else:
@@ -374,35 +400,56 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 pred = await asyncio.to_thread(cat_model.predict, text)
                 classification, confidence = pred.label, pred.confidence
                 caps["category_classifier"] = "available"
+                top3 = [{"category": c, "score": p} for c, p in pred.top[:3]]
                 cat_detail = {
                     "label": pred.label, "abstained": pred.abstained,
-                    "top": [{"category": c, "score": p} for c, p in pred.top],
+                    "top": top3, "top_categories": top3,
                     "model_version": cat_model.version,
                     "min_confidence": cat_model.min_confidence,
+                    "abstention_threshold": cat_model.min_confidence,
                     "trained_on": "synthetic data only",
+                    "source": "ml", "method": cat_method,
+                    "evidence": {"type": "whole_text", "field": layout.field_label},
                 }  # fmt: skip
+                versions["category"] = cat_model.version
             except Exception as exc:
                 log.warning("category classification failed: %s", type(exc).__name__)
                 reasons["category_classifier"] = "inference_error"
+        if cat_detail is not None:
+            stage("category_classifier", "ml", cat_method, "ran", version=versions["category"])
+        else:
+            stage("category_classifier", "ml", cat_method, "unavailable",
+                  reasons["category_classifier"])  # fmt: skip
 
         # (c) URL heuristics (offline)
         url = complaint.get("suspicious_url")
+        url_field = complaint.get("_url_field") or "suspicious_url"
         url_analysis: dict[str, Any] | None = None
         if url:
             url_analysis = analyse_url(str(url))
             ok = url_analysis["status"] == "analysed"
             caps["url_heuristics"] = "available" if ok else "unavailable"
-            if url_analysis["status"] != "analysed":
+            if not ok:
                 reasons["url_heuristics"] = "url_unparseable"
+            url_analysis["indicators"] = [
+                pv.tag_url(i, url_field, url_analysis.get("host"))
+                for i in url_analysis["indicators"]
+            ]
             indicators += url_analysis["indicators"]
+            stage("url_heuristics", "rule", pv.URL_METHOD, "ran" if ok else "unavailable",
+                  None if ok else "url_unparseable")  # fmt: skip
         else:
             caps["url_heuristics"] = "skipped_no_input"
+            stage("url_heuristics", "rule", pv.URL_METHOD, "skipped", "no_url")
         caps["url_fetch_reputation"] = "unavailable"
         reasons["url_fetch_reputation"] = "no_network_lookup_by_design"
 
         # (d) entity and format checks (context, weight 0)
-        entities = check_entities(complaint)
+        entities = pv.tag_entities(check_entities(complaint))
         caps["entity_format_checks"] = "available" if entities["checks"] else "skipped_no_input"
+        stage("entity_checks", "rule", pv.ENTITY_METHOD,
+              "ran" if entities["checks"] else "skipped",
+              None if entities["checks"] else "no_phone_upi_or_email")  # fmt: skip
         caps["contact_reputation_lookup"] = "unavailable"
         reasons["contact_reputation_lookup"] = "no_reputation_service_configured"
 
@@ -422,7 +469,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         reasons["evidence_content_analysis"] = "no_engines_installed"
 
         # (h) risk score
-        weights = [float(i["weight"]) for i in indicators if i.get("source") == "url_heuristics"]
+        weights = [float(i["weight"]) for i in indicators if i.get("stage") == "url_heuristics"]
         miss = 1.0
         for w in weights:
             miss *= 1.0 - max(0.0, min(1.0, w))
@@ -468,12 +515,15 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "text_scorer_ran": text_score is not None, "url_analysed": bool(url_analysis),
             "absent_fields": absent,
             "unavailable": [c.replace("_", " ") for c in applicable_failed],
+            "category_model_version": versions["category"],
         }  # fmt: skip
-        explanation = rules_explanation(facts)
+        parts = explanation_parts(facts)
+        explanation = " ".join(p["text"] for p in parts)
         llm_text: str | None = None
         caps["llm_explanation"] = "unavailable"
         reasons["llm_explanation"] = "not_configured"
         llm_configured = bool(self._explainer is not None and self._explainer.configured)
+        llm_method = f"ollama:{getattr(self._explainer, 'model', None) or 'not_configured'}"
         if llm_configured:
             if not scored:
                 caps["llm_explanation"] = "skipped_no_input"
@@ -487,6 +537,19 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 else:
                     reasons["llm_explanation"] = res.reason or res.status
                     applicable_failed.append("llm_explanation")
+        if llm_text:
+            versions["llm"] = self._explainer.model if self._explainer else None
+            stage("llm_explanation", "llm", llm_method, "ran", version=versions["llm"])
+            parts.append({
+                "text": llm_text, "source": "llm", "method": llm_method,
+                "evidence": {"type": "generated", "inputs": "computed indicators and the "
+                             "sanitised text", "changes_score": False},
+            })  # fmt: skip
+        else:
+            stage("llm_explanation", "llm", llm_method,
+                  "not_configured" if not llm_configured else
+                  "skipped" if caps["llm_explanation"] == "skipped_no_input" else "unavailable",
+                  reasons.get("llm_explanation"))  # fmt: skip
 
         status = "UNAVAILABLE" if not scored else ("PARTIAL" if applicable_failed else "COMPLETED")
         if status == "UNAVAILABLE":
@@ -528,10 +591,28 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             classification if classification and classification not in ("UNDETERMINED", "OTHER")
             else selected
         )  # fmt: skip
+        actions = pv.tag_guidance(static_guidance(guidance_cat, level), guidance_cat, level)
+        stage("static_guidance", "static_guidance", pv.GUIDANCE_METHOD, "ran")
+        for cap in ("audio_transcription", "screenshot_ocr", "document_text_extraction"):
+            if cap in applicable_failed:
+                stage(cap, "rule" if cap == "document_text_extraction" else "ml", cap,
+                      "unavailable", reasons.get(cap))  # fmt: skip
+        provenance = {
+            "schema": pv.PROVENANCE_SCHEMA, "derived_from_legacy": False, "legacy": False,
+            "pipeline": PIPELINE_V2, "stages": stages,
+            "ran": [x["stage"] for x in stages if x["status"] == "ran"],
+            "unavailable": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
+                            if x["status"] in ("unavailable", "not_configured")],
+            "skipped": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
+                        if x["status"] == "skipped"],
+            "model_versions": versions,
+            "sources": list(pv.SOURCES),
+        }  # fmt: skip
         detail = {
             "analysis_schema": 2,
             "risk_level": level,
             "explanation_source": "rules",
+            "explanation_parts": parts,
             "llm_explanation": llm_text,
             "llm_model": self._explainer.model if llm_text and self._explainer else None,
             "capability_reasons": reasons,
@@ -540,13 +621,18 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "category_model": cat_detail,
             "confidence_semantics": "model_confidence_uncalibrated" if confidence is not None
             else None,  # fmt: skip
+            "confidence_interpretation": confidence_interpretation(
+                confidence, cat_detail, reasons.get("category_classifier")
+            ),
             "url_analysis": url_analysis,
             "entity_checks": entities,
             "context": ctx,
             "score_components": {
                 "text_score": text_score, "category_prior": prior, "url_adjustment": adj,
                 "formula": RISK_FORMULA, "bands": BANDS_V2, "withheld": withheld,
+                "source": "rule", "method": "risk_formula",
             },
+            "provenance": provenance,
         }  # fmt: skip
         return AnalysisOutcome(
             status=status,
@@ -558,10 +644,42 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             risk_score=risk,
             risk_level=level,
             indicators=indicators,
-            recommended_actions=static_guidance(guidance_cat, level),
+            recommended_actions=actions,
             limitations=limitations,
             classification=classification,
             confidence=confidence,
             explanation=explanation,
             extra=detail,
         )
+
+
+def _rules_version() -> str:
+    try:
+        from call_guard.rules import RULES_VERSION
+
+        return str(RULES_VERSION)
+    except Exception:
+        return "rules-v1"
+
+
+def confidence_interpretation(
+    confidence: float | None, cat: dict[str, Any] | None, reason: str | None = None
+) -> str:
+    """Plain-language meaning of ``confidence`` (the category model's number)."""
+    if confidence is None or cat is None:
+        return "No confidence is given: the category model did not run" + (
+            f" ({reason.replace('_', ' ')})." if reason else "."
+        )
+    thr = cat.get("abstention_threshold", cat.get("min_confidence"))
+    ver = cat.get("model_version") or "the category model"
+    base = (
+        f"{confidence:.2f} is the top-class score (0-1) of {ver}, a model trained on 100% "
+        "synthetic data. It is uncalibrated: it is not the chance that the category is correct "
+        "and has not been validated on real complaints."
+    )
+    if cat.get("abstained"):
+        return (
+            f"The category is UNDETERMINED because the model's top-class score "
+            f"({confidence:.2f}) was below the abstention threshold ({thr}). " + base
+        )
+    return base + f" Below the abstention threshold ({thr}) the category would be UNDETERMINED."

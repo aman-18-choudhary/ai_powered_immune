@@ -177,51 +177,100 @@ class OllamaClient:
 
 
 # ----------------------------------------------------------------------------- rules text
-def rules_explanation(facts: dict[str, Any]) -> str:
-    """Deterministic explanation built from the computed facts only."""
-    parts: list[str] = []
+def _part(text: str, source: str, method: str, **evidence: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {"text": text, "source": source, "method": method}
+    if evidence:
+        out["evidence"] = evidence
+    return out
+
+
+def explanation_parts(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    """Deterministic explanation built from the computed facts only, one part per sentence, each
+    with the provenance of the fact it states (see ``complaints.provenance``)."""
+    parts: list[dict[str, Any]] = []
     score, level = facts.get("risk_score"), facts.get("risk_level")
-    if score is None or level is None:
-        parts.append(
+    inds = facts.get("indicators", [])
+    if facts.get("insufficient_input"):
+        parts.append(_part(
+            "The text is too short to analyse, so no risk score or category was given. This is "
+            "not a finding that the message is safe.", "rule", "input_check",
+            type="input", field="text",
+        ))  # fmt: skip
+    elif score is None or level is None:
+        parts.append(_part(
             "No risk score could be given: the text risk scorer was not available or the "
-            "evidence available was not enough to say the report is low risk."
-        )
+            "evidence available was not enough to say the report is low risk.",
+            "rule", "risk_formula", type="score_components",
+        ))  # fmt: skip
     else:
-        parts.append(
+        parts.append(_part(
             f"Risk score {score}/100 ({level}). This is an uncalibrated heuristic ordering, not "
-            "a likelihood or a verdict."
-        )
-    text_ind = [i for i in facts.get("indicators", []) if i.get("source") == "call_guard"]
-    if text_ind:
-        parts.append("The text matched: " + "; ".join(str(i["text"]) for i in text_ind[:5]) + ".")
+            "a likelihood or a verdict.", "rule", "risk_formula", type="score_components",
+        ))  # fmt: skip
+    rule_ind = [i for i in inds if i.get("stage") == "call_guard" and i.get("source") == "rule"]
+    ml_ind = [i for i in inds if i.get("stage") == "call_guard" and i.get("source") == "ml"]
+    if rule_ind:
+        parts.append(_part(
+            "The text matched: " + "; ".join(str(i["text"]) for i in rule_ind[:5]) + ".",
+            "rule", "call_guard.rules", type="indicators", codes=[i["code"] for i in rule_ind[:5]],
+        ))  # fmt: skip
     elif facts.get("text_scorer_ran"):
-        parts.append("The text matched no specific scam cue.")
+        parts.append(_part(
+            "The rules matched no specific scam cue in the text." if ml_ind
+            else "The text matched no specific scam cue.", "rule", "call_guard.rules",
+            type="indicators", codes=[],
+        ))  # fmt: skip
+    for i in ml_ind[:1]:
+        parts.append(_part(
+            "The script classifier found the text similar to known digital-arrest call scripts.",
+            "ml", str(i.get("method") or "call_guard.clf-v1"), type="indicators",
+            codes=[i["code"]],
+        ))  # fmt: skip
     cls = facts.get("classification")
+    cat_method = str(facts.get("category_model_version") or "category-v1")
     if cls == "UNDETERMINED":
-        parts.append("The category model could not decide on a category, so none is assigned.")
+        parts.append(_part(
+            "The category model could not decide on a category, so none is assigned.",
+            "ml", cat_method, type="model_output",
+        ))  # fmt: skip
     elif cls:
-        parts.append(f"The category model suggests {cls.replace('_', ' ').lower()}.")
+        parts.append(_part(
+            f"The category model suggests {cls.replace('_', ' ').lower()}.", "ml", cat_method,
+            type="model_output",
+        ))  # fmt: skip
     sel = facts.get("selected_category")
     if cls and cls not in ("UNDETERMINED", sel) and sel:
-        parts.append(
+        parts.append(_part(
             f"The complainant selected {sel.replace('_', ' ').lower()}; this was not used as "
-            "evidence."
-        )
-    url_ind = [i for i in facts.get("indicators", []) if i.get("source") == "url_heuristics"]
+            "evidence.", "rule", "explanation_template", type="field", field="category",
+        ))  # fmt: skip
+    url_ind = [i for i in inds if i.get("stage") == "url_heuristics"]
     if url_ind:
-        parts.append(
-            "The link has these features: " + "; ".join(str(i["text"]) for i in url_ind[:5]) + "."
-        )
+        parts.append(_part(
+            "The link has these features: " + "; ".join(str(i["text"]) for i in url_ind[:5]) + ".",
+            "rule", "url_heuristics", type="field", field="suspicious_url",
+        ))  # fmt: skip
     elif facts.get("url_analysed"):
-        parts.append("The link string showed none of the checked suspicious features.")
+        parts.append(_part(
+            "The link string showed none of the checked suspicious features.", "rule",
+            "url_heuristics", type="field", field="suspicious_url",
+        ))  # fmt: skip
     if facts.get("url_analysed"):
-        parts.append("The page itself was not opened or looked up.")
+        parts.append(_part("The page itself was not opened or looked up.", "rule",
+                           "url_heuristics", type="field", field="suspicious_url"))  # fmt: skip
     absent = facts.get("absent_fields") or []
     if absent:
-        parts.append(
-            "Details not supplied (" + ", ".join(absent) + ") were not treated as evidence."
-        )
+        parts.append(_part(
+            "Details not supplied (" + ", ".join(absent) + ") were not treated as evidence.",
+            "rule", "explanation_template", type="absent_fields",
+        ))  # fmt: skip
     unavailable = facts.get("unavailable") or []
     if unavailable:
-        parts.append("Not analysed: " + ", ".join(unavailable) + ".")
-    return " ".join(parts)
+        parts.append(_part("Not analysed: " + ", ".join(unavailable) + ".", "rule",
+                           "pipeline_status", type="capabilities"))  # fmt: skip
+    return parts
+
+
+def rules_explanation(facts: dict[str, Any]) -> str:
+    """The rule-based explanation as one text (the parts joined)."""
+    return " ".join(p["text"] for p in explanation_parts(facts))

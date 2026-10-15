@@ -37,6 +37,7 @@ from .analysis import (
     AnalysisService,
     CallGuardTextAnalysis,
     ComplaintAnalysisPipeline,
+    confidence_interpretation,
     stored_level,
 )
 from .config import ConfigError, Settings
@@ -54,6 +55,7 @@ from .identity import (
     normalise_email,
 )
 from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited, file_outbox
+from .provenance import legacy_action, legacy_indicator, legacy_provenance
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
 from .validation import (
@@ -293,13 +295,27 @@ def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
     }  # fmt: skip
 
 
-def _detail_fields(d: dict[str, Any] | None) -> dict[str, Any]:
-    """Pipeline v2 fields; defaults for rows written by v1 (additive API fields only)."""
+def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Pipeline v2 fields; defaults for rows written by v1 (additive API fields only). Rows
+    stored before provenance existed get a derived provenance (``derived_from_legacy``)."""
     d = d or {}
+    prov = d.get("provenance")
+    if prov is None and row is not None:
+        prov = legacy_provenance(row)
+    conf_int = d.get("confidence_interpretation")
+    if conf_int is None and row is not None and row.get("confidence") is not None:
+        conf_int = confidence_interpretation(row["confidence"], d.get("category_model"))
+    parts = d.get("explanation_parts")
+    if parts is None and row is not None and row.get("explanation"):
+        parts = [{"text": row["explanation"], "source": "rule", "method": "explanation_template",
+                  "derived_from_legacy": True}]  # fmt: skip
     return {
         "explanation_source": d.get("explanation_source"),
+        "explanation_parts": parts or [],
         "llm_explanation": d.get("llm_explanation"),
+        "llm_model": d.get("llm_model"),
         "confidence_semantics": d.get("confidence_semantics"),
+        "confidence_interpretation": conf_int,
         "capability_reasons": d.get("capability_reasons") or {},
         "unavailable_capabilities": d.get("unavailable_capabilities") or [],
         "unanalysed_attachments": d.get("unanalysed_attachments") or [],
@@ -308,6 +324,7 @@ def _detail_fields(d: dict[str, Any] | None) -> dict[str, Any]:
         "entity_checks": d.get("entity_checks"),
         "context": d.get("context"),
         "score_components": d.get("score_components"),
+        "provenance": prov,
     }
 
 
@@ -318,9 +335,11 @@ def _analysis_view(a: dict[str, Any]) -> dict[str, Any]:
         "status": a["status"], "capabilities": a["capabilities"], "risk_score": a["risk_score"],
         "risk_level": _effective_level(a), "score_semantics": SCORE_SEMANTICS,
         "classification": a["classification"], "confidence": a["confidence"],
-        "indicators": a["indicators"], "explanation": a["explanation"],
-        "recommended_actions": a["recommended_actions"], "limitations": a["limitations"],
-        **_detail_fields(a.get("detail")),
+        "indicators": [legacy_indicator(i) for i in a["indicators"] or []],
+        "explanation": a["explanation"],
+        "recommended_actions": [legacy_action(x) for x in a["recommended_actions"] or []],
+        "limitations": a["limitations"],
+        **_detail_fields(a.get("detail"), a),
     }  # fmt: skip
 
 
@@ -331,9 +350,15 @@ def _outcome_view(out: AnalysisOutcome, created_at: datetime) -> dict[str, Any]:
         "capabilities": out.capabilities, "risk_score": out.risk_score,
         "risk_level": out.risk_level, "score_semantics": SCORE_SEMANTICS,
         "classification": out.classification, "confidence": out.confidence,
-        "indicators": out.indicators, "explanation": out.explanation,
-        "recommended_actions": out.recommended_actions, "limitations": out.limitations,
-        **_detail_fields(out.extra or None),
+        "indicators": [legacy_indicator(i) for i in out.indicators],
+        "explanation": out.explanation,
+        "recommended_actions": [legacy_action(x) for x in out.recommended_actions],
+        "limitations": out.limitations,
+        **_detail_fields(
+            out.extra or None,
+            {"pipeline_version": out.pipeline_version, "capabilities": out.capabilities,
+             "confidence": out.confidence, "explanation": out.explanation},
+        ),
         "created_at": _iso(created_at), "persisted": False,
     }  # fmt: skip
 
