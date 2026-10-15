@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils/cn";
 
 /** Provenance sources (services/complaints/complaints/provenance.py) as icon + words, never colour alone. */
 const SOURCE: Record<string, { label: string; long: string; Icon: LucideIcon; cls: string }> = {
-  rule: { label: "Rule", long: "Rules (deterministic)", Icon: ListChecks, cls: "border-flow/40 bg-flow-soft text-flow" },
+  // rule: text in the body colour (cyan text on the cyan tint is below 4.5:1 in the light theme)
+  rule: { label: "Rule", long: "Rules (deterministic)", Icon: ListChecks, cls: "border-flow/40 bg-flow-soft text-fg [&>svg]:text-flow" },
   ml: { label: "ML model", long: "ML models (trained on synthetic data)", Icon: Cpu, cls: "border-intel/40 bg-intel-soft text-intel" },
   llm: { label: "LLM (local)", long: "LLM explanation (local model, wording only)", Icon: Sparkles, cls: "border-warn/40 bg-warn-soft text-warn" },
   static_guidance: { label: "Static guidance", long: "Static guidance", Icon: BookOpen, cls: "border-line bg-chip text-muted" },

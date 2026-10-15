@@ -116,6 +116,64 @@ test("citizen: local sign-in, mandatory-only complaint with an image, visible in
   await expect(page.getByTestId("stat-total")).toContainText("1");
 });
 
+test("citizen: check a message (nothing stored), register it pre-filled, run analysis twice with version history", async ({ page }) => {
+  expect(complaintId).not.toBe("");
+  await signIn(page, citizenEmail, "citizen");
+  await expect(page).toHaveURL(/\/me$/);
+  await expect(page.getByRole("heading", { name: "My complaints" })).toBeVisible();
+  await expect(page.getByTestId("complaint-row").first()).toBeVisible();
+  await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Check" }).click();
+  await expect(page.getByRole("heading", { name: "Check a message or link" })).toBeVisible();
+  await expect(page).toHaveURL(/\/check$/);
+  await page.getByTestId("chk-text").fill("This is officer Sharma from the CBI. Do not disconnect this video call. Transfer your money to the RBI safe account for verification or you will be arrested.");
+  await page.getByTestId("chk-url").fill("https://bit.ly/rbi-verify");
+  const analyzed = page.waitForResponse((r) => r.url().endsWith("/api/complaints/analyze") && r.request().method() === "POST");
+  await page.getByTestId("chk-submit").click();
+  const res = await analyzed;
+  expect(res.status()).toBe(200);
+  const body = (await res.json()) as { persisted: boolean; provenance: { ran: string[] }; indicators: { source: string; method: string }[] };
+  expect(body.persisted).toBe(false);
+  expect(body.provenance.ran).toContain("text_rules");
+  expect(body.indicators.every((i) => ["rule", "ml"].includes(i.source) && i.method)).toBe(true);
+  const result = page.getByTestId("check-result");
+  await expect(result.getByTestId("nothing-stored")).toContainText("Nothing was stored");
+  await expect(result.getByTestId("score-semantics")).toContainText("uncalibrated heuristic score, not a probability");
+  await expect(result.getByTestId("indicator-group-rule")).toContainText("call_guard.rules");
+  await expect(result.getByTestId("indicator-group-rule")).toContainText("url_heuristics");
+  await expect(result.getByTestId("input-capabilities")).toContainText("Audio: unavailable");
+  await expect(result.getByTestId("model-versions")).toContainText("category-v1");
+  // nothing was stored: the history still has one complaint
+  const stats = await page.evaluate(async () => {
+    const t = JSON.parse(sessionStorage.getItem("ssi.account") ?? "{}").token as string;
+    const r = await fetch("/api/complaints/me/stats", { headers: { Authorization: `Bearer ${t}` } });
+    return (await r.json()) as { total: number };
+  });
+  expect(stats.total).toBe(1);
+
+  await page.getByTestId("chk-register").click();
+  await expect(page).toHaveURL(/\/me\/complaints\/new$/);
+  await expect(page.getByTestId("prefill-note")).toBeVisible();
+  await expect(page.getByTestId("f-description")).toHaveValue(/RBI safe account/);
+  await expect(page.getByTestId("f-category")).toHaveValue("");
+
+  // run the analysis on the stored complaint, twice
+  await page.goto(`/me/complaints/${complaintId}`);
+  await page.getByTestId("run-analysis").click();
+  const panel = page.getByTestId("analysis-panel");
+  await expect(panel.getByTestId("analysis-status")).toBeVisible();
+  await expect(panel.getByTestId("score-semantics")).toContainText("not a probability");
+  await expect(panel.getByTestId("provenance")).toBeAttached();
+  await expect(panel.getByTestId("analysis-version")).toHaveCount(1);
+  await panel.getByTestId("run-analysis").click();
+  await expect(panel.getByTestId("analysis-version")).toHaveCount(2);
+  await expect(panel.getByTestId("analysis-version").first()).toContainText("v2");
+
+  await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Models" }).click();
+  await expect(page.getByTestId("synthetic-warning")).toContainText("synthetic data only");
+  await expect(page.getByTestId("model-category-v1").getByTestId("leaky-split")).toContainText("Not the headline");
+  await expect(page.getByTestId("model-llm").getByTestId("runtime-status")).toBeVisible();
+});
+
 test("allowlisted investigator: queue, open the complaint, change status with a note", async ({ page }) => {
   expect(complaintId).not.toBe("");
   await signIn(page, INVESTIGATOR, "investigator");
@@ -236,7 +294,7 @@ for (const theme of ["dark", "light"] as const) {
     await signIn(page, citizenEmail, "citizen");
     await expect(page).toHaveURL(/\/me$/);
     await scan("/me");
-    for (const path of ["/me/complaints/new", `/me/complaints/${complaintId}`, "/me/profile"]) {
+    for (const path of ["/me/complaints/new", `/me/complaints/${complaintId}`, "/me/profile", "/check", "/models"]) {
       await page.goto(path);
       await expect(page.locator("main h1").first()).toBeVisible();
       await scan(path);

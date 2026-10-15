@@ -7,7 +7,8 @@ import type { ComplaintStatus, RiskLevel } from "@/lib/complaints/types";
 import { cn } from "@/lib/utils/cn";
 
 const STATUS_STYLE: Record<ComplaintStatus, { Icon: typeof Clock; cls: string }> = {
-  SUBMITTED: { Icon: CircleDot, cls: "text-flow bg-flow-soft border-flow/40" },
+  // body-colour text: cyan text on the cyan tint is below 4.5:1 in the light theme
+  SUBMITTED: { Icon: CircleDot, cls: "text-fg bg-flow-soft border-flow/40 [&>svg]:text-flow" },
   UNDER_REVIEW: { Icon: FileSearch, cls: "text-intel bg-intel-soft border-intel/40" },
   INVESTIGATING: { Icon: Search, cls: "text-warn bg-warn-soft border-warn/40" },
   RESOLVED: { Icon: CheckCircle2, cls: "text-safe bg-safe-soft border-safe/40" },
