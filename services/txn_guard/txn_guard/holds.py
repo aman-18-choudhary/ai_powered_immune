@@ -528,9 +528,18 @@ class _BaseHoldStore:
                 raise
             except Exception as e:
                 out = HubOutcome("retry", None, type(e).__name__)
-            done = await self._hub_apply(cur, sub, out, cfg)
-            if done is not None:
-                return done
+            for _ in range(8):
+                done = await self._hub_apply(cur, sub, out, cfg)
+                if done is not None:
+                    return done
+                # Lost a CAS race (for example a concurrent audit flush on the same hold): record
+                # the outcome already received on the fresh record instead of calling the hub
+                # again, which would send a duplicate submission.
+                cur = await self._get(txn_id)
+                if cur is None or sub not in cur.hub_pending:
+                    break  # someone else settled this submission; re-evaluate the hold
+            else:
+                return False
         return False
 
     async def _hub_apply(
