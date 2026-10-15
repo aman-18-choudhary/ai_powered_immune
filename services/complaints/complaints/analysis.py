@@ -463,7 +463,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         reasons["url_fetch_reputation"] = "no_network_lookup_by_design"
 
         # (d) entity and format checks (context, weight 0)
-        entities = pv.tag_entities(check_entities(complaint))
+        entities = pv.tag_entities(check_entities(complaint), complaint.get("_field_names"))
         caps["entity_format_checks"] = "available" if entities["checks"] else "skipped_no_input"
         stage("entity_checks", "rule", pv.ENTITY_METHOD,
               "ran" if entities["checks"] else "skipped",

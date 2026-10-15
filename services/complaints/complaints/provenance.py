@@ -164,14 +164,14 @@ def tag_url(ind: dict[str, Any], field: str, host: str | None) -> dict[str, Any]
 ENTITY_FIELDS = {"phone": "suspect_phone", "upi_id": "upi_id", "email": "suspect_email"}
 
 
-def tag_entities(entities: dict[str, Any]) -> dict[str, Any]:
+def tag_entities(entities: dict[str, Any], names: dict[str, str] | None = None) -> dict[str, Any]:
+    """``names`` renames the evidence field (``POST /analyze`` uses ``phone``/``email``)."""
+    names = names or {}
     for c in entities.get("checks", []):
         c["source"] = "rule"
         c["method"] = ENTITY_METHOD
-        c["evidence"] = {
-            "type": "field",
-            "field": ENTITY_FIELDS.get(c.get("field"), c.get("field")),
-        }
+        f = ENTITY_FIELDS.get(c.get("field"), c.get("field"))
+        c["evidence"] = {"type": "field", "field": names.get(f, f)}
     return entities
 
 

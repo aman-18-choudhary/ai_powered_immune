@@ -59,6 +59,7 @@ from .provenance import legacy_action, legacy_indicator, legacy_provenance
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
 from .validation import (
+    ANALYZE_ALIASES,
     BANK_FIELDS,
     ActiveBody,
     AnalyzeIn,
@@ -361,6 +362,57 @@ def _outcome_view(out: AnalysisOutcome, created_at: datetime) -> dict[str, Any]:
         ),
         "created_at": _iso(created_at), "persisted": False,
     }  # fmt: skip
+
+
+_PHASE_C = "planned for Phase C; this check takes text and the optional fields only"
+
+
+def _input_capabilities(c: dict[str, Any], out: AnalysisOutcome) -> dict[str, Any]:
+    """What was done with each input of ``POST /analyze``."""
+    caps = out.capabilities
+
+    def given(k: str) -> bool:
+        return c.get(k) not in (None, "")
+
+    txt = (caps.get("text_risk_scorer"), caps.get("category_classifier"))
+    if "skipped_insufficient_input" in txt:
+        text = {"status": "insufficient_input", "reason": "too few words to analyse"}
+    elif "available" in txt:
+        stages = ((out.extra or {}).get("provenance") or {}).get("stages") or []
+        text = {
+            "status": "analysed",
+            "methods": [
+                x["method"] for x in stages
+                if x["status"] == "ran"
+                and x["stage"] in ("text_rules", "script_classifier", "category_classifier")
+            ],
+        }  # fmt: skip
+    else:
+        text = {"status": "unavailable", "reason": "the text models are not available"}
+    url_state = (out.extra or {}).get("url_analysis") or {}
+    out_caps: dict[str, Any] = {
+        "text": text,
+        "url": {"status": "not_provided"}
+        if not given("suspicious_url")
+        else {
+            "status": "analysed" if url_state.get("status") == "analysed" else "unparseable",
+            "method": "url_heuristics",
+            "note": "offline lexical checks; the page is not opened or looked up",
+        },  # fmt: skip
+    }
+    for name, key in (("upi_id", "upi_id"), ("phone", "suspect_phone"),
+                      ("email", "suspect_email")):  # fmt: skip
+        out_caps[name] = {"status": "not_provided"} if not given(key) else {
+            "status": "format_checked", "method": "entity_checks",
+            "note": "format check only; carries no risk weight; no reputation lookup",
+        }  # fmt: skip
+    for name in ("amount", "payment_method"):
+        out_caps[name] = {"status": "not_provided"} if not given(name) else {
+            "status": "context_only", "note": "recorded as context; does not change the score",
+        }  # fmt: skip
+    out_caps["audio"] = {"status": "unavailable", "reason": "audio transcription is " + _PHASE_C}
+    out_caps["screenshot"] = {"status": "unavailable", "reason": "screenshot OCR is " + _PHASE_C}
+    return out_caps
 
 
 def _evidence_view(e: dict[str, Any]) -> dict[str, Any]:
@@ -1030,15 +1082,24 @@ def create_app(
         """Stateless: analyse submitted text and optional fields. Nothing is stored and the
         content is not logged."""
         throttle("analyze", user)
+        for short in body.conflicts():
+            raise _field_error(short, f"give either {short} or {ANALYZE_ALIASES[short]}, not both")
+        short = {k: getattr(body, k) is not None for k in ANALYZE_ALIASES}
+        names = {old: k if short[k] else old for k, old in ANALYZE_ALIASES.items()}
         complaint = {
             "title": body.title or "", "description": body.text, "category": None,
-            "suspicious_url": body.suspicious_url, "suspect_phone": body.suspect_phone,
-            "upi_id": body.upi_id, "suspect_email": body.suspect_email, "amount": body.amount,
+            "suspicious_url": body.value("url"), "suspect_phone": body.value("phone"),
+            "upi_id": body.upi_id, "suspect_email": body.value("email"), "amount": body.amount,
             "payment_method": body.payment_method, "city": body.city, "state": body.state,
             "social_platform": body.social_platform, "evidence": [],
+            # field names used in evidence pointers: the ones the client sent
+            "_text_field": "text", "_url_field": names["suspicious_url"],
+            "_field_names": names,
         }  # fmt: skip
         out = await analysis_service.analyse(complaint)
-        return _outcome_view(out, now())
+        view = _outcome_view(out, now())
+        view["input_capabilities"] = _input_capabilities(complaint, out)
+        return view
 
     @app.get("/complaints/{complaint_id}/analysis")
     async def get_analysis(complaint_id: str, user: User) -> Response:

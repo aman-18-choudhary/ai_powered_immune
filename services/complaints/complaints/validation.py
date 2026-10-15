@@ -293,6 +293,9 @@ class ActiveBody(BaseModel):
     is_active: bool
 
 
+ANALYZE_ALIASES = {"url": "suspicious_url", "phone": "suspect_phone", "email": "suspect_email"}
+
+
 class AnalyzeIn(BaseModel):
     """Stateless analysis input. Values are lenient on purpose (an odd phone or UPI id is
     analysed and reported, not rejected) but bounded and free of control characters."""
@@ -314,3 +317,19 @@ class AnalyzeIn(BaseModel):
     city: _opt(100) = None  # type: ignore[valid-type]
     state: _opt(100) = None  # type: ignore[valid-type]
     social_platform: _opt(50) = None  # type: ignore[valid-type]
+    # short names (the checker's form); each is an alternative to the older name above
+    url: _opt(2048) = None  # type: ignore[valid-type]
+    phone: _opt(40) = None  # type: ignore[valid-type]
+    email: _opt(254) = None  # type: ignore[valid-type]
+
+    def conflicts(self) -> list[str]:
+        """Short names given together with a different value under the older name."""
+        return [
+            s for s, o in ANALYZE_ALIASES.items()
+            if getattr(self, s) is not None and getattr(self, o) is not None
+            and getattr(self, s) != getattr(self, o)
+        ]  # fmt: skip
+
+    def value(self, short: str) -> str | None:
+        v = getattr(self, short)
+        return v if v is not None else getattr(self, ANALYZE_ALIASES[short])
