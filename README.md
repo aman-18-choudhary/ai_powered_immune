@@ -16,6 +16,28 @@ the ring, and seals the case in a tamper-evident ledger an outside expert can ve
 > player below is the **Simulated scenario (demo)** tab. See
 > [services/live_audio/README.md](services/live_audio/README.md).
 
+> **Update 2026-10-15.** The account area is a second exception and also handles real input:
+> signed-in citizens register complaints (stored in a local database), upload evidence, run an
+> explained analysis and check a message or link; allowlisted investigators review a complaint
+> queue; admins manage roles. Local sign-in without Clerk keys is a **development-only** email +
+> code flow. Cross-complaint intelligence (similar cases, network graph, complaint hotspots) is
+> **not built yet**; the ring graph and hotspots on the simulator pages come from simulated
+> traffic only. Current status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [PROJECT_STATUS.md](PROJECT_STATUS.md) | What is verified, unverified, planned, blocked, and known limitations |
+| [docs/PROJECT_REQUIREMENTS.md](docs/PROJECT_REQUIREMENTS.md) | Problem, objectives, users, requirements with status, scope, success criteria, dependencies |
+| [docs/architecture.md](docs/architecture.md) | Simulator architecture (sections 1-9) and the real-input components (sections 10-14) |
+| [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md) | Complaints database tables, ownership rules, migrations, privacy and retention |
+| [docs/API_SPECIFICATION.md](docs/API_SPECIFICATION.md) | Implemented and planned endpoints, auth, errors |
+| [docs/UI_UX_PLAN.md](docs/UI_UX_PLAN.md) | Screens that exist, screens planned, states, accessibility |
+| [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md) | Phases 0-14 with status and the recommended order |
+| [docs/TECHNOLOGY_DECISIONS.md](docs/TECHNOLOGY_DECISIONS.md) | Options compared and choices made |
+| [docs/reports/PHASE_0_REPORT.md](docs/reports/PHASE_0_REPORT.md) | Phase 0 report |
+
 ![Live interception: the hero scenario mid-run](docs/screenshots/player-live-1440x900-dark.png)
 
 ![Hero run preview (45 s GIF)](docs/demo/hero-run.gif)

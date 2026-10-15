@@ -1,5 +1,10 @@
 # Implementation plan (Digital Fraud Detection and Cybercrime Intelligence)
 
+> **Superseded (note added 2026-10-15).** Phases A and B of this plan were carried out (Phase B is
+> committed locally, not yet pushed). The active plan is now
+> [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md), which maps this work onto target
+> phases 0-14. The content below is kept unchanged for reference.
+
 Date: 2026-10-14. Built on `PROJECT_GAP_ANALYSIS.md` (written before steps B1/B2a and the live
 microphone work; rows R2.x, R3.x, R5.5, R7.1-R7.3 and R10.1-R10.13 have backend implementations
 since, see the `services/complaints` README) and on an inspection of the repository today.

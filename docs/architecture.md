@@ -11,6 +11,13 @@ packagings of the same service code exist:
 
 Diagrams are Mermaid and render on GitHub.
 
+> **Update 2026-10-15 (Phase 0).** Sections 1-9 describe the simulator platform and remain
+> accurate for it. Since they were written, three parts that handle **real user input** were
+> added: the complaints service (sign-in, complaints, evidence, analysis, alerts, admin), the
+> live-audio service (consent-based microphone monitoring) and the console's account area. They
+> are described in sections 10-14 below. The sentence above about simulator-only data applies to
+> the simulator services, not to these.
+
 ## 1. System context
 
 ```mermaid
@@ -276,3 +283,126 @@ Rulings made during the build (from the SDD ledger). Each has a stated cost-if-w
 | Python version | developed on 3.13, packages target `>=3.11`, images use `python:3.11-slim` | plan said 3.11 |
 | Gateway-to-service trust | `TRUST_GATEWAY_HEADERS=1` on the internal network instead of per-service shared secrets (the gateway does not inject one) | smallest change that works with the gateway as built; documented in the compose file |
 | Push policy | initially no push until the user confirms; later the user authorised per-task pushes and, on 2026-10-12, a fast-forward of `main` (`main` and `build/implementation` are the same commit) | user ruling |
+| Complaints store and migrations (2026-10-13 → 10-15) | SQLAlchemy Core, SQLite locally / Postgres in Docker, custom versioned migrations 1-8 | runs offline on an 8 GB laptop; same code on Postgres; see `docs/TECHNOLOGY_DECISIONS.md` |
+| Identity (2026-10-13) | Clerk RS256 verification; roles only from the `users` table; allowlist/bootstrap re-evaluated per request | owner rules; live Clerk blocked (no keys) |
+| Local development sign-in (2026-10-14) | email + one-time code printed to the server terminal, local/demo mode only | lets the full flow run without Clerk keys; dev-only (section 13) |
+| Live audio (2026-10-14) | incremental 4 s chunks, local faster-whisper, call-guard scorer reused, nothing persisted | consent-based, offline; not streaming recognition |
+| Local LLM (2026-10-15) | Ollama `qwen2.5:0.5b`, explanations only, grounded and output-checked | 3B too heavy for 8 GB RAM; Gemini rejected on privacy grounds (owner ruling) |
+| Phase 0 architecture review (2026-10-15) | keep Vite, the service layout and the migration runner; NetworkX/SQL before Neo4j/PostGIS; Qdrant local mode planned; Leaflet with offline fallback planned | owner approval; see `docs/TECHNOLOGY_DECISIONS.md` |
+
+## 10. Real-input components (added 2026-10-15)
+
+```mermaid
+flowchart LR
+  subgraph browser["Browser: web-console (Vite + React)"]
+    ACC["Account area: sign-in, citizen dashboard, complaint form/detail, /check, /models, investigator queue, admin"]
+    LIVE["Live microphone mode (consent card, AudioWorklet, 16 kHz WAV chunks)"]
+    SIMUI["Simulation pages (SIMULATION badge)"]
+  end
+  subgraph ds["demo-server (one process, :8080)"]
+    CMP["/api/complaints -> complaints service (mounted)"]
+    LA["/api/live-audio -> live_audio router"]
+    SIMAPI["/api/* simulator routes"]
+    CG["call-guard scorer (shared object)"]
+  end
+  DB[("SQLite .data/complaints (Postgres in Docker)")]
+  FS[("Evidence files, local disk")]
+  WH["faster-whisper (local)"]
+  OL["Ollama qwen2.5:0.5b (127.0.0.1:11434, optional)"]
+  CK["Clerk JWKS (when configured)"]
+  ACC --> CMP
+  LIVE --> LA
+  SIMUI --> SIMAPI
+  CMP --> DB
+  CMP --> FS
+  CMP --> CG
+  CMP -. "explanations only" .-> OL
+  CMP -. "token verification" .-> CK
+  LA --> WH
+  LA --> CG
+  LA -. "optional, ungrounded (finding)" .-> OL
+```
+
+In the Docker stack the gateway proxies `/api/complaints/*` to a separate `complaints` container
+(pass-through of the external bearer token); that path is untested here (no Docker daemon).
+
+## 11. Complaint analysis flow
+
+```mermaid
+sequenceDiagram
+  participant U as Citizen / investigator
+  participant API as complaints API
+  participant R as Rules (call-guard rules, URL and entity checks)
+  participant M as ML (call-guard clf-v1, category-v1)
+  participant L as Ollama (optional)
+  participant DB as analyses table
+  U->>API: POST /complaints/{id}/analysis (or POST /analyze, nothing stored)
+  API->>API: too little text? -> INSUFFICIENT_INPUT (no level, no LOW)
+  API->>R: indicators with evidence spans
+  API->>M: script score, category + confidence (abstains below threshold)
+  API->>API: risk score 0-100 (uncalibrated heuristic), level, actions, provenance
+  API-->>L: grounded prompt listing findings only
+  L-->>API: text, or rejected / timeout (rule explanation used)
+  API->>DB: store version (complaint analysis only)
+  API->>U: result with source per item (rule / ml / llm / static_guidance)
+```
+
+A failed stage makes the result `PARTIAL` or `UNAVAILABLE` with the reason; LOW is given only when
+both the text scorer and the category model ran.
+
+## 12. Live audio flow
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant S as /api/live-audio
+  participant W as faster-whisper
+  participant C as call-guard + live rules
+  B->>B: user ticks consent, presses Start -> getUserMedia (only here)
+  B->>S: POST /sessions
+  loop every ~4 s
+    B->>S: POST /sessions/{sid}/chunks?seq=N (WAV, in order)
+    S->>W: transcribe (memory only, 0.5 s overlap tail)
+    S->>C: score accumulated transcript
+    S-->>B: segments with timestamps, risk, indicators linked to segments, warnings
+  end
+  B->>S: POST /sessions/{sid}/end (Stop) -> session data deleted; mic track ended
+```
+
+Verified 2026-10-15 with a scripted Chromium run: no microphone request before consent; exactly one
+after Start; the track ends on Stop.
+
+## 13. Identity and access
+
+```mermaid
+flowchart TD
+  T["Bearer token"] --> M{"COMPLAINTS_AUTH_MODE"}
+  M -- clerk --> V1["RS256 via Clerk JWKS: iss, exp/nbf/iat, sub, azp"]
+  M -- "local / demo (dev only)" --> V2["HS256 with the server demo secret (local sign-in or demo login)"]
+  V1 --> U["upsert users row (new users = CITIZEN)"]
+  V2 --> U
+  U --> E{"effective role this request"}
+  E -- "role_source=allowlist and verified email still in INVESTIGATOR_ALLOWLIST" --> I["INVESTIGATOR"]
+  E -- "role_source=bootstrap and email still in ADMIN_BOOTSTRAP_EMAILS (or last-admin guard)" --> A["ADMIN"]
+  E -- "role_source=admin" --> R["stored role"]
+  E -- otherwise --> C["CITIZEN"]
+```
+
+Security boundary of the development sign-in: it is enabled only in `local`/`demo` mode and returns
+404 in `clerk` mode. The standalone complaints service defaults to `clerk`. **However** demo-server
+switches to `local` whenever Clerk is not configured, and the `demo-server` service in
+`infra/docker-compose.yml` does not set `COMPLAINTS_AUTH_MODE`; nothing yet refuses local mode in a
+production configuration. Tracked as a finding.
+
+## 14. Known security limitations of the real-input components (2026-10-15)
+
+| # | Limitation | Effect |
+|---|---|---|
+| 1 | LLM grounding checks are keyword/pattern based; a role inversion ("the caller is under digital arrest") passed on 2026-10-15 | Labelled LLM text can be wrong; it cannot change score, level or category |
+| 2 | Live-audio Ollama explainer has no grounding checks (default `qwen2.5:3b`; off unless `OLLAMA_URL` is set) | Possible unsupported wording if enabled |
+| 3 | Complaint analysis says audio transcription is "unavailable (no transcription engine installed)" although faster-whisper is installed | Misleading capability message |
+| 4 | Evidence on local disk: random names, outside the web root, but **not encrypted, not malware-scanned**; downloads not audited | Depends on host disk security |
+| 5 | Development sign-in prints the email and code to the terminal; rate limits per process and per client IP (ignores `X-Forwarded-For`) | Anyone who can read the terminal can sign in as any address; acceptable only on a developer's machine |
+| 6 | No retention enforcement | Records persist until deleted by a user or admin |
+| 7 | `python -m demo_server` binds `0.0.0.0` unless `HOST` is set (compose publishes on 127.0.0.1) | Reachable from the local network when run directly |
+| 8 | Complaint text and identifiers are stored in plain columns | Database access controls are the only protection |

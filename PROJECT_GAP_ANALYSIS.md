@@ -1,5 +1,10 @@
 # Project gap analysis: requirements brief ("Digital Suraksha") vs repository ("ScamShield Immune")
 
+> **Historical document (note added 2026-10-15).** This audit was written on 2026-10-13, before
+> steps B1 and B2a, the live microphone feature and Phases A and B. Many rows marked MISSING here
+> have since been implemented. The content below is kept unchanged for reference; the current
+> status is in [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 Audit only (Step A). No code, data, config, database or other document was modified; no server was started; no network or LLM call was made. Audit date: 2026-10-13. Working tree branch at audit time: `build/implementation` (clean; `main` and `origin/build/implementation` also exist). Repository: `/Users/aman/lastproject`.
 
 ## 0. Summary
