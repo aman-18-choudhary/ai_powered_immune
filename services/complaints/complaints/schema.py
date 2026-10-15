@@ -253,6 +253,8 @@ alerts = Table(
     Column("message", String(300), nullable=False),
     Column("created_at", UTCDateTime, nullable=False),
     Column("read_at", UTCDateTime),
+    # migration 8: level of a HIGH_RISK_ANALYSIS alert (one alert per complaint, kind and level)
+    Column("risk_level", String(8)),
     Index("ix_alerts_user", "user_id", "read_at", "created_at"),
 )  # fmt: skip
 

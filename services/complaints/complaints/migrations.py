@@ -212,6 +212,10 @@ def _analyses_insufficient_input(conn: Connection) -> None:
         _rebuild_sqlite_table(conn, "analyses")
 
 
+def _alerts_risk_level(conn: Connection) -> None:
+    add_column(conn, "alerts", "risk_level")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -220,6 +224,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(5, "evidence_deleted_status", _evidence_deleted_status),
     Migration(6, "analyses_critical_level", _analyses_critical_level),
     Migration(7, "analyses_insufficient_input", _analyses_insufficient_input),
+    Migration(8, "alerts_risk_level", _alerts_risk_level),
 )
 LATEST = MIGRATIONS[-1].version
 

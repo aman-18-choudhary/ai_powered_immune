@@ -901,6 +901,19 @@ class ComplaintStore:
         with self.engine.connect() as c:
             return self._latest_analysis(c, complaint_id)
 
+    def list_analyses(
+        self, complaint_id: str, limit: int, offset: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Analysis versions of a complaint, newest first (full rows, paginated)."""
+        where = analyses.c.complaint_id == complaint_id
+        with self.engine.connect() as c:
+            total = c.execute(select(func.count()).select_from(analyses).where(where)).scalar_one()
+            rows = c.execute(
+                select(analyses).where(where).order_by(analyses.c.version.desc())
+                .limit(limit).offset(offset)
+            ).all()  # fmt: skip
+        return [self._analysis_row(r) for r in rows], int(total)
+
     def analysis_history(self, complaint_id: str) -> list[dict[str, Any]]:
         with self.engine.connect() as c:
             rows = c.execute(
@@ -940,13 +953,26 @@ class ComplaintStore:
                 )
             )
             # the owner is alerted for a HIGH or CRITICAL result (also when an investigator ran
-            # it), in the same transaction as the analysis row
-            if rec.get("risk_level") in ("HIGH", "CRITICAL") and rec.get("status") != "UNAVAILABLE":
-                self._alert(
-                    conn, cur["owner_user_id"], complaint_id, "HIGH_RISK_ANALYSIS",
-                    f"Analysis {version} of your complaint found strong scam indicators. "
-                    "Open the complaint for recommended safety steps.", now,
-                )  # fmt: skip
+            # it), in the same transaction as the analysis row, at most once per complaint, kind
+            # and level: re-running the analysis does not repeat the alert (the complaint row is
+            # locked above, so concurrent runs are serialised)
+            level = rec.get("risk_level")
+            if level in ("HIGH", "CRITICAL") and rec.get("status") != "UNAVAILABLE":
+                seen = conn.execute(
+                    select(alerts.c.id).where(
+                        alerts.c.user_id == cur["owner_user_id"],
+                        alerts.c.complaint_id == complaint_id,
+                        alerts.c.kind == "HIGH_RISK_ANALYSIS",
+                        alerts.c.risk_level == level,
+                    ).limit(1)
+                ).first()  # fmt: skip
+                if seen is None:
+                    strength = "very strong" if level == "CRITICAL" else "strong"
+                    self._alert(
+                        conn, cur["owner_user_id"], complaint_id, "HIGH_RISK_ANALYSIS",
+                        f"Analysis {version} of your complaint found {strength} scam indicators. "
+                        "Open the complaint for recommended safety steps.", now, risk_level=level,
+                    )  # fmt: skip
             row = conn.execute(select(analyses).where(analyses.c.id == aid)).one()
             return self._analysis_row(row)
 
@@ -954,12 +980,12 @@ class ComplaintStore:
     @staticmethod
     def _alert(
         conn: Connection, user_id: str, complaint_id: str | None, kind: str, message: str,
-        now: datetime,
+        now: datetime, risk_level: str | None = None,
     ) -> None:  # fmt: skip
         conn.execute(
             insert(alerts).values(
                 id=new_id(), user_id=user_id, complaint_id=complaint_id, kind=kind,
-                message=message, created_at=now,
+                message=message, created_at=now, risk_level=risk_level,
             )
         )  # fmt: skip
 

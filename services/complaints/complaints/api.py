@@ -296,6 +296,17 @@ def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
     }  # fmt: skip
 
 
+def _version_view(a: dict[str, Any]) -> dict[str, Any]:
+    """One entry of the analysis version list."""
+    prov = (a.get("detail") or {}).get("provenance") or legacy_provenance(a)
+    return {
+        **(_analysis_summary(a) or {}), "id": a["id"], "pipeline_version": a["pipeline_version"],
+        "classification": a["classification"], "confidence": a["confidence"],
+        "model_versions": prov.get("model_versions"),
+        "provenance_derived_from_legacy": prov.get("derived_from_legacy", False),
+    }  # fmt: skip
+
+
 def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) -> dict[str, Any]:
     """Pipeline v2 fields; defaults for rows written by v1 (additive API fields only). Rows
     stored before provenance existed get a derived provenance (``derived_from_legacy``)."""
@@ -1113,6 +1124,22 @@ def create_app(
             {**_analysis_view(latest), "history": [_analysis_summary(h) for h in history]}
         )
 
+    @app.get("/complaints/{complaint_id}/analyses")
+    async def list_analyses(
+        complaint_id: str,
+        user: User,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 20,
+        offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+    ) -> dict[str, Any]:
+        """Every analysis version of a complaint, newest first (owner and staff only)."""
+        throttle("read", user)
+        await _load(user, complaint_id)
+        rows, total = await asyncio.to_thread(store.list_analyses, complaint_id, limit, offset)
+        return {
+            "items": [_version_view(r) for r in rows],
+            "total": total, "limit": limit, "offset": offset,
+        }  # fmt: skip
+
     # ------------------------------------------------------------------ alerts / stats
     @app.get("/alerts")
     async def list_alerts(
@@ -1307,6 +1334,7 @@ def _alert_view(a: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": a["id"], "complaint_id": a["complaint_id"], "kind": a["kind"],
         "message": a["message"], "created_at": _iso(a["created_at"]), "read_at": _iso(a["read_at"]),
+        "risk_level": a.get("risk_level"),
     }  # fmt: skip
 
 
