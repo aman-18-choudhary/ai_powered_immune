@@ -194,6 +194,8 @@ export interface Indicator {
 
 export interface ExplanationPart {
   text: string;
+  /** e.g. "LLM-generated (qwen2.5:0.5b), may be imprecise" on the llm part */
+  label?: string;
   source: ProvenanceSource | string;
   method: string;
   evidence?: ProvenanceEvidence;

@@ -84,8 +84,8 @@ class Settings:
     rate_read_per_min: int = 240
     rate_analyze_per_min: int = 10
     ollama_url: str | None = None  # local Ollama server; None = LLM explanation not configured
-    ollama_model: str = "qwen2.5:3b"
-    ollama_timeout_s: float = 20.0
+    ollama_model: str = "qwen2.5:0.5b"  # qwen2.5:3b preferred when the hardware allows
+    ollama_timeout_s: float = 8.0
     # TEST ONLY: also append local sign-in codes to this file (end-to-end tests read it). Refused
     # in clerk mode; never set it outside an automated test run.
     local_auth_outbox: Path | None = None
@@ -123,9 +123,14 @@ class Settings:
             rate_analysis_per_min=_int("COMPLAINTS_RATE_ANALYSIS_PER_MIN", 10),
             rate_read_per_min=_int("COMPLAINTS_RATE_READ_PER_MIN", 240),
             rate_analyze_per_min=_int("COMPLAINTS_RATE_ANALYZE_PER_MIN", 10),
-            ollama_url=(os.getenv("OLLAMA_URL") or "").strip().rstrip("/") or None,
-            ollama_model=(os.getenv("OLLAMA_MODEL") or "").strip() or "qwen2.5:3b",
-            ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 20.0, 1.0, 120.0),
+            # COMPLAINTS_OLLAMA_URL (set by `make demo` when a local Ollama answers) wins over the
+            # shared OLLAMA_URL, so the complaints explainer can be enabled on its own
+            ollama_url=(os.getenv("COMPLAINTS_OLLAMA_URL") or os.getenv("OLLAMA_URL") or "")
+            .strip()
+            .rstrip("/")
+            or None,
+            ollama_model=(os.getenv("OLLAMA_MODEL") or "").strip() or "qwen2.5:0.5b",
+            ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 8.0, 1.0, 120.0),
             local_auth_outbox=(
                 Path(os.environ["COMPLAINTS_LOCAL_AUTH_OUTBOX"].strip())
                 if (os.getenv("COMPLAINTS_LOCAL_AUTH_OUTBOX") or "").strip()

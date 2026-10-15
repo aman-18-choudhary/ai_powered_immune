@@ -59,8 +59,17 @@ console-build:
 # code sign-in, codes printed in this terminal) unless Clerk is configured; INVESTIGATOR_ALLOWLIST
 # and ADMIN_BOOTSTRAP_EMAILS are read from your environment (e.g. `export INVESTIGATOR_ALLOWLIST=...`).
 # Data persists in ./.data/complaints (gitignored).
+# Local LLM wording for complaint analyses (optional, explanation only): when an Ollama answers on
+# 127.0.0.1:11434, COMPLAINTS_OLLAMA_URL points the complaints service at it (an explicit
+# COMPLAINTS_OLLAMA_URL wins; set it empty to disable). Model: OLLAMA_MODEL, default qwen2.5:0.5b
+# (qwen2.5:3b preferred when the hardware allows). Only the complaints explainer is enabled this
+# way; the live-microphone explainer still needs OLLAMA_URL set explicitly.
+LOCAL_OLLAMA := $(shell curl -s -m 1 -o /dev/null -w '%{http_code}' http://127.0.0.1:11434/api/version 2>/dev/null)
+COMPLAINTS_OLLAMA_URL ?= $(if $(filter 200,$(LOCAL_OLLAMA)),http://127.0.0.1:11434,)
+export COMPLAINTS_OLLAMA_URL
+
 define COMPLAINTS_NOTE
-	@echo "Complaints API: http://localhost:$(PORT)/api/complaints  (auth mode: $${COMPLAINTS_AUTH_MODE:-auto: local unless Clerk is configured}; sign-in codes print here as [LOCAL DEV MAIL]; INVESTIGATOR_ALLOWLIST $(if $(INVESTIGATOR_ALLOWLIST),set,NOT set: nobody can enter as investigator))"
+	@echo "Complaints API: http://localhost:$(PORT)/api/complaints  (auth mode: $${COMPLAINTS_AUTH_MODE:-auto: local unless Clerk is configured}; sign-in codes print here as [LOCAL DEV MAIL]; INVESTIGATOR_ALLOWLIST $(if $(INVESTIGATOR_ALLOWLIST),set,NOT set: nobody can enter as investigator); local LLM wording: $(if $(COMPLAINTS_OLLAMA_URL),$(COMPLAINTS_OLLAMA_URL),off))"
 endef
 
 demo: console-build ## Build the console and serve it with the demo-server on http://localhost:$(PORT)

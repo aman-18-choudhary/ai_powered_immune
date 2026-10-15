@@ -164,8 +164,12 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
                 llmParts.length ? (
                   <ul className="mt-1.5 space-y-1">
                     {llmParts.map((p, n) => (
-                      <li key={n}>
-                        {p.text} <span className="text-xs text-subtle">· <span className="mono">{p.method}</span> · does not change the score</span>
+                      <li key={n} data-testid="llm-text">
+                        <span className="block text-xs font-medium text-warn">{p.label ?? `LLM-generated (${p.method.replace(/^ollama:/, "")}), may be imprecise`}</span>
+                        {p.text}{" "}
+                        <span className="text-xs text-subtle">
+                          · <span className="mono">{p.method}</span> · rephrases the rule findings only; does not change the score, level or category
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -190,7 +194,7 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
         <section aria-labelledby={id("expl")}>
           {sectionHead(id("expl"), "Explanation")}
           <ul className="mt-1 space-y-1" data-testid="explanation-parts">
-            {parts.map((p, n) => (
+            {parts.filter((p) => p.source !== "llm").map((p, n) => (
               <li key={n} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <SourceBadge source={p.source} />
                 <span>{p.text}</span>
@@ -280,6 +284,9 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
 
 function llmReason(a: AnalysisResult): string {
   const r = a.capability_reasons.llm_explanation;
+  const st = a.capabilities.llm_explanation;
   if (!r || r === "not_configured") return "no local language model is configured";
+  if (st === "rejected") return `the local model's text was rejected by the grounding checks (${humanise(r).toLowerCase()}); the rule explanation is used`;
+  if (st === "timeout") return "the local model did not answer in time; the rule explanation is used";
   return humanise(r).toLowerCase();
 }

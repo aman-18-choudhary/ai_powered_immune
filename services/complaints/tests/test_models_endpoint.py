@@ -92,8 +92,14 @@ async def test_ollama_not_configured_and_never_contacted(make_app, tok):
     ],
 )  # fmt: skip
 async def test_ollama_status_local_fake_transport(make_app, tok, handler, status, reason):
-    cl = _client(make_app(analysis=pipe(), ollama=OllamaClient(
-        "http://localhost:11434", "qwen2.5:3b", 5.0, transport=httpx.MockTransport(handler))))
+    cl = _client(
+        make_app(
+            analysis=pipe(),
+            ollama=OllamaClient(
+                "http://localhost:11434", "qwen2.5:3b", 5.0, transport=httpx.MockTransport(handler)
+            ),
+        )
+    )
     m = (await cl.get("/models", headers=tok("a"))).json()  # fmt: skip
     assert m["llm"]["status"] == status and m["llm"]["reason"] == reason
     assert m["llm"]["model"] == "qwen2.5:3b"

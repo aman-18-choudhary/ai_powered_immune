@@ -313,7 +313,7 @@ async def test_reachable_llm_adds_text_and_never_changes_score_or_level():
     assert req.url.path == "/api/generate"
     body = json.loads(req.content)
     assert body["model"] == "qwen2.5:3b" and body["stream"] is False
-    assert body["options"]["temperature"] == 0.2
+    assert body["options"]["temperature"] == 0.1 and body["options"]["num_predict"] == 120
 
 
 async def test_prompt_contains_no_raw_phone_upi_email_url():
@@ -339,7 +339,7 @@ async def test_prompt_contains_no_raw_phone_upi_email_url():
         "123456789012",
     ):
         assert raw not in prompt, raw
-    assert "[number]" in prompt and "[link]" in prompt
+    assert "Account" not in prompt  # the complaint text itself is not sent (grounded prompt)
     s = sanitise("call 98765 43210 now")
     assert "98765" not in s
 
@@ -352,21 +352,21 @@ async def test_prompt_contains_no_raw_phone_upi_email_url():
         (lambda r: httpx.Response(200, text="<html>not json</html>"), "error"),
         (lambda r: httpx.Response(200, json={"nope": 1}), "error"),
         (lambda r: httpx.Response(200, json={"response": 7}), "error"),
-        (lambda r: httpx.Response(200, json={"response": "x" * (MAX_LLM_OUTPUT + 1)}), "error"),
+        (lambda r: httpx.Response(200, json={"response": "x" * (MAX_LLM_OUTPUT + 1)}), "rejected"),
         (
             lambda r: httpx.Response(200, json={"response": "Call 9876543210 to get it back."}),
-            "error",
+            "rejected",
         ),
         (
             lambda r: httpx.Response(200, json={"response": "Visit https://evil.example/x now"}),
-            "error",
+            "rejected",
         ),
-        (lambda r: httpx.Response(200, json={"response": "mail me at a@b.example"}), "error"),
+        (lambda r: httpx.Response(200, json={"response": "mail me at a@b.example"}), "rejected"),
         (
             lambda r: httpx.Response(
                 200, json={"response": "There is a 90% chance this is fraud."}
             ),
-            "error",
+            "rejected",
         ),
         (lambda r: (_ for _ in ()).throw(httpx.ConnectError("refused", request=r)), "unavailable"),
     ],

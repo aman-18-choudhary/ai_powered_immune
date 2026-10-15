@@ -222,7 +222,8 @@ CATEGORY_PRIOR: dict[str, int] = {
     "INVESTMENT_SCAM": 55, "BANK_FRAUD": 50, "JOB_SCAM": 50, "SOCIAL_MEDIA_FRAUD": 45, "OTHER": 0,
 }  # fmt: skip
 URL_ADJUSTMENT_MAX = 25
-UNAVAILABLE_STATES = ("unavailable", "timeout", "error")
+UNAVAILABLE_STATES = ("unavailable", "timeout", "error", "rejected")
+_NOT_RUN = ("unavailable", "not_configured", "rejected", "timeout", "error")
 MIN_WORDS = 4  # below this the text models are not run (call-guard's classifier needs 4 words)
 SKIPPED_SHORT = "skipped_insufficient_input"
 _WORD = re.compile(r"\w+")
@@ -566,8 +567,20 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             if not scored or insufficient:
                 caps["llm_explanation"] = "skipped_no_input"
                 reasons["llm_explanation"] = "nothing_to_explain"
+            elif not indicators:
+                # the LLM may only rephrase findings; with none there is nothing to rephrase
+                caps["llm_explanation"] = "skipped_no_input"
+                reasons["llm_explanation"] = "no_findings_to_rephrase"
             else:
-                res = await self._explainer.explain(text, {**facts, "indicators": indicators})
+                guidance_pre = (
+                    classification
+                    if classification and classification not in ("UNDETERMINED", "OTHER")
+                    else selected
+                )
+                pre_actions = static_guidance(guidance_pre, level)
+                res = await self._explainer.explain(
+                    text, {**facts, "indicators": indicators, "actions": pre_actions}
+                )
                 caps["llm_explanation"] = res.status
                 if res.status == "available":
                     llm_text = res.text
@@ -580,13 +593,18 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             stage("llm_explanation", "llm", llm_method, "ran", version=versions["llm"])
             parts.append({
                 "text": llm_text, "source": "llm", "method": llm_method,
-                "evidence": {"type": "generated", "inputs": "computed indicators and the "
-                             "sanitised text", "changes_score": False},
+                "evidence": {"type": "generated", "inputs": "the computed indicators, their "
+                             "sanitised evidence snippets and the recommended steps only",
+                             "changes_score": False, "grounding_checked": True},
+                "label": f"LLM-generated ({versions['llm']}), may be imprecise",
             })  # fmt: skip
         else:
             stage("llm_explanation", "llm", llm_method,
                   "not_configured" if not llm_configured else
-                  "skipped" if caps["llm_explanation"] == "skipped_no_input" else "unavailable",
+                  "skipped" if caps["llm_explanation"] == "skipped_no_input" else
+                  caps["llm_explanation"] if caps["llm_explanation"] in ("rejected", "timeout",
+                                                                         "error") else
+                  "unavailable",
                   reasons.get("llm_explanation"))  # fmt: skip
 
         status = "UNAVAILABLE" if not scored else ("PARTIAL" if applicable_failed else "COMPLETED")
@@ -649,7 +667,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "pipeline": PIPELINE_V2, "stages": stages,
             "ran": [x["stage"] for x in stages if x["status"] == "ran"],
             "unavailable": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
-                            if x["status"] in ("unavailable", "not_configured")],
+                            if x["status"] in _NOT_RUN],
             "skipped": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
                         if x["status"] == "skipped"],
             "model_versions": versions,

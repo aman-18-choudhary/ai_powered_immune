@@ -309,3 +309,25 @@ describe("investigator queue", () => {
     await waitFor(() => expect(calls.some((c) => c.path.includes("risk_level=CRITICAL"))).toBe(true));
   });
 });
+
+describe("LLM text (mocked data)", () => {
+  it("is shown apart from the rule explanation with its label; a rejection is explained", async () => {
+    const { AnalysisResultView } = await import("@/components/complaints/AnalysisResultView");
+    const withLlm = result({
+      llm_explanation: "The caller demands moving funds to a safe account.",
+      llm_model: "qwen2.5:0.5b",
+      capabilities: { llm_explanation: "available" },
+      explanation_parts: [
+        { text: "Risk score 93/100 (CRITICAL).", source: "rule", method: "risk_formula" },
+        { text: "The caller demands moving funds to a safe account.", source: "llm", method: "ollama:qwen2.5:0.5b", label: "LLM-generated (qwen2.5:0.5b), may be imprecise" },
+      ],
+    });
+    const { unmount } = renderApp(<AnalysisResultView a={withLlm as never} />);
+    expect(screen.getByTestId("llm-text")).toHaveTextContent("LLM-generated (qwen2.5:0.5b), may be imprecise");
+    expect(screen.getByTestId("explanation-parts")).not.toHaveTextContent("safe account");
+    unmount();
+    const rejected = result({ capabilities: { llm_explanation: "rejected" }, capability_reasons: { llm_explanation: "role_inversion" } });
+    renderApp(<AnalysisResultView a={rejected as never} />);
+    expect(screen.getByTestId("indicator-group-llm")).toHaveTextContent("rejected by the grounding checks (role inversion)");
+  });
+});
