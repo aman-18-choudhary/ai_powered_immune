@@ -128,7 +128,6 @@ export default function InvestigatorQueue() {
               {RISK_FILTERS.map((r) => (
                 <option key={r} value={r}>
                   {RISK_LABEL[r]}
-                  {r === "HIGH" ? " (includes critical)" : ""}
                 </option>
               ))}
             </select>

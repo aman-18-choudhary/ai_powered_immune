@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle, BookOpen, Boxes, Check, Copy, Package, Play, Scale, Terminal } from "lucide-react";
 import { Panel } from "@/components/common/Panel";
 import { ArchDiagram } from "@/components/about/ArchDiagram";
 import { AUDIT_SUMMARY, LIMITS, REAL_VS_SIMULATED, STACK } from "@/lib/about/architecture";
 import { usePageTitle } from "@/lib/hooks/usePageTitle";
+import { useAccountRole } from "@/state/account";
 import pkg from "../../package.json";
 
 const RUN = `make demo      # builds the console, serves it with the demo server on :8080
@@ -49,6 +51,7 @@ function CopyBlock({ text }: { text: string }) {
 export default function About() {
   usePageTitle("About");
   const libs = declaredLibraries();
+  const acctRole = useAccountRole();
   return (
     <div className="mx-auto w-full max-w-[1200px] space-y-4 px-4 py-4 md:px-6">
       <header>
@@ -57,6 +60,16 @@ export default function About() {
           One platform that lets a second bank block a mule account seconds after the first bank&apos;s analyst confirms it, with an audit trail an outsider can verify. This page says plainly what is real and what is made up.
         </p>
       </header>
+
+      {acctRole && (
+        <p className="text-sm" data-testid="about-models-link">
+          The complaint analysis models (trained on synthetic data only), their held-out metrics and limits:{" "}
+          <Link to="/models" className="text-flow underline underline-offset-2">
+            Models
+          </Link>
+          .
+        </p>
+      )}
 
       <Panel title="Architecture" icon={<Boxes className="h-3.5 w-3.5" aria-hidden />} bodyClassName="p-4">
         <ArchDiagram />

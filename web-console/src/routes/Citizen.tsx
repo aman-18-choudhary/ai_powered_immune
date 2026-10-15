@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Lock, ShieldCheck } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { VerdictCard } from "@/components/citizen/VerdictCard";
 import { endpoints } from "@/lib/api/endpoints";
@@ -109,6 +110,13 @@ export default function Citizen() {
               <ShieldCheck className="h-6 w-6 text-safe" aria-hidden /> {t(lang, "title")}
             </h1>
             <p className="text-[15px] leading-snug text-muted">{t(lang, "subtitle")}</p>
+            <p className="text-xs text-subtle" data-testid="citizen-sim-note">
+              Simulation demo. Signed in to an account? Use{" "}
+              <Link to="/check" className="text-flow underline underline-offset-2">
+                Check a message or link
+              </Link>{" "}
+              for the real checker.
+            </p>
           </header>
 
           <div role="radiogroup" aria-label={t(lang, "language")} className="flex gap-1 rounded-2xl border border-line bg-chip p-1">

@@ -7,6 +7,8 @@ import {
   LayoutDashboard,
   ListChecks,
   LogIn,
+  BrainCircuit,
+  ScanSearch,
   Radar,
   ShieldCheck,
   Smartphone,
@@ -43,8 +45,10 @@ export interface AccountNavItem extends NavItem {
 export const ACCOUNT_NAV: readonly AccountNavItem[] = [
   { to: "/me", label: "Reports", title: "My complaints", icon: FileText, end: true, roles: ["CITIZEN"] },
   { to: "/me/complaints/new", label: "Report", title: "Register a complaint", icon: FilePlus2, roles: ["CITIZEN"] },
+  { to: "/check", label: "Check", title: "Check a message or link", icon: ScanSearch, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
   { to: "/investigator", label: "Queue", title: "Investigator queue", icon: ListChecks, roles: ["INVESTIGATOR", "ADMIN"] },
   { to: "/admin", label: "Admin", title: "Administration", icon: UserCog, roles: ["ADMIN"] },
+  { to: "/models", label: "Models", title: "Models", icon: BrainCircuit, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
   { to: "/me/profile", label: "Profile", title: "Profile and privacy", icon: UserRound, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
 ];
 
@@ -73,6 +77,8 @@ const TITLES: { to: string; title: string; end?: boolean }[] = [
   { to: "/investigator", title: "Investigator queue" },
   { to: "/investigator/complaints/", title: "Complaint review" },
   { to: "/admin", title: "Administration" },
+  { to: "/check", title: "Check a message or link" },
+  { to: "/models", title: "Models" },
 ];
 
 export function pageTitle(path: string): string {
@@ -80,7 +86,7 @@ export function pageTitle(path: string): string {
   return hit?.title ?? "Not found";
 }
 
-const ACCOUNT_PREFIXES = ["/me", "/investigator", "/admin", "/sign-in", "/account"];
+const ACCOUNT_PREFIXES = ["/me", "/investigator", "/admin", "/sign-in", "/account", "/check", "/models"];
 /** Pages that show real records (no SIMULATION pill there). */
 export function isAccountPath(path: string): boolean {
   return ACCOUNT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));

@@ -25,8 +25,8 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const ACCOUNT_ROLES = ["CITIZEN", "INVESTIGATOR", "ADMIN"] as const;
 export type AccountRole = (typeof ACCOUNT_ROLES)[number];
 
-/** Filter values accepted by GET /complaints?risk_level= (CRITICAL is stored as HIGH). */
-export const RISK_FILTERS = ["LOW", "MEDIUM", "HIGH"] as const;
+/** Filter values accepted by GET /complaints?risk_level= (exact level of the latest analysis). */
+export const RISK_FILTERS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export interface AuthConfig {
@@ -82,12 +82,16 @@ export interface MyStats {
   by_category: Record<Category, number>;
   last_complaint_at: string | null;
   unread_alerts: number;
+  /** Level of the latest analysis per complaint (added with the CRITICAL level). */
+  by_risk_level?: Record<string, number>;
 }
+
+export type AnalysisStatus = "COMPLETED" | "PARTIAL" | "UNAVAILABLE" | "INSUFFICIENT_INPUT";
 
 export interface AnalysisSummary {
   version: number;
   created_at: string | null;
-  status: "COMPLETED" | "PARTIAL" | "UNAVAILABLE";
+  status: AnalysisStatus;
   risk_score: number | null;
   risk_level: RiskLevel | null;
   score_semantics: string;
@@ -162,11 +166,172 @@ export interface Page<T> {
   offset: number;
 }
 
+/** Provenance vocabulary (services/complaints/complaints/provenance.py); "legacy" = not derivable. */
+export type ProvenanceSource = "rule" | "ml" | "llm" | "static_guidance" | "legacy";
+
+export interface ProvenanceEvidence {
+  type: "text_span" | "field" | "whole_text" | "keyed_by" | "not_recorded" | "generated" | string;
+  field?: string;
+  start?: number;
+  end?: number;
+  snippet?: string;
+  granularity?: string;
+  host?: string | null;
+  note?: string;
+  [k: string]: unknown;
+}
+
 export interface Indicator {
   code: string;
   weight: number;
   text: string;
+  source: ProvenanceSource | string;
+  method?: string;
+  stage?: string;
+  evidence?: ProvenanceEvidence;
+  derived_from_legacy?: boolean;
+}
+
+export interface ExplanationPart {
+  text: string;
+  source: ProvenanceSource | string;
+  method: string;
+  evidence?: ProvenanceEvidence;
+  derived_from_legacy?: boolean;
+}
+
+export interface RecommendedAction {
+  text: string;
   source: string;
+  method?: string;
+  evidence?: ProvenanceEvidence;
+}
+
+export interface ProvenanceStage {
+  stage: string;
+  source: ProvenanceSource | string;
+  method: string;
+  status: "ran" | "unavailable" | "skipped" | "not_configured" | string;
+  reason: string | null;
+  version: string | null;
+}
+
+export interface Provenance {
+  schema?: number;
+  derived_from_legacy: boolean;
+  legacy?: boolean;
+  note?: string;
+  pipeline?: string;
+  stages?: ProvenanceStage[];
+  ran?: string[];
+  unavailable?: { stage: string; reason: string | null }[];
+  skipped?: { stage: string; reason: string | null }[];
+  model_versions?: Record<string, string | null>;
+}
+
+export interface CategoryModelOut {
+  label?: string;
+  abstained?: boolean;
+  model_version?: string;
+  trained_on?: string;
+  top?: { category: string; score: number }[];
+  top_categories?: { category: string; score: number }[];
+  abstention_threshold?: number;
+  min_confidence?: number;
+}
+
+/** Fields shared by a stored analysis and a stateless check (POST /analyze). */
+export interface AnalysisResult {
+  created_at: string | null;
+  pipeline_version: string;
+  status: AnalysisStatus;
+  capabilities: Record<string, string>;
+  risk_score: number | null;
+  risk_level: RiskLevel | null;
+  score_semantics: string;
+  classification: string | null;
+  confidence: number | null;
+  confidence_interpretation?: string | null;
+  indicators: Indicator[];
+  explanation: string | null;
+  explanation_parts?: ExplanationPart[];
+  recommended_actions: RecommendedAction[];
+  limitations: string[];
+  explanation_source: string | null;
+  llm_explanation: string | null;
+  llm_model?: string | null;
+  capability_reasons: Record<string, string>;
+  unavailable_capabilities: string[];
+  unanalysed_attachments: unknown[];
+  category_model: CategoryModelOut | null;
+  provenance?: Provenance | null;
+}
+
+export interface InputCapability {
+  status: string;
+  reason?: string;
+  note?: string;
+  method?: string;
+  methods?: string[];
+}
+
+/** POST /analyze: nothing is stored. */
+export interface CheckResult extends AnalysisResult {
+  persisted: false;
+  input_capabilities?: Record<string, InputCapability>;
+}
+
+export interface CheckRequest {
+  text: string;
+  url?: string;
+  upi_id?: string;
+  phone?: string;
+  email?: string;
+  amount?: string;
+  payment_method?: PaymentMethod;
+}
+
+export interface AnalysisVersion extends AnalysisSummary {
+  id: string;
+  pipeline_version: string;
+  classification: string | null;
+  confidence: number | null;
+  model_versions?: Record<string, string | null> | null;
+  provenance_derived_from_legacy?: boolean;
+}
+
+export interface ModelEntry {
+  id: string;
+  kind: string;
+  source: string;
+  version: string;
+  algorithm?: string | null;
+  artifact: { file?: string | null; bytes?: number | null; sha256: string | null; sha256_recorded_at_training?: string | null; verified_at_load?: string };
+  training_data: { synthetic: boolean; description: string; rows?: number | null; split?: string };
+  metrics: {
+    basis: string;
+    n: number | null;
+    macro_f1: number | null;
+    accuracy: number | null;
+    abstention_rate: number | null;
+    accuracy_on_answered?: number | null;
+    abstention_threshold: number | null;
+    metric_basis?: string;
+    per_class?: Record<string, { precision: number; recall: number; f1: number; support: number }>;
+  } | null;
+  metrics_unavailable_reason?: string;
+  leaky_random_split: { is_headline: false; macro_f1: number | null; accuracy?: number | null; note: string } | null;
+  disclaimer?: string | null;
+  limitations: string[];
+  confidence_meaning?: string;
+  runtime: { status: string; reason: string | null };
+}
+
+export interface ModelsInfo {
+  synthetic_data_warning: string;
+  score_semantics: string;
+  models: ModelEntry[];
+  llm: { provider: string; status: "not_configured" | "unavailable" | "ready" | string; model: string | null; reason: string | null; used_for: string };
 }
 
 export interface Analysis {
@@ -175,7 +340,7 @@ export interface Analysis {
   version: number;
   created_at: string | null;
   pipeline_version: string;
-  status: "COMPLETED" | "PARTIAL" | "UNAVAILABLE";
+  status: AnalysisStatus;
   capabilities: Record<string, string>;
   risk_score: number | null;
   risk_level: RiskLevel | null;
@@ -184,15 +349,19 @@ export interface Analysis {
   confidence: number | null;
   indicators: Indicator[];
   explanation: string | null;
-  recommended_actions: { text: string; source: string }[];
+  recommended_actions: RecommendedAction[];
   limitations: string[];
   explanation_source: string | null;
+  explanation_parts?: ExplanationPart[];
   llm_explanation: string | null;
+  llm_model?: string | null;
   confidence_semantics: string | null;
+  confidence_interpretation?: string | null;
   capability_reasons: Record<string, string>;
   unavailable_capabilities: string[];
   unanalysed_attachments: unknown[];
-  category_model: { label?: string; abstained?: boolean; model_version?: string; trained_on?: string } | null;
+  category_model: CategoryModelOut | null;
+  provenance?: Provenance | null;
   history?: AnalysisSummary[];
 }
 
@@ -203,6 +372,7 @@ export interface Alert {
   message: string;
   created_at: string | null;
   read_at: string | null;
+  risk_level?: RiskLevel | null;
 }
 
 export interface AlertsPage extends Page<Alert> {

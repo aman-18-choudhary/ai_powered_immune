@@ -25,6 +25,8 @@ const ComplaintPage = lazy(() => import("@/routes/account/ComplaintPage"));
 const Profile = lazy(() => import("@/routes/account/Profile"));
 const InvestigatorQueue = lazy(() => import("@/routes/account/InvestigatorQueue"));
 const Admin = lazy(() => import("@/routes/account/Admin"));
+const CheckMessage = lazy(() => import("@/routes/account/CheckMessage"));
+const Models = lazy(() => import("@/routes/account/Models"));
 // Clerk is its own chunk, loaded only when /auth/config enables it.
 const ClerkRoot = lazy(() => import("./auth/clerk").then((m) => ({ default: m.ClerkRoot })));
 
@@ -53,6 +55,8 @@ function Authed() {
           <Route path="investigator" element={<RequireAccount roles={STAFF}><InvestigatorQueue /></RequireAccount>} />
           <Route path="investigator/complaints/:id" element={<RequireAccount roles={STAFF}><ComplaintPage /></RequireAccount>} />
           <Route path="admin" element={<RequireAccount roles={["ADMIN"]}><Admin /></RequireAccount>} />
+          <Route path="check" element={<RequireAccount><CheckMessage /></RequireAccount>} />
+          <Route path="models" element={<RequireAccount><Models /></RequireAccount>} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Crosshair, FilePlus2, Paperclip, X } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft, Crosshair, FilePlus2, Info, Paperclip, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, PageHeader, Spinner, inputCls } from "@/components/complaints/ui";
 import { UploadList } from "@/components/complaints/UploadList";
@@ -27,10 +27,27 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
+/** Keys the "Check a message or link" page may pre-fill (router state only, never the URL). */
+const PREFILL_KEYS = ["description", "suspicious_url", "upi_id", "suspect_phone", "suspect_email", "amount", "payment_method"] as const;
+
+function prefilled(state: unknown): FormValues | null {
+  const pre = (state as { prefill?: Record<string, unknown> } | null)?.prefill;
+  if (!pre || typeof pre !== "object") return null;
+  const out: FormValues = { ...EMPTY_FORM };
+  for (const k of PREFILL_KEYS) {
+    const val = pre[k];
+    if (typeof val === "string") (out as unknown as Record<string, string>)[k] = val;
+  }
+  if (out.payment_method && !(PAYMENT_METHODS as readonly string[]).includes(out.payment_method)) out.payment_method = "";
+  return out;
+}
+
 export default function NewComplaint() {
   usePageTitle("Register a complaint");
   const nav = useNavigate();
-  const [v, setV] = useState<FormValues>(EMPTY_FORM);
+  const loc = useLocation();
+  const [fromCheck] = useState(() => prefilled(loc.state));
+  const [v, setV] = useState<FormValues>(() => fromCheck ?? EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -143,6 +160,12 @@ export default function NewComplaint() {
         title="Register a complaint"
         subtitle="Only the category, a title and a description are required. Add any other details you have; leave the rest empty. The reported time is set by the server when you submit."
       />
+      {fromCheck && (
+        <p className="flex items-start gap-2 rounded-xl border border-intel/40 bg-intel-soft p-3 text-sm" role="status" data-testid="prefill-note">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          Filled in from your check. Review every field, choose a category and add a title; nothing is submitted until you press the button.
+        </p>
+      )}
       <form ref={formRef} onSubmit={submit} noValidate className="space-y-4" aria-describedby={formError ? "form-error" : undefined}>
         {formError && (
           <p id="form-error" role="alert" className="rounded-xl border border-danger/40 bg-danger-soft p-3 text-sm" data-testid="form-error">

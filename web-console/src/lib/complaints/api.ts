@@ -7,7 +7,10 @@ import type {
   Alert,
   AlertsPage,
   Analysis,
+  AnalysisVersion,
   AuditRow,
+  CheckRequest,
+  CheckResult,
   AuthConfig,
   ComplaintCreate,
   ComplaintDetail,
@@ -17,6 +20,7 @@ import type {
   LocalStartResponse,
   LocalVerifyResponse,
   Me,
+  ModelsInfo,
   MyStats,
   Page,
   SessionPayload,
@@ -204,6 +208,11 @@ export const complaintsApi = {
   downloadEvidence: (id: string, eid: string) => request<Blob>("GET", `/complaints/${enc(id)}/evidence/${enc(eid)}/download`, { blob: true }),
   analysis: (id: string, signal?: AbortSignal) => request<Analysis>("GET", `/complaints/${enc(id)}/analysis`, { signal }),
   runAnalysis: (id: string) => request<Analysis>("POST", `/complaints/${enc(id)}/analysis`, { body: {} }),
+  analysisVersions: (id: string, p: { limit: number; offset: number }, signal?: AbortSignal) =>
+    request<Page<AnalysisVersion>>("GET", `/complaints/${enc(id)}/analyses${qs(p)}`, { signal }),
+  /** Stateless check: nothing is stored by the service. */
+  check: (body: CheckRequest, signal?: AbortSignal) => request<CheckResult>("POST", "/analyze", { body, signal }),
+  models: (signal?: AbortSignal) => request<ModelsInfo>("GET", "/models", { signal }),
 
   adminUsers: (p: { limit: number; offset: number; role?: string }, signal?: AbortSignal) =>
     request<Page<AdminUser>>("GET", `/admin/users${qs(p)}`, { signal }),

@@ -78,8 +78,9 @@ describe("navigation by role", () => {
   it("simulator pages stay when a demo role is active; account items follow the effective role", () => {
     expect(paths(true, null)).toEqual(["/", "/command", "/analyst", "/evidence", "/citizen", "/insights", "/about", "/sign-in"]);
     expect(paths(true, "CITIZEN")).toContain("/me/complaints/new");
-    expect(paths(false, "INVESTIGATOR")).toEqual(["/investigator", "/me/profile", "/simulation"]);
-    expect(paths(false, "ADMIN")).toEqual(["/investigator", "/admin", "/me/profile", "/simulation"]);
+    expect(paths(false, "INVESTIGATOR")).toEqual(["/check", "/investigator", "/models", "/me/profile", "/simulation"]);
+    expect(paths(false, "ADMIN")).toEqual(["/check", "/investigator", "/admin", "/models", "/me/profile", "/simulation"]);
+    expect(paths(false, "CITIZEN")).toEqual(["/me", "/me/complaints/new", "/check", "/models", "/me/profile", "/simulation"]);
     expect(paths(false, "CITIZEN")).not.toContain("/investigator");
   });
 

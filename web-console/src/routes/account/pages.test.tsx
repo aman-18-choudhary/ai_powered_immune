@@ -105,7 +105,8 @@ describe("complaint detail", () => {
     expect(await screen.findByTestId("score-semantics")).toHaveTextContent("uncalibrated heuristic score, not a probability");
     const panel = screen.getByTestId("analysis");
     expect(within(panel).getAllByTestId("risk-badge")[0]).toHaveTextContent("High risk · 80/100");
-    expect(panel).toHaveTextContent("source: rule-based");
+    // an older-format result: indicator source derived on the server; here the client still groups it
+    expect(within(screen.getByTestId("explanation-parts")).getAllByTestId("source-badge")[0]).toHaveTextContent("Rule");
     expect(screen.getByTestId("unavailable-capabilities")).toHaveTextContent("Screenshot ocr: unavailable");
   });
 
