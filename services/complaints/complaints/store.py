@@ -42,6 +42,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 from . import migrations
 from .identity import Identity
 from .schema import (
+    RISK_LEVELS,
     admin_audit,
     alerts,
     analyses,
@@ -938,9 +939,9 @@ class ComplaintStore:
                     id=aid, complaint_id=complaint_id, version=version, created_at=now, **rec
                 )
             )
-            # the owner is alerted for a HIGH result (also when an investigator ran it), once per
-            # version, in the same transaction as the analysis row
-            if rec.get("risk_level") == "HIGH" and rec.get("status") != "UNAVAILABLE":
+            # the owner is alerted for a HIGH or CRITICAL result (also when an investigator ran
+            # it), in the same transaction as the analysis row
+            if rec.get("risk_level") in ("HIGH", "CRITICAL") and rec.get("status") != "UNAVAILABLE":
                 self._alert(
                     conn, cur["owner_user_id"], complaint_id, "HIGH_RISK_ANALYSIS",
                     f"Analysis {version} of your complaint found strong scam indicators. "
@@ -1022,11 +1023,32 @@ class ComplaintStore:
                 select(func.count()).select_from(alerts)
                 .where(alerts.c.user_id == user_id, alerts.c.read_at.is_(None))
             ).scalar_one()  # fmt: skip
+            # level of the LATEST analysis of each own complaint
+            latest = (
+                select(analyses.c.complaint_id, func.max(analyses.c.version).label("v"))
+                .group_by(analyses.c.complaint_id)
+                .subquery()
+            )
+            lv = c.execute(
+                select(analyses.c.risk_level, func.count())
+                .select_from(complaints)
+                .join(latest, latest.c.complaint_id == complaints.c.id)
+                .join(analyses, and_(analyses.c.complaint_id == latest.c.complaint_id,
+                                     analyses.c.version == latest.c.v))
+                .where(*own)
+                .group_by(analyses.c.risk_level)
+            ).all()  # fmt: skip
+        by_level = {k: 0 for k in (*RISK_LEVELS, "not_scored")}
+        for level, n in lv:
+            by_level[level if level in RISK_LEVELS else "not_scored"] += int(n)
+        total = sum(int(v) for v in by_status.values())
+        by_level["not_analysed"] = total - sum(by_level.values())
         return {
             "by_status": {k: int(v) for k, v in by_status.items()},
             "by_category": {k: int(v) for k, v in by_cat.items()},
             "last_complaint_at": _aware(last) if isinstance(last, datetime) else _parse(last),
             "unread_alerts": int(unread),
+            "by_risk_level": by_level,
         }
 
 

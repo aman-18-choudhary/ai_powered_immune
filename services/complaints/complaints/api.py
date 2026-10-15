@@ -277,7 +277,8 @@ def _history_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _effective_level(a: dict[str, Any]) -> str | None:
-    """CRITICAL is stored as HIGH (see ``analysis.stored_level``); the exact level is in detail."""
+    """The exact level. Rows from before migration 6 stored CRITICAL as HIGH and kept the exact
+    level in ``detail`` (the migration backfills them; ``detail`` still wins for safety)."""
     d = a.get("detail") or {}
     return d.get("risk_level") or a["risk_level"]
 
@@ -826,7 +827,7 @@ def create_app(
         incident_to: datetime | None = None,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
-        risk_level: Literal["LOW", "MEDIUM", "HIGH"] | None = None,
+        risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] | None = None,
         has_evidence: bool | None = None,
         q: Annotated[str | None, Query(max_length=100)] = None,
         sort: Literal[
@@ -1092,6 +1093,7 @@ def create_app(
         return {
             "total": sum(by_status.values()), "by_status": by_status, "by_category": by_category,
             "last_complaint_at": _iso(s["last_complaint_at"]), "unread_alerts": s["unread_alerts"],
+            "by_risk_level": s["by_risk_level"],
         }  # fmt: skip
 
     # ------------------------------------------------------------------ admin

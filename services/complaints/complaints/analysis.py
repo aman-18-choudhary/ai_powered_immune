@@ -238,9 +238,10 @@ def band_v2(risk_score: int) -> str:
 
 
 def stored_level(level: str | None) -> str | None:
-    """The ``analyses.risk_level`` column predates CRITICAL (create-only schema with a CHECK
-    constraint), so CRITICAL is stored as HIGH and the exact level is kept in ``detail``."""
-    return "HIGH" if level == "CRITICAL" else level
+    """The level written to ``analyses.risk_level``. Since migration 6 the column allows CRITICAL,
+    so the exact level is stored (before it, CRITICAL was stored as HIGH; those rows are
+    backfilled by the migration and ``detail.risk_level`` still holds the exact level)."""
+    return level
 
 
 def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], set[str]]:

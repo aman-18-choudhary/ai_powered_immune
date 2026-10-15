@@ -39,7 +39,9 @@ STATUSES = ("SUBMITTED", "UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "REJECTED"
 # row stays for the audit trail (migration 5 widens the CHECK on an existing database)
 EVIDENCE_STATUSES = ("stored", "rejected", "deleted")
 ANALYSIS_STATUSES = ("COMPLETED", "PARTIAL", "UNAVAILABLE")
-RISK_LEVELS = ("LOW", "MEDIUM", "HIGH")
+# CRITICAL: migration 6 widens the CHECK on an existing database (before it, CRITICAL was stored
+# as HIGH with the exact level in ``analyses.detail``; the migration backfills those rows)
+RISK_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 
 
 def _in(col: str, values: tuple[str, ...]) -> str:

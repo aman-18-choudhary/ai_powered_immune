@@ -18,11 +18,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import MetaData, inspect, select, text
+from sqlalchemy import MetaData, inspect, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateTable
 
-from .schema import EVIDENCE_STATUSES, metadata, schema_migrations
+from .schema import EVIDENCE_STATUSES, RISK_LEVELS, analyses, metadata, schema_migrations
 
 ADVISORY_LOCK_SCHEMA = 727201
 
@@ -84,30 +84,47 @@ def _user_profile_privacy(conn: Connection) -> None:
     add_column(conn, "users", "display_name_set")
 
 
-def _evidence_check_current(conn: Connection) -> bool:
-    """Does the live ck_evidence_status CHECK already allow every status in the metadata?"""
+def _check_current(conn: Connection, table: str, constraint: str, values: tuple[str, ...]) -> bool:
+    """Does the live CHECK ``constraint`` on ``table`` already allow every one of ``values``?
+    (SQLite: the table's whole CREATE statement is inspected.)"""
     if conn.dialect.name == "postgresql":
         rows = conn.execute(
             text(
                 "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
                 "JOIN pg_class t ON t.oid = c.conrelid "
-                "WHERE t.relname = 'complaint_evidence' AND c.conname = 'ck_evidence_status'"
-            )
+                "WHERE t.relname = :t AND c.conname = :c"
+            ),
+            {"t": table, "c": constraint},
         ).scalars()
         defs = list(rows)
     else:
         sql = conn.execute(
             text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :n"),
-            {"n": "complaint_evidence"},
+            {"n": table},
         ).scalar()
         defs = [sql or ""]
-    return bool(defs) and all(f"'{s}'" in d for d in defs for s in EVIDENCE_STATUSES)
+    return bool(defs) and all(f"'{s}'" in d for d in defs for s in values)
+
+
+def _swap_pg_check(conn: Connection, table: str, constraint: str, column: str,
+                   values: tuple[str, ...], nullable: bool) -> None:  # fmt: skip
+    allowed = ", ".join(f"'{s}'" for s in values)
+    cond = f"{column} IN ({allowed})"
+    if nullable:
+        cond = f"{column} IS NULL OR {cond}"
+    conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}"))
+    conn.execute(text(f"ALTER TABLE {table} ADD CONSTRAINT {constraint} CHECK ({cond})"))
+
+
+def _evidence_check_current(conn: Connection) -> bool:
+    return _check_current(conn, "complaint_evidence", "ck_evidence_status", EVIDENCE_STATUSES)
 
 
 def _rebuild_sqlite_table(conn: Connection, name: str) -> None:
     """SQLite cannot alter a CHECK constraint: copy into a table created from the current
-    metadata, drop the old one, rename, recreate the indexes. Nothing references
-    ``complaint_evidence``, so foreign keys stay valid; every row and column value is kept."""
+    metadata, drop the old one, rename, recreate the indexes. Only used for tables that no other
+    table references (``complaint_evidence``, ``analyses``), so foreign keys stay valid; every row
+    and column value is kept."""
     table = metadata.tables[name]
     tmp_name = f"{name}__migrating"
     scratch = MetaData()  # the referenced tables must exist in the copy for its foreign keys
@@ -128,19 +145,43 @@ def _rebuild_sqlite_table(conn: Connection, name: str) -> None:
 def _evidence_deleted_status(conn: Connection) -> None:
     if not _evidence_check_current(conn):
         if conn.dialect.name == "postgresql":
-            allowed = ", ".join(f"'{s}'" for s in EVIDENCE_STATUSES)
-            conn.execute(
-                text("ALTER TABLE complaint_evidence DROP CONSTRAINT IF EXISTS ck_evidence_status")
-            )
-            conn.execute(
-                text(
-                    "ALTER TABLE complaint_evidence ADD CONSTRAINT ck_evidence_status "
-                    f"CHECK (status IN ({allowed}))"
-                )
-            )
+            _swap_pg_check(conn, "complaint_evidence", "ck_evidence_status", "status",
+                           EVIDENCE_STATUSES, nullable=False)  # fmt: skip
         else:
             _rebuild_sqlite_table(conn, "complaint_evidence")
     add_column(conn, "complaint_evidence", "deleted_at")
+
+
+def _backfill_critical(conn: Connection) -> int:
+    """Rows written before migration 6 stored CRITICAL as HIGH and kept the exact level in
+    ``detail.risk_level``: store the exact level in the column. Nothing else is changed."""
+    rows = conn.execute(
+        select(analyses.c.id, analyses.c.detail).where(
+            analyses.c.risk_level == "HIGH", analyses.c.detail.is_not(None)
+        )
+    ).all()
+    ids = [
+        r.id
+        for r in rows
+        if isinstance(r.detail, dict) and r.detail.get("risk_level") == "CRITICAL"
+    ]
+    for aid in ids:
+        conn.execute(update(analyses).where(analyses.c.id == aid).values(risk_level="CRITICAL"))
+    return len(ids)
+
+
+def _analyses_critical_level(conn: Connection) -> None:
+    """Allow CRITICAL in ``analyses.risk_level`` (Postgres: CHECK swapped; SQLite: table rebuilt
+    with every row) and backfill the rows that stored CRITICAL as HIGH. The backfill only runs
+    when the CHECK had to be widened: after that no row is written the old way."""
+    if _check_current(conn, "analyses", "ck_analysis_level", RISK_LEVELS):
+        return
+    if conn.dialect.name == "postgresql":
+        _swap_pg_check(conn, "analyses", "ck_analysis_level", "risk_level", RISK_LEVELS,
+                       nullable=True)  # fmt: skip
+    else:
+        _rebuild_sqlite_table(conn, "analyses")
+    _backfill_critical(conn)
 
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -149,6 +190,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(3, "complaint_bank_details", _complaint_bank_details),
     Migration(4, "user_profile_privacy", _user_profile_privacy),
     Migration(5, "evidence_deleted_status", _evidence_deleted_status),
+    Migration(6, "analyses_critical_level", _analyses_critical_level),
 )
 LATEST = MIGRATIONS[-1].version
 

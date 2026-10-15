@@ -127,7 +127,8 @@ def test_bands_v2_and_stored_level_mapping():
     assert [band_v2(x) for x in (0, 34, 35, 69, 70, 89, 90, 100)] == [
         "LOW", "LOW", "MEDIUM", "MEDIUM", "HIGH", "HIGH", "CRITICAL", "CRITICAL",
     ]  # fmt: skip
-    assert stored_level("CRITICAL") == "HIGH" and stored_level("LOW") == "LOW"
+    # since migration 6 the exact level is stored (CRITICAL was stored as HIGH before it)
+    assert stored_level("CRITICAL") == "CRITICAL" and stored_level("LOW") == "LOW"
     assert stored_level(None) is None
 
 
@@ -477,11 +478,11 @@ async def test_critical_roundtrip(make_app, tok):
     d = (await cl.get(f"/complaints/{c['id']}", headers=tok("a"))).json()
     assert d["latest_analysis"]["risk_level"] == "CRITICAL"
     with app.state.store.engine.connect() as conn:
-        assert conn.execute(sql_text("select risk_level from analyses")).scalar_one() == "HIGH"
+        assert conn.execute(sql_text("select risk_level from analyses")).scalar_one() == "CRITICAL"
     alerts = (await cl.get("/alerts", headers=tok("a"))).json()["items"]
     assert [x["kind"] for x in alerts] == ["HIGH_RISK_ANALYSIS"]
-    flt = (await cl.get("/complaints?risk_level=HIGH", headers=tok("a"))).json()
-    assert flt["total"] == 1 if "total" in flt else len(flt["items"]) == 1
+    flt = (await cl.get("/complaints?risk_level=CRITICAL", headers=tok("a"))).json()
+    assert flt["total"] == 1
 
 
 async def test_evidence_files_are_listed_by_type_via_api(v2client, tok):
