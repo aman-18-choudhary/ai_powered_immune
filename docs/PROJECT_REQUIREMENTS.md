@@ -194,7 +194,7 @@ blocked. Project-level criteria:
 | Neo4j | Not installed | Optional |
 | PostGIS | Not available in local Postgres 14 | Optional; the Docker image `postgis/postgis:16-3.4` has it but is untested here |
 | Docker daemon | Not available | Compose stack untested |
-| `gh` CLI | Not installed | CI run status on GitHub not checked |
+| `gh` CLI | Not installed | CI status read from the public Actions page and API instead; passing since 2026-10-16 (`7b97731`) |
 
 Assumptions: the project is a final-year prototype, not a production deployment; all model training
 data is synthetic; the person running it locally is the developer.

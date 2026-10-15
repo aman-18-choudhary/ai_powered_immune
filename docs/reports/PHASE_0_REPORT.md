@@ -156,3 +156,21 @@ Mermaid diagrams render on GitHub or in any Mermaid-aware Markdown viewer.
 2. Next implementation step: target **phase 6** (transcribe uploaded audio evidence with the
    installed faster-whisper engine; correct the capability message), together with the grounding
    fixes for findings 1 and 2. Rationale in [DEVELOPMENT_ROADMAP.md](../DEVELOPMENT_ROADMAP.md).
+
+## Addendum (2026-10-16): commit, CI repair and push
+
+* The Phase 0 documentation was committed as `22741e8`.
+* Before pushing, CI was checked on GitHub's public Actions page: **all 29 earlier runs had
+  failed** (the `test` job, exit code 4 after about 18 s; step logs need a GitHub sign-in, which was
+  not used). The owner chose to repair CI first.
+* Reproducing CI locally on Python 3.11 (fresh venv, clean clone) showed the install step resolved
+  local package names from PyPI (some exist there as unrelated projects), and, once fixed, revealed
+  two concurrency bugs that only appear on Python 3.11 (the version of CI and the Docker images)
+  plus one flaky test. Fixed in separate commits: `2bb5687` (graph-twin single flight), `79263f3`
+  (txn-guard duplicate hub submission), `440de07` (demo-server seek test), `7b97731` (CI workflow).
+* Verification: all 16 Python packages pass the CI steps on Python 3.11 locally; `scripts/test_all.sh`
+  passes 17/17 packages on Python 3.13; GitHub Actions runs #30 and #31 on `7b97731` succeeded
+  (jobs `test` and `static`).
+* Pushed as a normal fast-forward (no force): `origin/main` and `origin/build/implementation`
+  moved from `8e4dee0` to `7b97731`, which includes the 10 Phase B commits.
+* Status documents updated accordingly ([PROJECT_STATUS.md](../../PROJECT_STATUS.md)).

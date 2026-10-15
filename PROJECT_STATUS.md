@@ -1,8 +1,9 @@
 # Project status
 
-Last updated: **2026-10-15** (Phase 0). Branch `build/implementation`, HEAD `91ebfeb`.
-`origin/main` and `origin/build/implementation` are at `8e4dee0`; the 10 Phase B commits
-(`a34754b`..`91ebfeb`) are **committed locally and not pushed**, pending the owner's approval.
+Last updated: **2026-10-16** (after Phase 0 and the CI repair). `main` and
+`build/implementation` are both at `7b97731` on GitHub, which includes the 10 Phase B commits,
+the Phase 0 documentation and the CI repair. **CI passes on GitHub for the first time**
+(runs #30 and #31, jobs `test` and `static`, 2026-10-16).
 
 Labels: **Verified** (tests run and passed; "by hand" where checked in a browser), **Unverified**
 (code exists; only an agent ran the test, or not exercised), **Planned**, **Blocked** (external
@@ -72,17 +73,21 @@ dependency missing), **Limitation**.
 |---|---|
 | Single-process run (`make demo`, :8080) | Verified (running 2026-10-15) |
 | Docker Compose stack | **Unverified** (no Docker daemon; config only) |
-| GitHub Actions CI | Workflow exists; **run status on GitHub not checked** (`gh` not installed) |
+| GitHub Actions CI | Verified: passing on GitHub since `7b97731` (2026-10-16). All 29 earlier runs had failed (the install step resolved local package names from PyPI); fixed in `7b97731`. Runs Python 3.11, all 16 Python packages with `-W error`, Dockerfile, link and compose checks. The console is not tested in CI |
+| Python 3.11 compatibility (CI and Docker images) | Verified 2026-10-16 after fixing two concurrency bugs that only showed on 3.11 (graph-twin single flight, txn-guard duplicate hub submission) |
 | Languages | English, Hindi, Hinglish evaluated (speech); simulator message check has en/hi/ta/bn texts; no 12-language claim |
 
 ## 2. Test results
 
-No test was re-run during the Phase 0 documentation work (documentation only). The results below
-were obtained earlier, against code that is unchanged since (HEAD `91ebfeb`, no code edits in
-Phase 0).
+The 2026-10-16 rows were run against the code now on GitHub (`7b97731`). Earlier rows were run
+before the CI repair; the repair changed only `graph_twin/service.py`, `txn_guard/holds.py`, a
+demo-server test and the CI workflow, and all of those packages were re-run on 2026-10-16.
 
 | Date | Suite | Result | Run by |
 |---|---|---|---|
+| 2026-10-16 | GitHub Actions CI runs #30 (`build/implementation`) and #31 (`main`) on `7b97731` | success (jobs `test` and `static`) | GitHub |
+| 2026-10-16 | CI steps reproduced locally: Python 3.11, fresh venv, clean clone, all 16 Python packages (`ruff` + `pytest -W error`) after `pip check` | all passed | controller |
+| 2026-10-16 | `scripts/test_all.sh` on Python 3.13 (16 Python packages + web-console vitest) | 17/17 packages passed (python suites as in CI; vitest 249) | controller |
 | 2026-10-15 | complaints `pytest -W error` | 446 passed, 3 skipped | controller (me) |
 | 2026-10-15 | complaints live Ollama (`OLLAMA_LIVE_TESTS=1`) | 2 passed | controller |
 | 2026-10-15 | demo_server `pytest -W error` | 209 passed | controller |
@@ -97,9 +102,8 @@ Phase 0).
 | 2026-10-14 | gateway | 75 passed | controller |
 | Step B1 (after the 2026-10-13 23:45 commit `c5d9767`; exact run date not recorded) | `make test-all` (16 packages) | python 1,902 passed, 17 skipped; vitest 172 | controller; not re-run since |
 
-Simulator services not touched since step B1 (sim_engine, call_guard, txn_guard, antibody_hub,
-evidence_ledger, graph_twin, geo_intel, citizen_shield, contracts, svckit, e2e) were last run in
-that `make test-all`.
+Every Python package and the console unit tests were re-run on 2026-10-16 (rows above).
+Playwright and the Postgres run are still agent-only results.
 
 ## 3. Known limitations and open findings
 
@@ -119,15 +123,24 @@ that `make test-all`.
 9. Alerts show raw status codes (for example `UNDER_REVIEW`).
 10. The console defaults to the dark theme (light is a toggle).
 11. All model training data is synthetic; metrics are not real-world performance.
+12. On Python 3.11, `txn_guard` test `test_confirm_block_records_pending_in_the_same_cas[redis]`
+    takes about 60 s (on 3.13 it is instant). It passes; the wait happens during test teardown with
+    a fake hub that never answers. The store's own shutdown was measured as instant outside pytest;
+    the cause was not isolated.
+13. CI does not run the console tests (vitest, Playwright) or the Postgres-backed tests.
+
+Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
+txn-guard duplicate hub submission on Python 3.11; the flaky demo-server seek test.
 
 ## 4. External setup still required
 
 Clerk keys; Tesseract (OCR); Qdrant + an embedding runtime (sentence-transformers/torch or
-fastembed); optionally Neo4j and PostGIS; a Docker daemon for the stack; `gh` or the GitHub web UI
-to check CI. Ollama runs only while started (`OLLAMA_HOST=127.0.0.1:11434 ollama serve`).
+fastembed); optionally Neo4j and PostGIS; a Docker daemon for the stack. Ollama runs only while
+started (`OLLAMA_HOST=127.0.0.1:11434 ollama serve`). CI status can be read without signing in at
+the repository's Actions page or the public API; step logs need a GitHub sign-in.
 
 ## 5. Next step
 
-Awaiting the owner's review of Phase 0 and approval to (a) push the Phase B commits and (b) start
-the next phase. Recommended next phase: audio-evidence transcription and the message fixes (target
-phase 6) together with the grounding fixes; see [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
+Awaiting the owner's approval of the next phase. Recommended: audio-evidence transcription and the
+transcription-message fix (target phase 6) together with the LLM grounding fixes (findings 1 and
+2); see [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).

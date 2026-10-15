@@ -17,14 +17,14 @@ A-F of 2026-10-14) as the active plan; that file is kept for history.
 | Step B2a (`d76448d`..`0e0f936`) | Analysis pipeline v2, category model category-v1 (synthetic), URL and entity checks, optional Ollama explanations | 4, 5 |
 | Live microphone (`fd52779`..`e2384e3`) | services/live_audio, console Live microphone mode | 7 |
 | Phase A (`214e755`..`8e4dee0`) | Migrations, bank details, profile/privacy, evidence removal, complaints mounted in demo-server, local dev sign-in; console sign-in, citizen dashboard, complaint form/detail, investigator queue, admin | 2, 3, 11, 12 |
-| Phase B (`a34754b`..`91ebfeb`, **not pushed**) | CRITICAL level, provenance, confidence interpretation, failure semantics, `/analyze` inputs, analysis history, `/models`, grounded local LLM (qwen2.5:0.5b), Check page, Models page | 4, 5, 11 |
+| Phase B (`a34754b`..`91ebfeb`, pushed 2026-10-16) | CRITICAL level, provenance, confidence interpretation, failure semantics, `/analyze` inputs, analysis history, `/models`, grounded local LLM (qwen2.5:0.5b), Check page, Models page | 4, 5, 11 |
 
 ## 2. Phase status
 
 | # | Phase | Status | Remaining work |
 |---|---|---|---|
 | 0 | Requirements, architecture, design | **This phase** | Approval of these documents |
-| 1 | Repository and development foundation | **Complete, mostly verified** | Run the Compose stack once a Docker daemon is available; check CI runs on GitHub (needs `gh` or the web UI) |
+| 1 | Repository and development foundation | **Complete; CI verified green on GitHub 2026-10-16** (after the CI repair, commits `2bb5687`..`7b97731`) | Run the Compose stack once a Docker daemon is available; add the console tests to CI |
 | 2 | Authentication and RBAC | **Complete and verified locally; Clerk blocked** | Live Clerk test with real keys; production guard that refuses local/demo auth (finding 5) |
 | 3 | Complaint and evidence management | **Complete and verified** | Complaint edit while SUBMITTED; evidence download audit; storage hardening (finding 4) |
 | 4 | Fraud detection and risk assessment | **Implemented; tests verified; Check page verified by hand** | Push Phase B after approval; tighten the LLM role-inversion check (finding 1) |

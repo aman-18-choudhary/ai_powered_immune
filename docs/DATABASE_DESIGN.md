@@ -163,7 +163,7 @@ run holds an advisory lock so replicas starting together serialise.
 | 7 | analyses_insufficient_input | `INSUFFICIENT_INPUT` status; column widened on Postgres |
 | 8 | alerts_risk_level | `alerts.risk_level` for de-duplication |
 
-Migrations 6-8 are in the unpushed Phase B commits. Every step is re-checked at start-up (not only
+Migrations 6-8 came with Phase B (pushed 2026-10-16). Every step is re-checked at start-up (not only
 pending ones), so a database missing a column is repaired. Alembic was considered and not adopted;
 see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 
