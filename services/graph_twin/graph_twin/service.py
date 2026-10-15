@@ -204,29 +204,54 @@ class TwinService:
         if self.heavy.locked() and self._heavy_waiting >= self.cfg.heavy_queue:
             self.heavy_rejected += 1
             raise HeavyBusy
+        # Single flight is registered before the first await, so identical requests arriving while
+        # this one waits for a slot share it (whether or not the event loop switches tasks here).
+        pending: asyncio.Future[T] | None = None
+        if key is not None:
+            pending = asyncio.get_running_loop().create_future()
+            pending.add_done_callback(lambda p: p.cancelled() or p.exception())  # mark retrieved
+            self._inflight[key] = pending
         self._heavy_waiting += 1
         try:
-            await asyncio.wait_for(self.heavy.acquire(), timeout)
-        except TimeoutError:
-            self.heavy_timeouts += 1
+            if self.heavy.locked():
+                await asyncio.wait_for(self.heavy.acquire(), timeout)
+            else:
+                # A free slot is taken without suspending; wait_for would yield to the loop on
+                # Python 3.11 and let other callers pass the queue check above.
+                await self.heavy.acquire()
+        except BaseException as e:
+            if isinstance(e, TimeoutError):
+                self.heavy_timeouts += 1
+            if pending is not None:
+                self._inflight.pop(key, None)
+                if isinstance(e, Exception):
+                    pending.set_exception(e)
+                else:
+                    pending.cancel()
             raise
         finally:
             self._heavy_waiting -= 1
         token = CancelToken(timeout)
         fut: asyncio.Future[T] = asyncio.ensure_future(asyncio.to_thread(fn, token))
-        if key is not None:
-            self._inflight[key] = fut
 
         def _done(f: "asyncio.Future[T]") -> None:
             self.heavy.release()
             if key is not None:
                 self._inflight.pop(key, None)
             if f.cancelled():
+                if pending is not None:
+                    pending.cancel()
                 return
-            if f.exception() is None and key is not None:  # retrieved either way
+            exc = f.exception()  # retrieved either way
+            if exc is None and key is not None:
                 self._results[key] = f.result()
                 while len(self._results) > RESULT_CACHE_SIZE:
                     self._results.popitem(last=False)
+            if pending is not None:
+                if exc is None:
+                    pending.set_result(f.result())
+                else:
+                    pending.set_exception(exc)
 
         fut.add_done_callback(_done)
         try:
