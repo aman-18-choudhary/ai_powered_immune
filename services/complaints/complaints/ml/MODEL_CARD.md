@@ -80,3 +80,16 @@ correlation between field presence and scenario in the generator, not model use 
 * High abstention (about 39% here) is the price of not forcing a label on unseen scenarios.
 * A text that quotes scam language but is a question or awareness query can be pulled toward
   fraud categories (hard negatives: about 16% answered as fraud).
+
+## How the output is shown (Phase B)
+
+* `GET /models` reads this card's "Known limitations" list and `category-v1.metrics.json` directly
+  (held-out family-grouped numbers as the headline; the leaky random split separately, flagged
+  `is_headline: false`), plus the pinned SHA-256 and the runtime load status.
+* Each analysis carries `confidence_interpretation` (the number is the top-class score of a model
+  trained on 100% synthetic data, uncalibrated, not the chance of being right; `UNDETERMINED` below
+  the abstention threshold), `category_model.top_categories` (top 3 with scores) and
+  `abstention_threshold`. The category sentence of the explanation has `source: ml`,
+  `method: category-v1`.
+* When the model is unavailable (missing artifact, pin or scikit-learn mismatch, failed smoke test,
+  inference error) the analysis is PARTIAL and a result that would be LOW is withheld.

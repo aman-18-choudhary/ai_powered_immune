@@ -9,13 +9,14 @@ stack), plain Postgres only.
 
 | Piece | Status |
 |---|---|
-| API, RBAC, storage, validation, uploads, migrations, profile, local sign-in | implemented; 364 tests on SQLite (+1 Postgres-only skipped), the same suite (365) passed against a disposable Postgres 14 (`scripts/with_postgres.sh`) on 2026-10-14 |
+| API, RBAC, storage, validation, uploads, migrations, profile, local sign-in | implemented; 446 tests pass on SQLite (3 skipped: 1 Postgres-only, 2 opt-in live Ollama), the same suite on a disposable Postgres 14 (`scripts/with_postgres.sh`): 447 passed, 2 skipped (live Ollama) on 2026-10-15 |
 | Local sign-in (email + one-time code in the server terminal) | implemented and tested; **development only**, `demo`/`local` modes, absent in `clerk` mode |
 | Clerk token verification | implemented and tested ONLY with locally generated RSA keys and an injected JWKS. **Live Clerk verification has not been exercised: blocked by configuration** (no Clerk instance or keys exist for this repository) |
 | Clerk Backend API email lookup | defined, OFF by default, tested only against a mock transport |
-| Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation; optional local-Ollama explanation (not exercised live here). Score is an UNCALIBRATED heuristic. Audio transcript, screenshot OCR, document text: `unavailable` (listed as unanalysed attachments) |
+| Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation, with per-item provenance (rule / ml / llm / static_guidance). Optional GROUNDED local-Ollama wording (default `qwen2.5:0.5b`); exercised live on 2026-10-15 only through the opt-in `OLLAMA_LIVE_TESTS=1` test (a small model: its text is often rejected by the grounding checks and is labelled "may be imprecise" when shown). Score is an UNCALIBRATED heuristic. Audio transcript, screenshot OCR, document text: `unavailable` (listed as unanalysed attachments) |
 | Malware scanning of uploads | **not implemented** |
-| Qdrant, Neo4j, PostGIS, Ollama, Redis | not used; reported as `not_configured` by `/admin/health` |
+| Qdrant, Neo4j, PostGIS, Redis | not used; reported as `not_configured` by `/admin/health` |
+| Ollama | optional, local hosts only, explanation wording only; `/models` and `/admin/health` report its state |
 
 ## Auth flow
 
@@ -137,7 +138,9 @@ configuration error; there is no insecure fallback.
 | `GET /complaints/{id}/evidence`, `.../{eid}/download` | owner, staff | `Content-Disposition: attachment`, `nosniff` |
 | `DELETE /complaints/{id}/evidence/{eid}` | owner while SUBMITTED, ADMIN any time | marks the row `deleted`, removes the file, audited (`evidence_delete`, no file name); an admin removal alerts the owner. `200 {id, status: "deleted", file_removed}` (`file_removed: false` = the row is deleted but the file could not be removed, logged). Foreign or unknown ids: 404; INVESTIGATOR: 403; owner after review started: 409 `evidence_not_deletable` |
 | `POST /complaints/{id}/analysis`, `GET .../analysis` | owner, staff | new version per run (pipeline v2) |
-| `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `suspicious_url`, `suspect_phone`, `upi_id`, `suspect_email`, `amount`, `payment_method`, `city`, `state`, `social_platform`; nothing stored, content not logged, `persisted: false`; own rate bucket |
+| `GET /complaints/{id}/analyses` | owner, staff | every version, newest first, `limit`/`offset`; summary + pipeline and model versions per version |
+| `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `url`, `upi_id`, `phone`, `email`, `amount`, `payment_method` (the older names `suspicious_url`, `suspect_phone`, `suspect_email` still work; giving both names with different values is a 422 on the short name), `city`, `state`, `social_platform`; same pipeline and provenance; `input_capabilities` per input (`analysed`, `format_checked`, `context_only`, `not_provided`, `insufficient_input`; `audio` and `screenshot` are `unavailable` until Phase C); nothing stored, content not logged, `persisted: false`; own rate bucket |
+| `GET /models` | any authenticated user | category-v1 and call-guard clf-v1: version, pinned artifact SHA-256, training data (100% synthetic), held-out metrics read from the shipped metrics file (clf-v1 ships none: `metrics: null` with the reason), the leaky random split separately (`is_headline: false`), limitations (category: from `MODEL_CARD.md`), runtime status; `llm`: Ollama `not_configured` / `unavailable` (reason) / `ready` with the model name. Never contacts a non-local host |
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
 | `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | |
 | `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | roles granted here have source `admin`; optimistic `expected_role`; last active admin protected; audited |
@@ -221,65 +224,122 @@ by hand is restored). Data is never dropped.
 | 3 `complaint_bank_details` | `complaints.bank_name`, `bank_account`, `ifsc`, index on `bank_account` |
 | 4 `user_profile_privacy` | `users.allow_case_matching` (default true), `users.display_name_set` |
 | 5 `evidence_deleted_status` | evidence status `deleted` allowed (SQLite: table rebuilt with all rows; Postgres: CHECK swapped), `complaint_evidence.deleted_at` |
+| 6 `analyses_critical_level` | `analyses.risk_level` allows CRITICAL (same rebuild / swap); rows that stored CRITICAL as HIGH (exact level in `detail.risk_level`) are backfilled, only when the CHECK had to be widened |
+| 7 `analyses_insufficient_input` | `analyses.status` allows INSUFFICIENT_INPUT (Postgres also widens the column 16 -> 24) |
+| 8 `alerts_risk_level` | `alerts.risk_level` (nullable) for one risk alert per complaint and level |
 
 ## Analysis pipeline v2
 
 `pipeline_version` is `complaints-analysis-v2+<text model>+<category model>`. Previous (v1) rows stay
 valid; API fields were only added. Each stage reports its own status in `capabilities`
-(`available | unavailable | not_applicable | skipped_no_input`; the LLM stage can also be
-`timeout | error`) with a machine reason in `capability_reasons`. A failing stage never blocks
-another and is never turned into LOW or BENIGN.
+(`available | unavailable | not_applicable | skipped_no_input | skipped_insufficient_input`; the
+LLM stage can also be `timeout | error | rejected`) with a machine reason in `capability_reasons`.
+A failing stage never blocks another and is never turned into LOW or BENIGN.
 
 | Capability | Meaning |
 |---|---|
-| `text_risk_scorer` | call-guard rules + classifier on title and description (built for digital-arrest scripts) |
+| `text_risk_scorer` | call-guard rules (`rules-v1`) + script classifier (`clf-v1`) on title and description (built for digital-arrest scripts) |
 | `category_classifier` | TF-IDF + logistic regression, text only, abstains to `UNDETERMINED`; fallback `classification: null` |
 | `url_heuristics` | offline lexical checks: scheme, IP host, punycode/IDN, many subdomains, static suspicious-TLD list, shorteners, brand look-alike (small static list), credentials in URL, long query, odd port. `skipped_no_input` without a URL |
 | `url_fetch_reputation`, `contact_reputation_lookup` | always `unavailable` (no network lookups by design) |
 | `entity_format_checks` | phone (E.164-like, placeholders), UPI id format and known-handle list, email syntax. Weight 0: unusual values are data-quality notes, not evidence |
 | `geographic_context` | presence recorded as context; not scored (hotspot comparison is not part of this service) |
 | `audio_transcription`, `screenshot_ocr`, `document_text_extraction`, `evidence_content_analysis` | `unavailable` (no engine installed); files are listed under `unanalysed_attachments` by type and count |
-| `llm_explanation` | `unavailable` (`not_configured`), `available`, `timeout`, `error` |
+| `llm_explanation` | `unavailable` (`not_configured`, `non_local_host`, `unreachable`), `available`, `timeout`, `error`, `rejected` (grounding checks), `skipped_no_input` (`no_findings_to_rephrase`) |
 
-**Risk score** (`score_semantics: "uncalibrated_heuristic"`):
+**Risk score** (`score_semantics: "uncalibrated_heuristic"`, 0-100, never a probability):
 `risk = min(100, max(text_score, category_prior) + round(25 * noisy_or(url_indicator_weights)))`.
 `text_score = round(100 * call-guard score)`. `category_prior` applies only when the classifier
 answered (DIGITAL_ARREST 70, OTP_SCAM 60, UPI/PHISHING/INVESTMENT 55, BANK/JOB 50,
 SOCIAL_MEDIA 45, OTHER 0); an abstention contributes nothing. Terms of unavailable stages are left
-out, and if the text scorer did not run a result that would be LOW is withheld
-(`risk_score`/`risk_level` null). The full formula is in `limitations` and
-`score_components`. Bands: LOW 0-34, MEDIUM 35-69, HIGH 70-89, CRITICAL 90-100. The legacy
-`analyses.risk_level` column only allows LOW/MEDIUM/HIGH, so CRITICAL is stored as HIGH (list
-filters and the HIGH alert treat it as HIGH) and the exact level is kept in `detail` and returned by
-the API.
+out. The full formula is in `limitations` and `score_components`. Bands: LOW 0-34, MEDIUM 35-69,
+HIGH 70-89, CRITICAL 90-100. Since migration 6 the exact level (including CRITICAL) is stored in
+`analyses.risk_level`; the `risk_level` list filter is exact (`HIGH` no longer includes CRITICAL)
+and `/me/stats` has `by_risk_level` (latest analysis per own complaint, plus `not_scored` and
+`not_analysed`).
 
-* `confidence` is the classifier's maximum class score when it is available (also for
-  `UNDETERMINED`), labelled `confidence_semantics: model_confidence_uncalibrated`; otherwise null.
+### Failure semantics (never a silent LOW)
+
+| Situation | Result |
+|---|---|
+| title + description has fewer than 4 words (empty, whitespace, "help me") | `status: INSUFFICIENT_INPUT`, `risk_score`/`risk_level` null, the text scorer and category model are NOT run (`skipped_insufficient_input`); URL/format checks still reported |
+| text scorer cannot be imported / loaded, or raises | `text_risk_scorer: unavailable` (`ImportError`..., `scoring_error`), `status: PARTIAL`; a result that would be LOW is withheld (null) |
+| category model missing, SHA-256 pin mismatch, sklearn mismatch, failed smoke test, inference error | `category_classifier: unavailable` (`missing_artifact`, `pin_mismatch`, ..., `inference_error`), `status: PARTIAL`; a result that would be LOW is withheld (null) |
+| nothing could be scored | `status: UNAVAILABLE`, no level |
+| Ollama timeout / garbage / ungrounded text | no LLM text, `llm_explanation: timeout | error | rejected` with the reason, `status: PARTIAL`; score, level and category unchanged |
+
+A LOW level is given only when both core text stages (scorer and category model) ran. Evidence that
+reaches MEDIUM or above without them is still reported (not lowered, not hidden). Every path has a
+test (`tests/test_failure_semantics.py`, `tests/test_llm_grounding.py`) asserting no LOW and no
+BENIGN.
+
+### Provenance
+
+Every indicator, explanation part (`explanation_parts`) and recommended action has `source` in a
+fixed vocabulary, a `method` and an `evidence` pointer (`complaints/provenance.py`):
+
+| `source` | What | `method` examples |
+|---|---|---|
+| `rule` | deterministic logic | `call_guard.rules`, `url_heuristics`, `entity_checks`, `risk_formula`, `explanation_template`, `pipeline_status`, `input_check` |
+| `ml` | trained models (synthetic data only) | `call_guard.clf-v1` (`SCRIPT_CLASSIFIER_MATCH`), `category-v1` |
+| `llm` | local Ollama, wording only | `ollama:qwen2.5:0.5b` |
+| `static_guidance` | authored advice keyed by category and level | `static_guidance_table` |
+
+`evidence` is one of: `text_span` (field `title`/`description`/`text`, `start`/`end` offsets into
+that field, a snippet of at most 160 characters, `granularity: sentence`: the sentence in which the
+call-guard rules found the cue; never the whole text), `field` (the input field, plus `host` for a
+URL), `whole_text` (a model that scores the whole text), `keyed_by` (guidance), `generated` (LLM).
+The old indicator `source` value (`call_guard`, `url_heuristics`) is kept as `stage`.
+`provenance` on the analysis lists `stages` (stage, source, method, status `ran | unavailable |
+skipped | not_configured | rejected | timeout | error`, reason, version), `ran`, `unavailable`,
+`skipped` and `model_versions` (`call_guard_rules`, `call_guard_classifier`, `category`, `llm`).
+Rows stored before provenance get one derived from `pipeline_version` and `capabilities`
+(`derived_from_legacy: true`, indicator evidence `not_recorded`); an unrecognised pipeline is marked
+`legacy: true`.
+
+* `confidence` is the category model's top-class score when it ran (also for `UNDETERMINED`),
+  `confidence_semantics: model_confidence_uncalibrated`; `confidence_interpretation` says in plain
+  words what it is (top-class score of a model trained on 100% synthetic data, uncalibrated, not
+  the chance of being right; UNDETERMINED below the abstention threshold). `category_model` has
+  `top_categories` (top 3 with scores) and `abstention_threshold`.
 * `status`: COMPLETED when every applicable stage ran; PARTIAL when some applicable stage was
-  unavailable (named in `unavailable_capabilities`, for example uploaded audio or screenshots, a
-  configured Ollama that failed, or a missing model); UNAVAILABLE only when nothing could be scored.
-* `explanation` is always the deterministic rule-based text (`explanation_source: rules`).
-  `llm_explanation` is additional and never changes the score, level or classification.
+  unavailable (named in `unavailable_capabilities`); UNAVAILABLE when nothing could be scored;
+  INSUFFICIENT_INPUT for too-short text.
+* `explanation` is always the deterministic rule-based text (`explanation_source: rules`; the rule
+  parts of `explanation_parts` joined). `llm_explanation` is additional, separate, labelled, and
+  never changes the score, level or classification.
 * `recommended_actions` are static, reviewed-in-principle guidance keyed by category and level
   (`source: static_guidance`): 1930 helpline, cybercrime.gov.in, bank/UPI dispute, never share an OTP.
   **They need legal and domain review (`review_required`) before production use.**
-* Optional complaint fields and files are never fraud evidence when absent. A new `analyses.detail`
-  JSON column holds the v2 extras; migration 2 adds it to an existing table (additive, idempotent).
-* HIGH results (including CRITICAL) create one alert for the owner per analysis version.
+* Optional complaint fields and files are never fraud evidence when absent.
+* HIGH and CRITICAL results alert the owner once per complaint and level: re-running the analysis
+  (by the owner or staff) does not repeat the alert; a new level (HIGH then CRITICAL) alerts once
+  more. `alerts.risk_level` records it.
 
-### Ollama (optional local explanation)
+### Ollama (optional, local, grounded)
 
 ```
-ollama pull qwen2.5:3b          # owner action; no model is downloaded by this repository
-export OLLAMA_URL=http://localhost:11434
+ollama pull qwen2.5:0.5b        # owner action (fits an 8 GB machine); qwen2.5:3b preferred when hardware allows
+export COMPLAINTS_OLLAMA_URL=http://127.0.0.1:11434   # or the shared OLLAMA_URL; `make demo` sets it when a local Ollama answers
 ```
-Calls `POST /api/generate` (non-streaming, temperature 0.2, timeout `OLLAMA_TIMEOUT_S`, default 20 s,
-at most 2 concurrent). The prompt holds only the computed indicators and the description with phone
-numbers, URLs, UPI ids, emails and long digit runs replaced by placeholders. Output over 1,200
-characters, or containing a link, address, number-like token or a likelihood claim, is discarded
-and `llm_explanation` is null with the capability set to `unavailable|timeout|error`. `/admin/health`
-shows `ollama: not_configured | reachable | unreachable` using a cached (30 s) `GET /api/tags`.
-**Not exercised against a live Ollama here** (not installed); tests use a fake HTTP transport.
+Only local hosts are contacted (loopback, `*.localhost`, private/link-local IPs, single-label
+compose names); anything else is `unavailable (non_local_host)` and is never called. Calls
+`POST /api/generate` (non-streaming, temperature 0.1, `num_predict` 120, timeout `OLLAMA_TIMEOUT_S`
+default 8 s, at most 2 concurrent). **Grounding:** the prompt lists only the computed findings (up to
+5, strongest first: plain text + sanitised evidence snippet), the suggested category and the first 3
+static steps; the complaint text is not sent. The LLM is not called when there are no findings. The
+answer is tidied (complete sentences only, repeats and list echoes dropped, at most 3 sentences),
+links/addresses/numbers not in the prompt are stripped, and it is REJECTED (`rejected` + reason)
+when empty or too long (`output_too_long`, > 700 chars), not English (`wrong_language`), claiming a
+likelihood (`likelihood_claim`), certainty, safety or evidence (`unsupported_claim`, e.g. "the caller
+has evidence of a financial transaction"), turning the accusation on the caller (`role_inversion`,
+"the caller is under digital arrest"), naming a scam cue not among the findings
+(`ungrounded_indicator`) or referring to none of them (`not_grounded`). The rule explanation stays
+primary; the console shows accepted text separately as "LLM-generated (model), may be imprecise".
+These checks are heuristics: an accepted text can still be clumsy or imprecise (see the Phase B
+report for live outputs). `/admin/health` shows `ollama: not_configured | reachable | unreachable |
+non_local_host`; `/models` shows `ready` only when the model is pulled. Opt-in live test:
+`OLLAMA_LIVE_TESTS=1 python -m pytest -s tests/test_ollama_live.py`.
 
 ## ML: category classifier (SYNTHETIC data only)
 
@@ -323,7 +383,7 @@ metrics file.
 | `COMPLAINTS_MAX_IMAGE_BYTES`, `COMPLAINTS_MAX_AUDIO_BYTES`, `COMPLAINTS_MAX_EVIDENCE_PER_COMPLAINT`, `COMPLAINTS_MAX_JSON_BYTES` | limits |
 | `COMPLAINTS_RATE_WRITE_PER_MIN`, `..._UPLOAD_...`, `..._ANALYSIS_...`, `..._READ_...` | per-user limits |
 | `COMPLAINTS_RATE_ANALYZE_PER_MIN` | per-user limit for `POST /analyze` (default 10) |
-| `OLLAMA_URL`, `OLLAMA_MODEL` (default `qwen2.5:3b`), `OLLAMA_TIMEOUT_S` (default 20) | optional local LLM explanation |
+| `COMPLAINTS_OLLAMA_URL` (wins) or `OLLAMA_URL`, `OLLAMA_MODEL` (default `qwen2.5:0.5b`), `OLLAMA_TIMEOUT_S` (default 8) | optional local, grounded LLM wording |
 | `CATEGORY_MIN_CONFIDENCE` | overrides the artifact's abstention threshold (0-1) |
 | `COMPLAINTS_LOCAL_AUTH_OUTBOX` | **TEST ONLY.** A file path: local sign-in codes are also appended there as JSON lines `{"email", "code"}` (file mode 0600) so automated end-to-end tests can sign in. Refused (`ConfigError`) unless the mode is `local`/`demo`; never set it outside a test run |
 | `PORT`, `LOG_LEVEL` | listen port, log level |
@@ -357,6 +417,8 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 * Live Clerk verification not exercised; the Clerk template claim names are documented from the
   design, not from a running instance.
 * Uncalibrated score. The category model was trained on synthetic template data and never validated on real complaints. Audio, screenshots and PDFs are not analysed. URL checks are offline lexical heuristics.
+* Evidence spans are sentence-level (where the rules found a cue), not exact token spans; the ML classifier cannot point to a span.
+* LLM grounding checks are keyword/pattern heuristics; a small model's accepted text can still be imprecise. It never affects the score, level or category.
 * No malware scanning; no data-retention or erasure job; evidence stays on one volume (no
   replication).
 * The rate limiter and the (optional) backend email-lookup cache are per process.
