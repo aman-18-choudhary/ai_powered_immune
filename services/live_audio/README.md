@@ -72,10 +72,20 @@ optional Ollama), `guidance.py` (static advice), `api.py` (`build_router` for th
   updated and is flagged `stale` (`level: null` if nothing was assessed yet); scorer missing or
   raising -> `status.analysis: unavailable`, same. Silence -> zero segments (`analysis: no_speech`);
   no text is ever invented.
-* Explanation: a deterministic rules text always; an Ollama text only when `OLLAMA_URL` is set and
-  reachable, at most once per 20 s and only when the level changes, built from indicator codes,
-  labels and redacted excerpts (no transcript), never changing score or level. Not exercised
-  against a live Ollama here (not installed); tested with a fake transport.
+* Explanation: a deterministic rules text always (primary). An Ollama text only when `OLLAMA_URL`
+  is set and reachable, at most once per 20 s and only when the level changes. Grounded since
+  Phase 6 (2026-10-16): a findings-only prompt (indicator labels in the third person, "The caller
+  says you are under 'digital arrest'.", one redacted excerpt per finding in a separate block,
+  fixed safety steps; no transcript, score or level), temperature 0.1, 120 tokens, timeout, and the
+  answer is checked by the shared `svckit.llm_grounding.review_output` (the same checks as the
+  complaints explainer: invented links/numbers stripped; rejected on prompt echo, likelihood or
+  certainty claims, "You are under digital arrest" stated as fact, role inversion, a scam
+  instruction repeated as advice, ungrounded cues, or no finding referred to). A rejected, timed-out
+  or failed answer is not shown: `explanation.llm` is null, `llm_status` says `rejected` / `timeout`
+  / `error` with `llm_reason`, and the console shows the rules text plus a note. Accepted text
+  carries `llm_label` "LLM-generated (model), may be imprecise". Never changes score or level.
+  Exercised live with qwen2.5:0.5b on 2026-10-16 (`OLLAMA_LIVE_TESTS=1`): 1 of 3 answers accepted,
+  2 rejected (`repeats_scam_instruction`); see docs/reports/PHASE_6_REPORT.md.
 
 ## Engines and install
 
@@ -92,10 +102,14 @@ LIVE_STT_ENGINE=faster_whisper LIVE_STT_MODEL=base make demo-server
 | `LIVE_STT_TIMEOUT_S` / `LIVE_STT_CONCURRENCY` | 30 / 1 | per chunk (waiting included) / parallel transcriptions |
 | `LIVE_STT_BEAM`, `LIVE_STT_CPU_THREADS` | 1, 0 | decoding beam, CTranslate2 threads (0 = auto) |
 | `LIVE_CHUNK_MS`, `LIVE_CHUNKS_PER_MINUTE` | 4000, 40 | chunk length told to the browser, per-user chunk rate |
-| `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_S` | unset, `qwen2.5:3b`, 20 | optional explanation |
+| `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_S` | unset, `qwen2.5:0.5b` (fits an 8 GB machine; `qwen2.5:3b` preferred when the hardware allows), 20 | optional, grounded explanation; off unless `OLLAMA_URL` is set |
 
 If the model is not cached or faster-whisper is not installed, capabilities report STT
 `unavailable` with the reason, and chunks return `status.stt: unavailable` (no risk update).
+
+The same engine (`engine_from_env`) transcribes uploaded **audio evidence** in the complaints
+service (Phase 6; see services/complaints/README.md). In the demo server the complaints service
+receives this server's engine object, so one Whisper model is in memory for both features.
 The demo-server Docker image installs live_audio without the `[stt]` extra (no model inside).
 
 ## Languages and quality (measured, synthetic voices)
@@ -151,6 +165,7 @@ echoed. The demo server raises its 64 KiB body cap to 512 KiB only for the chunk
   all tracks and close the AudioContext.
 * Data exposure: audio not stored; transcripts not logged or persisted; LLM prompt contains only
   indicator labels and redacted excerpts; sessions are owner-only.
+* Misleading LLM wording: grounded and checked as above; rejected text is never shown.
 * Abuse/DoS: auth required, per-user and global session caps, chunk rate limit, body and duration
   caps, one transcription at a time with a timeout, idle TTL.
 * Misleading output: score documented as uncalibrated; every indicator says "detected, not
@@ -164,6 +179,7 @@ echoed. The demo server raises its 64 KiB body cap to 512 KiB only for the chunk
 ```
 cd services/live_audio && python -m pytest -W error -q                      # fake STT engine
 LIVE_STT_TESTS=1 HF_HUB_OFFLINE=1 python -m pytest -W error -q -m stt -s     # real Whisper (macOS say + ffmpeg)
+OLLAMA_LIVE_TESTS=1 python -m pytest -W error -q -s tests/test_ollama_live.py   # live local Ollama explainer
 ```
 
 Browser end-to-end: `web-console/e2e/live-audio.spec.ts` and `live-audio-denied.spec.ts`

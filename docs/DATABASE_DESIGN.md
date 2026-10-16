@@ -1,7 +1,8 @@
 # Database design
 
 Phase 0 deliverable, written 2026-10-15 from `services/complaints/complaints/schema.py` and
-`migrations.py` at HEAD `91ebfeb`. Tables and columns below were checked against those files.
+`migrations.py` at HEAD `91ebfeb`; updated 2026-10-16 for Phase 6 (migration 9,
+`evidence_transcripts`). Tables and columns below were checked against those files.
 Planned structures are marked **Planned**; nothing marked planned exists yet.
 
 ## 1. Stores in this repository
@@ -12,6 +13,7 @@ The platform has two kinds of data and they are kept apart.
 |---|---|---|---|
 | **Complaints database** (this document) | `services/complaints` | Users, complaints, evidence metadata, analyses, alerts, audit | **Real records** entered by signed-in users |
 | Evidence files | `services/complaints` (`evidence.py` storage) | Uploaded files under random names | Real uploads |
+| Evidence transcripts | `services/complaints` (`evidence_transcripts` table) | Machine transcripts of uploaded audio evidence (local Whisper) | Real uploads, transcribed on this server |
 | Simulator stores | `antibody_hub`, `evidence_ledger`, `graph_twin`, `geo_intel`, `citizen_shield`, `txn_guard` | Antibodies, hash-chained ledger, transaction graph, city hotspots, report counts, holds | **Simulated** traffic from `sim_engine` |
 | Live-audio sessions | `services/live_audio` | Transcript segments and risk history, in memory only | Real microphone input, never persisted |
 
@@ -32,6 +34,8 @@ erDiagram
     complaints ||--o{ complaint_evidence : has
     complaints ||--o{ analyses : "has versions"
     complaints ||--o{ alerts : about
+    complaint_evidence ||--o| evidence_transcripts : "transcribed as"
+    complaints ||--o{ evidence_transcripts : has
     users ||--o{ complaint_evidence : uploads
     users ||--o{ complaint_status_history : "changes status"
 ```
@@ -113,12 +117,37 @@ Accepted types (by magic bytes, extension must agree): PNG, JPEG, WebP, PDF, MP3
 M4A. Default limits: images and PDFs 10 MiB, audio 25 MiB, 10 files per complaint
 (`COMPLAINTS_MAX_*`).
 
+### `evidence_transcripts` (migration 9)
+| Column | Type | Required | Notes |
+|---|---|---|---|
+| id | String(36), PK | yes | UUID |
+| evidence_id | String(36), FK `complaint_evidence.id`, **unique** | yes | One transcript per audio file |
+| complaint_id | String(36), FK `complaints.id` | yes | Index `ix_transcripts_complaint` |
+| status | String(24) | yes | CHECK: `transcribed`, `truncated`, `decode_failed`, `unsupported_format` (only definitive outcomes are stored) |
+| engine, model | String(32), String(64) | no | e.g. `faster_whisper`, `base` |
+| language | String(8) | no | Detected language (`en`, `hi`) |
+| duration_s, transcribed_s | Float | no | Whole file / transcribed part (at most the per-file limit, default 180 s) |
+| truncated | Boolean | yes | The file was longer than the per-file limit |
+| segments | JSON | yes | `[{start_s, end_s, text}]` (seconds from the start of the recording) |
+| error_reason | String(64) | no | Machine reason for `decode_failed` / `unsupported_format` |
+| created_at | UTC datetime | yes | |
+
+Written once per file by `POST /complaints/{id}/analysis` and reused by every later analysis.
+Transient outcomes (`engine_not_configured`, `model_not_available_offline`, `timeout`,
+`decode_unavailable`, `budget_exhausted`, `not_attempted_limit`, `engine_error`) are not stored:
+they are recorded in that analysis's `detail.audio_transcription` and retried by the next run.
+Same access as the evidence (owner and staff; foreign ids 404). **Deleted** in the same transaction
+when the evidence is removed (owner while `SUBMITTED`, or an admin). Segment text is user content
+and is never logged.
+
 ### `analyses`
 id, complaint_id, version (unique per complaint), created_at, pipeline_version, capabilities
 (JSON), risk_score (0-100), risk_level (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`, or NULL), classification,
 confidence, indicators (JSON), explanation, recommended_actions (JSON), limitations (JSON), status
 (`COMPLETED`, `PARTIAL`, `UNAVAILABLE`, `INSUFFICIENT_INPUT`), detail (JSON: provenance, category
-model output, URL and entity checks, LLM explanation and its status). Index `ix_analysis_level`.
+model output, URL and entity checks, LLM explanation and its status, and since Phase 6
+`audio_transcription`: the per-file transcription outcome of that run, without transcript text).
+Index `ix_analysis_level`.
 
 ### `alerts`
 id, user_id, complaint_id, kind, message (300), risk_level (migration 8; used to avoid repeating a
@@ -143,7 +172,8 @@ Makes a repeated complaint submission with the same `Idempotency-Key` return the
 | A citizen sees only their own complaints, evidence, analyses and alerts | Queries are scoped by `owner_user_id`; a foreign id returns **404**, never 403, so existence is not revealed |
 | Investigators and admins see all complaints | `staff` scope in the store; status changes require `INVESTIGATOR` or `ADMIN` |
 | Evidence upload | Complaint owner (citizen) only; refused on closed complaints |
-| Evidence delete | Owner while the complaint is `SUBMITTED`, or an admin; investigators get 403 |
+| Evidence delete | Owner while the complaint is `SUBMITTED`, or an admin; investigators get 403. The file's transcript row is deleted with it |
+| Evidence transcripts | Same scope as the evidence: owner and staff read them; foreign ids 404 |
 | Roles | Read only from `users`; per-request effective role re-checks the allowlist/bootstrap lists |
 
 ## 5. Migration strategy
@@ -162,8 +192,11 @@ run holds an advisory lock so replicas starting together serialise.
 | 6 | analyses_critical_level | `CRITICAL` allowed in the risk-level CHECK; backfill from `detail` |
 | 7 | analyses_insufficient_input | `INSUFFICIENT_INPUT` status; column widened on Postgres |
 | 8 | alerts_risk_level | `alerts.risk_level` for de-duplication |
+| 9 | evidence_transcripts | Table `evidence_transcripts` + index `ix_transcripts_complaint` (Phase 6) |
 
-Migrations 6-8 came with Phase B (pushed 2026-10-16). Every step is re-checked at start-up (not only
+Migrations 6-8 came with Phase B (pushed 2026-10-16); migration 9 with Phase 6 (2026-10-16, not
+pushed). Migration 9 was tested on a fresh database, on a database at version 8 with data, and on a
+pre-versioning database (SQLite, and the whole suite on a disposable Postgres 14). Every step is re-checked at start-up (not only
 pending ones), so a database missing a column is repaired. Alembic was considered and not adopted;
 see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 
@@ -174,6 +207,7 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Passwords | Never stored (identity provider or one-time codes) | Implemented |
 | Raw live audio | Never stored; chunk held in memory while transcribed | Implemented |
 | Live transcripts | Server memory only, deleted on Stop or after 10 idle minutes | Implemented |
+| Evidence transcripts | Stored in `evidence_transcripts` (plain text segments), same access as the evidence, deleted with it; never logged | Implemented (Phase 6); **not encrypted**; kept with a soft-deleted complaint like its files |
 | Complaint text and identifiers | Stored in plain columns (needed for review and matching) | Implemented; **not encrypted at column level** |
 | Evidence files | Local disk, random names, outside the web root | Implemented; **not encrypted, not malware-scanned** |
 | Deletion | Soft delete (`deleted_at`); evidence file removed on evidence delete | Implemented |

@@ -1,9 +1,10 @@
 # Project status
 
-Last updated: **2026-10-16** (after Phase 0 and the CI repair). `main` and
-`build/implementation` are both at `7b97731` on GitHub, which includes the 10 Phase B commits,
-the Phase 0 documentation and the CI repair. **CI passes on GitHub for the first time**
-(runs #30 and #31, jobs `test` and `static`, 2026-10-16).
+Last updated: **2026-10-17** (Phase 6: audio evidence transcription, accurate capability
+messages, LLM grounding fixes; work and tests 2026-10-16/17). `main` and `build/implementation` on
+GitHub are at `cb783a3`. Phase 6 is **committed locally on `build/implementation` and not pushed**
+(awaiting the owner's approval); see [docs/reports/PHASE_6_REPORT.md](docs/reports/PHASE_6_REPORT.md).
+CI passes on GitHub since `7b97731` (runs #30 and #31); the Phase 6 commits have not run on GitHub.
 
 Labels: **Verified** (tests run and passed; "by hand" where checked in a browser), **Unverified**
 (code exists; only an agent ran the test, or not exercised), **Planned**, **Blocked** (external
@@ -31,7 +32,7 @@ dependency missing), **Limitation**.
 | Evidence download / owner removal | Verified (tests) |
 | Complaint edit after submission | Planned |
 
-### Analysis (Phase B, unpushed)
+### Analysis
 | Feature | Status |
 |---|---|
 | Rules + call-guard classifier + category model; score 0-100 labelled uncalibrated | Verified (tests; `/check` by hand 2026-10-15: CRITICAL 100 on a test message) |
@@ -40,9 +41,10 @@ dependency missing), **Limitation**.
 | Stateless `/analyze` and the Check page | Verified (by hand) |
 | Analysis history; alert de-duplication | Verified (tests) |
 | `/models` page | Unverified by hand (tests pass) |
-| Local LLM explanations (Ollama qwen2.5:0.5b) | Verified live (2 tests, 2026-10-15); **quality weak**, see limitation 1 |
+| Local LLM explanations (Ollama qwen2.5:0.5b), grounded by the shared `svckit.llm_grounding` checks | Verified live 2026-10-15 (controller); grounding fix of Phase 6 **agent-run only** (tests; live `OLLAMA_LIVE_TESTS=1` 2026-10-16: 3 runs, 1 accepted, 2 rejected for `role_inversion`); **quality weak**: most small-model answers are rejected, so the rule explanation is usually the only one shown |
 | URL analysis | Partial: offline heuristics only, by design |
-| Uploaded audio transcription | Planned (engine installed; not wired) |
+| Uploaded audio evidence transcription (local faster-whisper, WAV/MP3/OGG/M4A, limits, stored once, timed indicators, precise statuses) | **Unverified** (agent-run only, 2026-10-16): mocked-engine tests, real Whisper opt-in tests (English WAV + M4A, Hindi, Hinglish; 4 passed), Playwright e2e with real Whisper (agent run, own server); Postgres suite. Phase 6, **not pushed** |
+| Accurate capability messages (`/analyze`, `/models`, `/admin/health`, evidence states) | **Unverified** (agent-run tests and Playwright) |
 | Screenshot OCR | **Blocked** (no OCR engine) |
 
 ### Live Protection
@@ -51,6 +53,7 @@ dependency missing), **Limitation**.
 | Consent-gated microphone; Start/Pause/Resume/Stop | Verified: scripted Chromium 2026-10-15 (0 requests before consent, 1 after Start, track ended on Stop) |
 | Local Whisper transcription with timestamps (en, hi, Hinglish) | Verified 2026-10-14 (real-Whisper tests) |
 | Incremental risk, indicators linked to segments, warnings | Verified (tests) |
+| Live LLM explanation (off unless `OLLAMA_URL`), grounded with the shared checks; label and rejection note in the console | **Unverified** (agent-run tests; live Ollama 2026-10-16: 3 runs, 1 accepted, 2 rejected `repeats_scam_instruction`) |
 | Streaming recognition | Limitation: incremental 4 s chunks |
 
 ### Intelligence
@@ -73,18 +76,25 @@ dependency missing), **Limitation**.
 |---|---|
 | Single-process run (`make demo`, :8080) | Verified (running 2026-10-15) |
 | Docker Compose stack | **Unverified** (no Docker daemon; config only) |
-| GitHub Actions CI | Verified: passing on GitHub since `7b97731` (2026-10-16). All 29 earlier runs had failed (the install step resolved local package names from PyPI); fixed in `7b97731`. Runs Python 3.11, all 16 Python packages with `-W error`, Dockerfile, link and compose checks. The console is not tested in CI |
+| GitHub Actions CI | Verified: passing on GitHub since `7b97731` (2026-10-16); Phase 6 commits reproduced locally on Python 3.11 (see test results), not yet run on GitHub. All 29 earlier runs had failed (the install step resolved local package names from PyPI); fixed in `7b97731`. Runs Python 3.11, all 16 Python packages with `-W error`, Dockerfile, link and compose checks. The console is not tested in CI |
 | Python 3.11 compatibility (CI and Docker images) | Verified 2026-10-16 after fixing two concurrency bugs that only showed on 3.11 (graph-twin single flight, txn-guard duplicate hub submission) |
 | Languages | English, Hindi, Hinglish evaluated (speech); simulator message check has en/hi/ta/bn texts; no 12-language claim |
 
 ## 2. Test results
 
-The 2026-10-16 rows were run against the code now on GitHub (`7b97731`). Earlier rows were run
-before the CI repair; the repair changed only `graph_twin/service.py`, `txn_guard/holds.py`, a
-demo-server test and the CI workflow, and all of those packages were re-run on 2026-10-16.
+Phase 6 rows (2026-10-16/17) were run on the Phase 6 code (`7a0593b`; the later commits change
+documentation only) by the Phase 6 implementation agent ("agent" below), not by the owner. Earlier
+rows: as recorded at the time.
 
 | Date | Suite | Result | Run by |
 |---|---|---|---|
+| 2026-10-16 | `scripts/test_all.sh`, Python 3.13 (16 Python packages + vitest) | 17/17 packages passed (complaints 493 passed / 7 skipped, live_audio 115 / 5, demo_server 210, svckit 296, vitest 262) | agent |
+| 2026-10-17 | CI `test` job reproduced: Python 3.11, fresh venv, clean clone, `--no-deps` local installs, `pip check`, every package `ruff` + `pytest -W error`, plus Dockerfile and link checks | all 16 packages passed on Python 3.11.14 from a clean clone of `7a0593b` (complaints 488 passed / 12 skipped: PyAV tests skip cleanly without the `stt` extra); Dockerfile and link checks clean ([details](docs/reports/PHASE_6_REPORT.md#7-tests-executed-and-exact-results)) | agent |
+| 2026-10-16 | complaints on a disposable Postgres 14 (`scripts/with_postgres.sh`) | 494 passed, 6 skipped (opt-in live tests) | agent |
+| 2026-10-16 | complaints real Whisper (`LIVE_STT_TESTS=1`, faster-whisper base, macOS `say`) | 4 passed (English WAV, English M4A, Hindi, Hinglish; all CRITICAL) | agent |
+| 2026-10-16 | live Ollama qwen2.5:0.5b, complaints and live-audio explainers (`OLLAMA_LIVE_TESTS=1`, 3 runs each) | all passed; grounding decisions quoted in the Phase 6 report | agent |
+| 2026-10-16 | web-console tsc / vitest / eslint / build | ok / 262 passed / clean / built (initial bundle 214.6 KB gzip) | agent |
+| 2026-10-16 | Playwright, all specs, own demo server on :19401 (real Whisper, local sign-in) | 23 passed (incl. live-audio with real Whisper and the new audio-evidence test); an earlier run had 1 intermittent smoke failure that did not recur | agent |
 | 2026-10-16 | GitHub Actions CI runs #30 (`build/implementation`) and #31 (`main`) on `7b97731` | success (jobs `test` and `static`) | GitHub |
 | 2026-10-16 | CI steps reproduced locally: Python 3.11, fresh venv, clean clone, all 16 Python packages (`ruff` + `pytest -W error`) after `pip check` | all passed | controller |
 | 2026-10-16 | `scripts/test_all.sh` on Python 3.13 (16 Python packages + web-console vitest) | 17/17 packages passed (python suites as in CI; vitest 249) | controller |
@@ -107,11 +117,16 @@ Playwright and the Postgres run are still agent-only results.
 
 ## 3. Known limitations and open findings
 
-1. **LLM grounding gap**: a qwen2.5:0.5b explanation said "the caller is under 'digital arrest'"
-   and passed the checks (2026-10-15). Labelled "may be imprecise"; never changes the score.
-2. **Live-audio LLM explainer is ungrounded** (default `qwen2.5:3b`; off unless `OLLAMA_URL` set).
-3. **Inaccurate message**: complaint analysis says "no transcription engine installed" although
-   faster-whisper is installed (it is not wired to complaint evidence yet).
+1. ~~LLM grounding gap~~ **Fixed in Phase 6, agent-verified; owner verification pending** (tests incl. the observed sentence as a
+   regression, and live runs where such answers were rejected). The checks remain keyword/pattern
+   heuristics: an accepted text can still be imprecise; it is labelled and never changes the score.
+2. ~~Live-audio LLM explainer is ungrounded~~ **Fixed in Phase 6, agent-verified; owner
+   verification pending** (shared checks, findings-only prompt, default qwen2.5:0.5b; tests and
+   live runs). Same heuristic caveat.
+3. ~~Inaccurate transcription message~~ **Fixed in Phase 6, agent-verified; owner verification
+   pending**: audio evidence is transcribed and
+   every state has a precise reason; old analysis rows read as `not_implemented_at_analysis_time`.
+   Tests and Playwright (agent runs).
 4. **Evidence storage**: local disk, random names, not encrypted, not malware-scanned; downloads not
    audited.
 5. **Development sign-in**: prints email and code to the terminal; per-process, per-IP rate limits;
@@ -127,20 +142,33 @@ Playwright and the Postgres run are still agent-only results.
     takes about 60 s (on 3.13 it is instant). It passes; the wait happens during test teardown with
     a fake hub that never answers. The store's own shutdown was measured as instant outside pytest;
     the cause was not isolated.
-13. CI does not run the console tests (vitest, Playwright) or the Postgres-backed tests.
+13. CI does not run the console tests (vitest, Playwright) or the Postgres-backed tests. CI also
+    skips the optional `stt` extras, so the PyAV decoding tests and all real-STT tests run locally
+    only.
+14. Audio evidence transcription runs inside `POST /complaints/{id}/analysis` (bounded by the
+    120 s run budget; no background queue). An evidence file and a live chunk can be transcribed
+    at the same time (separate one-at-a-time limits) on the shared model.
+15. Evidence transcripts are stored as plain text (not encrypted), like the evidence files; Hindi
+    transcription with `base` is romanised and partly garbled; only synthetic TTS audio was tested.
+16. With qwen2.5:0.5b most LLM answers are rejected by the grounding checks (live runs:
+    complaints 1 of 3 accepted, live audio 1 of 3); the 3B model was not tested (8 GB machine).
+17. Playwright `smoke.spec.ts` (simulator verify step) failed once out of three runs on 2026-10-16
+    (`verify-status` not found); not reproduced; cause not investigated.
 
-Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
+Fixed in Phase 6 (2026-10-16, agent-verified): findings 1-3 above. Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
 txn-guard duplicate hub submission on Python 3.11; the flaky demo-server seek test.
 
 ## 4. External setup still required
 
-Clerk keys; Tesseract (OCR); Qdrant + an embedding runtime (sentence-transformers/torch or
+Clerk keys; Tesseract (OCR); the optional `stt` extra and a cached faster-whisper model on any
+machine that should transcribe audio evidence (`pip install -e "services/complaints[stt]"`, model
+in the Hugging Face cache; nothing is downloaded at runtime); Qdrant + an embedding runtime (sentence-transformers/torch or
 fastembed); optionally Neo4j and PostGIS; a Docker daemon for the stack. Ollama runs only while
 started (`OLLAMA_HOST=127.0.0.1:11434 ollama serve`). CI status can be read without signing in at
 the repository's Actions page or the public API; step logs need a GitHub sign-in.
 
 ## 5. Next step
 
-Awaiting the owner's approval of the next phase. Recommended: audio-evidence transcription and the
-transcription-message fix (target phase 6) together with the LLM grounding fixes (findings 1 and
-2); see [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
+Phase 6 awaits the owner's review and approval to push. Recommended next: Phase 9 (complaint
+network from shared identifiers, no new software), then Phase 8 (Fraud DNA); see
+[docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).

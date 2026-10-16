@@ -1,7 +1,8 @@
 # API specification
 
-Phase 0 deliverable, written 2026-10-15. Every implemented route below was listed from the route
-decorators in the code at HEAD `91ebfeb` (`services/complaints/complaints/api.py`,
+Phase 0 deliverable, written 2026-10-15; updated 2026-10-16 for Phase 6 (audio evidence
+transcription, transcript endpoint, transcription statuses, live-audio explanation fields). Every
+implemented route below was listed from the route decorators in the code at HEAD `91ebfeb` (`services/complaints/complaints/api.py`,
 `services/live_audio/live_audio/api.py`, `services/demo_server/demo_server/api.py`). Planned
 endpoints are in section 6 and do not exist yet. Request and response details are summarised; the
 Pydantic models in `services/complaints/complaints/validation.py` are authoritative.
@@ -67,18 +68,19 @@ analyze 10, read 240.
 | Method and path | Auth | Purpose |
 |---|---|---|
 | `POST /complaints/{id}/evidence` | citizen (owner) | Multipart, one file. Type sniffed from content (PNG, JPEG, WebP, PDF, MP3, WAV, OGG/Opus, M4A) and must agree with the extension; size limits apply. 201 only when the file is stored; otherwise a 4xx with a reason |
-| `GET /complaints/{id}/evidence` | any (scoped) | Evidence list (deleted files excluded) |
+| `GET /complaints/{id}/evidence` | any (scoped) | Evidence list (deleted files excluded). Each item has `kind` (`audio`, `image`, `document`, `other`) and `transcription` (audio only, else null): `{status, reason, message, source, transcript_available, engine, model, language, duration_s, transcribed_s, truncated, segment_count, checked_at}`. `source`: `stored` (a transcript row), `last_analysis` (the outcome of the latest analysis run, e.g. `engine_not_configured`) or `none` (`status: not_attempted`, before any analysis). The same fields appear in the complaint detail and the upload response |
+| `GET /complaints/{id}/evidence/{eid}/transcript` | any (scoped: owner and staff; foreign ids 404) | The stored transcript of one audio file: `{evidence_id, complaint_id, status (transcribed or truncated), engine, model, language, duration_s, transcribed_s, truncated, segments: [{start_s, end_s, text}], created_at, note}`. 404 `not_found` (unknown or foreign), 404 `not_audio_evidence`, 404 `transcript_not_available` with `message` and the file's `transcription` state *(Phase 6)* |
 | `GET /complaints/{id}/evidence/{eid}/download` | any (scoped) | File download with safe headers. Not audited (finding) |
 | `DELETE /complaints/{id}/evidence/{eid}` | owner while `SUBMITTED`, or admin | Marks deleted and removes the file; investigators 403, others 404 |
 
 ### Analysis
 | Method and path | Auth | Purpose |
 |---|---|---|
-| `POST /complaints/{id}/analysis` | any (scoped) | Runs the pipeline on the stored complaint and stores a new version. 201 |
+| `POST /complaints/{id}/analysis` | any (scoped) | Transcribes stored audio evidence that has no transcript yet (synchronously, within the limits below), runs the pipeline on the stored complaint and stores a new version. 201 |
 | `GET /complaints/{id}/analysis` | any (scoped) | Latest analysis |
 | `GET /complaints/{id}/analyses` | any (scoped) | Versions, newest first, paginated *(Phase B, unpushed)* |
-| `POST /analyze` | any | Stateless check, nothing stored. Body `text` (required) plus optional `title`, `url`, `phone`, `email`, `upi_id`, `amount`, `payment_method`, `city`, `state`, `social_platform` (older names `suspicious_url`, `suspect_phone`, `suspect_email` accepted; giving both forms is a 422). Returns the analysis and `input_capabilities` *(extended in Phase B, unpushed)* |
-| `GET /models` | any | Model versions, artifact SHA, synthetic training data, held-out metrics, limitations, runtime status, Ollama status *(Phase B, unpushed)* |
+| `POST /analyze` | any | Stateless check, nothing stored. Body `text` (required) plus optional `title`, `url`, `phone`, `email`, `upi_id`, `amount`, `payment_method`, `city`, `state`, `social_platform` (older names `suspicious_url`, `suspect_phone`, `suspect_email` accepted; giving both forms is a 422). Returns the analysis and `input_capabilities`; `audio` is `not_accepted_here` ("Audio recordings are analysed only when they are attached to a complaint ..."), `screenshot` is `unavailable` (no OCR engine installed) *(Phase B; wording Phase 6)* |
+| `GET /models` | any | Model versions, artifact SHA, synthetic training data, held-out metrics, limitations, runtime status, Ollama status, and `stt`: `{status, engine, model, reason, local, evidence_transcription, limits, decoders, used_for}` with `status` `ready` (loaded), `available_offline` (in the local cache, loaded on first use), `model_not_available_offline`, `engine_not_configured` or `configured` (whisper.cpp, not probed) *(Phase B; stt Phase 6)* |
 
 Analysis result fields: `status` (`COMPLETED`, `PARTIAL`, `UNAVAILABLE`, `INSUFFICIENT_INPUT`),
 `risk_score` 0-100 (an **uncalibrated heuristic**, never a probability), `risk_level` (LOW, MEDIUM,
@@ -87,6 +89,38 @@ HIGH, CRITICAL, or null when not assessable), `classification`, `confidence`,
 `llm` | `static_guidance`, `method`, weight and an evidence pointer), `explanation` parts with
 source, `recommended_actions`, `llm_explanation` (labelled, grounded, may be rejected),
 `provenance`, `unavailable_capabilities`, `model_version`, timestamps.
+
+**Audio evidence (Phase 6).** `audio_transcription[]` lists every stored audio file of the
+complaint: `{evidence_id, mime_type, status, reason, message, engine, model, language, duration_s,
+transcribed_s, truncated, segment_count, reused}`. Per-file `status`:
+
+| Status | Meaning | Stored |
+|---|---|---|
+| `transcribed` | transcribed locally (faster-whisper through live-audio's engine) | yes |
+| `truncated` | transcribed up to the per-file limit (`COMPLAINTS_STT_MAX_SECONDS_PER_FILE`, default 180 s) | yes |
+| `decode_failed` | the file could not be decoded | yes |
+| `unsupported_format` | an audio type without a decoder path | yes |
+| `engine_not_configured` | no engine for evidence (`stt` extra not installed, `LIVE_STT_ENGINE=none`, or `COMPLAINTS_STT_ENABLED=0`; `reason` says which) | no |
+| `model_not_available_offline` | the model is not in the local cache (never downloaded at runtime) | no |
+| `decode_unavailable` | MP3 / OGG / M4A without PyAV | no |
+| `timeout` | did not finish within the run's budget (`COMPLAINTS_STT_RUN_BUDGET_S`, default 120 s) | no |
+| `budget_exhausted` | the run's budget was used up before this file | no |
+| `not_attempted_limit` | over the per-run file cap (`COMPLAINTS_STT_MAX_FILES_PER_RUN`, default 2); the next run continues | no |
+| `engine_error` | the engine raised | no |
+
+Capabilities: `audio_transcription` is `available` (every audio file transcribed), `unavailable`
+(reason: the single failing status, or `multiple_reasons`) or `skipped_no_input`
+(`no_audio_evidence`); `audio_transcript_scoring` reports the scoring of the transcripts.
+Transcripts are scored by the same call-guard scorer as the description; their indicators have
+`stage: "audio_transcript"` and `evidence: {type: "evidence_transcript", field:
+"evidence_transcript", evidence_id, start_s, end_s, snippet, granularity: "segment"}` (start/end
+null with a `note` when the classifier scored the whole transcript or a span was not located).
+`score_components.transcript_score` is the transcripts' score; `risk = max(text, transcript,
+category prior) + URL adjustment`. A result that would be LOW is withheld (null) while any audio
+file is not transcribed. Untranscribed audio is listed in `unanalysed_attachments` per file with
+`status` and the plain-language `reason`. Provenance has one `audio_transcription` stage per file
+(`evidence_id`, `reused`). Rows stored before Phase 6 with the inaccurate reason
+`no_transcription_engine_installed` are returned as `not_implemented_at_analysis_time`.
 
 ### Alerts, profile, statistics
 | Method and path | Auth | Purpose |
@@ -104,7 +138,7 @@ source, `recommended_actions`, `llm_explanation` (labelled, grounded, may be rej
 | `PUT /admin/users/{id}/role` | admin | `{role, expected_role}`; INVESTIGATOR/ADMIN need a verified email; last-admin guard; audited |
 | `PUT /admin/users/{id}/active` | admin | `{is_active}`; audited |
 | `GET /admin/audit` | admin | Paginated audit log |
-| `GET /admin/health` | admin | Database, identity keys (JWKS), evidence directory, call-guard scorer, category model, Ollama, and `not_configured` for Qdrant, Neo4j, PostGIS, Redis |
+| `GET /admin/health` | admin | Database, identity keys (JWKS), evidence directory, call-guard scorer, category model, Ollama, `stt` (same object as in `/models`, without `used_for`), and `not_configured` for Qdrant, Neo4j, PostGIS, Redis |
 
 ## 5. Live audio API (`/api/live-audio`, demo-server)
 
@@ -115,7 +149,7 @@ Auth: a demo-server token (any role); the session owner is the token subject.
 | `GET /capabilities` | Mode `incremental_chunked`, chunk size, audio format (16 kHz mono PCM16 WAV), STT engine status, scorer status, LLM status, limits, privacy statement |
 | `POST /sessions` | Start a session (language `auto`, `hi`, `en`); max 2 per user |
 | `POST /sessions/{sid}/chunks?seq=N&start_ms=…` | Upload one WAV chunk; ordered by `seq`, idempotent per `seq`; 40 per minute |
-| `GET /sessions/{sid}` | Transcript segments with timestamps, risk history, indicators linked to segments, warnings, actions |
+| `GET /sessions/{sid}` | Transcript segments with timestamps, risk history, indicators linked to segments, warnings, actions, `explanation` `{rules, llm, llm_status, llm_reason, llm_model, llm_label, llm_at_s, llm_note}` (`llm_status` `rejected` + `llm_reason` when the grounding checks refused the wording; `llm_label` "LLM-generated (model), may be imprecise") |
 | `POST /sessions/{sid}/end` | End and delete the session's in-memory data |
 
 ## 6. Simulator API (demo-server, simulated data only)
@@ -135,7 +169,6 @@ simulator output and **are not complaint intelligence**.
 
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
-| `POST /complaints/{id}/evidence/{eid}/transcribe` or transcription inside analysis | owner, staff | 6 |
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
 | `GET /complaints/{id}/similar` (Fraud DNA) | staff | 8 |
 | `GET /complaints/{id}/related`, `GET /entities/{type}/{value}/complaints`, `GET /graph/clusters` | staff | 9 |

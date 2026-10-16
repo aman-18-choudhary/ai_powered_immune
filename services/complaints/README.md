@@ -9,11 +9,11 @@ stack), plain Postgres only.
 
 | Piece | Status |
 |---|---|
-| API, RBAC, storage, validation, uploads, migrations, profile, local sign-in | implemented; 446 tests pass on SQLite (3 skipped: 1 Postgres-only, 2 opt-in live Ollama), the same suite on a disposable Postgres 14 (`scripts/with_postgres.sh`): 447 passed, 2 skipped (live Ollama) on 2026-10-15 |
+| API, RBAC, storage, validation, uploads, migrations, profile, local sign-in | implemented; on 2026-10-16 (Phase 6): 493 tests pass on SQLite (7 skipped: 1 Postgres-only, 2 opt-in live Ollama, 4 opt-in real speech-to-text), the same suite on a disposable Postgres 14 (`scripts/with_postgres.sh`): 494 passed, 6 skipped (the opt-in live tests) |
 | Local sign-in (email + one-time code in the server terminal) | implemented and tested; **development only**, `demo`/`local` modes, absent in `clerk` mode |
 | Clerk token verification | implemented and tested ONLY with locally generated RSA keys and an injected JWKS. **Live Clerk verification has not been exercised: blocked by configuration** (no Clerk instance or keys exist for this repository) |
 | Clerk Backend API email lookup | defined, OFF by default, tested only against a mock transport |
-| Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation, with per-item provenance (rule / ml / llm / static_guidance). Optional GROUNDED local-Ollama wording (default `qwen2.5:0.5b`); exercised live on 2026-10-15 only through the opt-in `OLLAMA_LIVE_TESTS=1` test (a small model: its text is often rejected by the grounding checks and is labelled "may be imprecise" when shown). Score is an UNCALIBRATED heuristic. Audio transcript, screenshot OCR, document text: `unavailable` (listed as unanalysed attachments) |
+| Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation, with per-item provenance (rule / ml / llm / static_guidance). Optional GROUNDED local-Ollama wording (default `qwen2.5:0.5b`; checks in the shared `svckit.llm_grounding`); exercised live on 2026-10-15 and 2026-10-16 only through the opt-in `OLLAMA_LIVE_TESTS=1` test (a small model: its text is usually rejected by the grounding checks and is labelled "may be imprecise" when shown). Score is an UNCALIBRATED heuristic. **Uploaded audio evidence is transcribed locally** (faster-whisper through live-audio's engine, optional extra `stt`; see "Audio evidence transcription") and scored like the description. Screenshot OCR and document text: `unavailable` (listed as unanalysed attachments; no OCR engine installed) |
 | Malware scanning of uploads | **not implemented** |
 | Qdrant, Neo4j, PostGIS, Redis | not used; reported as `not_configured` by `/admin/health` |
 | Ollama | optional, local hosts only, explanation wording only; `/models` and `/admin/health` report its state |
@@ -135,14 +135,15 @@ configuration error; there is no insecure fallback.
 | `PATCH /complaints/{id}/status` | INVESTIGATOR, ADMIN | valid transitions only, history row, alert to the owner |
 | `DELETE /complaints/{id}` | owner (CITIZEN) | soft delete, only while SUBMITTED, audited |
 | `POST /complaints/{id}/evidence` | owner (CITIZEN) | multipart, one file in field `file` |
-| `GET /complaints/{id}/evidence`, `.../{eid}/download` | owner, staff | `Content-Disposition: attachment`, `nosniff` |
+| `GET /complaints/{id}/evidence`, `.../{eid}/download` | owner, staff | `Content-Disposition: attachment`, `nosniff`. Evidence items carry `kind` and, for audio, `transcription` (status, precise reason, source `stored` / `last_analysis` / `none`) |
+| `GET /complaints/{id}/evidence/{eid}/transcript` | owner, staff | the stored transcript (`segments: [{start_s, end_s, text}]`, engine, model, language, durations, truncated); foreign ids 404; `not_audio_evidence` / `transcript_not_available` (404, with the file's transcription state) |
 | `DELETE /complaints/{id}/evidence/{eid}` | owner while SUBMITTED, ADMIN any time | marks the row `deleted`, removes the file, audited (`evidence_delete`, no file name); an admin removal alerts the owner. `200 {id, status: "deleted", file_removed}` (`file_removed: false` = the row is deleted but the file could not be removed, logged). Foreign or unknown ids: 404; INVESTIGATOR: 403; owner after review started: 409 `evidence_not_deletable` |
-| `POST /complaints/{id}/analysis`, `GET .../analysis` | owner, staff | new version per run (pipeline v2) |
+| `POST /complaints/{id}/analysis`, `GET .../analysis` | owner, staff | new version per run (pipeline v2); POST first transcribes stored audio evidence that has no transcript (synchronous, bounded; see below) |
 | `GET /complaints/{id}/analyses` | owner, staff | every version, newest first, `limit`/`offset`; summary + pipeline and model versions per version |
-| `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `url`, `upi_id`, `phone`, `email`, `amount`, `payment_method` (the older names `suspicious_url`, `suspect_phone`, `suspect_email` still work; giving both names with different values is a 422 on the short name), `city`, `state`, `social_platform`; same pipeline and provenance; `input_capabilities` per input (`analysed`, `format_checked`, `context_only`, `not_provided`, `insufficient_input`; `audio` and `screenshot` are `unavailable` until Phase C); nothing stored, content not logged, `persisted: false`; own rate bucket |
-| `GET /models` | any authenticated user | category-v1 and call-guard clf-v1: version, pinned artifact SHA-256, training data (100% synthetic), held-out metrics read from the shipped metrics file (clf-v1 ships none: `metrics: null` with the reason), the leaky random split separately (`is_headline: false`), limitations (category: from `MODEL_CARD.md`), runtime status; `llm`: Ollama `not_configured` / `unavailable` (reason) / `ready` with the model name. Never contacts a non-local host |
+| `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `url`, `upi_id`, `phone`, `email`, `amount`, `payment_method` (the older names `suspicious_url`, `suspect_phone`, `suspect_email` still work; giving both names with different values is a 422 on the short name), `city`, `state`, `social_platform`; same pipeline and provenance; `input_capabilities` per input (`analysed`, `format_checked`, `context_only`, `not_provided`, `insufficient_input`; `audio` is `not_accepted_here`: recordings are analysed only when attached to a complaint; `screenshot` is `unavailable`: no OCR engine is installed); nothing stored, content not logged, `persisted: false`; own rate bucket |
+| `GET /models` | any authenticated user | `stt`: speech-to-text state for audio evidence (`ready`, `available_offline`, `model_not_available_offline`, `engine_not_configured`, `configured`), limits, decoders. category-v1 and call-guard clf-v1: version, pinned artifact SHA-256, training data (100% synthetic), held-out metrics read from the shipped metrics file (clf-v1 ships none: `metrics: null` with the reason), the leaky random split separately (`is_headline: false`), limitations (category: from `MODEL_CARD.md`), runtime status; `llm`: Ollama `not_configured` / `unavailable` (reason) / `ready` with the model name. Never contacts a non-local host |
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
-| `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | |
+| `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | health includes `stt` (as in `/models`) |
 | `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | roles granted here have source `admin`; optimistic `expected_role`; last active admin protected; audited |
 
 Status transitions: SUBMITTED to UNDER_REVIEW or REJECTED; UNDER_REVIEW to INVESTIGATING, RESOLVED
@@ -158,8 +159,8 @@ Errors are JSON `{error, message}`; validation errors are `{error: "validation_e
 | Capability | CITIZEN | INVESTIGATOR | ADMIN |
 |---|---|---|---|
 | create complaint | yes | no | no |
-| read own complaints / evidence / analysis | yes | n/a | n/a |
-| read all complaints / evidence / analysis | no (404) | yes | yes |
+| read own complaints / evidence / transcripts / analysis | yes | n/a | n/a |
+| read all complaints / evidence / transcripts / analysis | no (404) | yes | yes |
 | upload evidence | own only | no | no |
 | remove evidence | own, SUBMITTED only | no | any |
 | own profile and privacy (`/me`) | yes | yes | yes |
@@ -196,7 +197,56 @@ deleted.
 * Removal (`DELETE .../evidence/{eid}`): the row becomes `deleted` (with `deleted_at`) and stays
   for the audit trail; the file is unlinked. Deleted evidence is excluded from lists, detail,
   downloads, counts, the `has_evidence` filter, the per-complaint cap and analysis; uploading the
-  same bytes again creates a new record.
+  same bytes again creates a new record. An audio file's transcript row is deleted in the same
+  transaction.
+
+## Audio evidence transcription (Phase 6)
+
+`POST /complaints/{id}/analysis` transcribes every stored audio file that has no transcript yet,
+then analyses the complaint (`complaints/transcribe.py`).
+
+* **Engine:** live-audio's speech-to-text engine (`live_audio.stt.engine_from_env`: faster-whisper,
+  `LIVE_STT_ENGINE` / `LIVE_STT_MODEL`, default `base`, CPU int8, `local_files_only`: a model that
+  is not cached is `model_not_available_offline`, nothing is downloaded). Language `auto` with the
+  same English / Hindi+Urdu decision and romanised-Hindi prompt as Live Protection. Installed with
+  the optional extra `pip install -e "services/complaints[stt]"` (= `live-audio[stt]` + numpy) and
+  imported lazily: without it the service runs and reports `engine_not_configured`. The demo
+  server passes its live-audio engine object, so one model is in memory.
+* **Decoding** to 16 kHz mono PCM16: WAV with the stdlib `wave` module (integer PCM, numpy mixing
+  and linear resampling); MP3, OGG/Opus, M4A (and float WAV) with PyAV, which ships with
+  faster-whisper. Without PyAV those are `decode_unavailable`.
+* **Limits** (per analysis run): `COMPLAINTS_STT_MAX_FILES_PER_RUN` (default 2) new files, the rest
+  `not_attempted_limit` (the next run continues); `COMPLAINTS_STT_MAX_SECONDS_PER_FILE` (default
+  180 s) of audio per file, longer files `truncated`; `COMPLAINTS_STT_RUN_BUDGET_S` (default 120 s)
+  for all transcription in the run (`timeout`, `budget_exhausted`); the upload size caps above. The
+  engine call runs in a worker thread, one at a time per process (its own semaphore), so the event
+  loop is not blocked. A live chunk and an evidence file can be transcribed at the same time.
+  `COMPLAINTS_STT_ENABLED=0` turns evidence transcription off (`engine_not_configured`,
+  `disabled_by_config`).
+* **Once per file:** definitive outcomes (`transcribed`, `truncated`, `decode_failed`,
+  `unsupported_format`) are stored in `evidence_transcripts` (migration 9) and reused by every
+  later analysis (`reused: true`); transient ones are reported for that run only and retried. Two
+  analyses of the same complaint in one process do not transcribe a file twice (a per-complaint
+  lock; the unique `evidence_id` covers other processes).
+* **Analysis:** the transcripts (segments joined, at most 4,000 characters) are scored by the same
+  call-guard scorer (rules + clf-v1) as the description; `transcript_score` enters the risk formula
+  as `max(text_score, transcript_score, category_prior)`. Indicators found in a transcript have
+  `stage: audio_transcript` and evidence `{type: "evidence_transcript", evidence_id, start_s,
+  end_s, snippet}` (the first segment, or pair of adjacent segments, where the rules find the
+  cue). The category model reads the complaint text only. Provenance has one `audio_transcription`
+  stage per file. A recording that could not be transcribed makes the run `PARTIAL`, is listed in
+  `unanalysed_attachments` with the precise reason, and a result that would be LOW is withheld.
+* **Statuses:** see the table in [docs/API_SPECIFICATION.md](../../docs/API_SPECIFICATION.md).
+  `/admin/health` and `/models` report the engine truthfully without loading it (`available_offline`
+  means the model is in the local cache).
+* **Privacy:** transcript text, file names and evidence ids are never logged (status codes, counts
+  and durations only; tested with `caplog`). Transcripts have the same access as the evidence and
+  are deleted with it. Not encrypted at rest (like the files).
+* **Measured (real Whisper `base`, CPU, 2026-10-16, `LIVE_STT_TESTS=1`):** English (WAV and M4A)
+  near verbatim, CRITICAL 100; Hindi (Devanagari read by Lekha) romanised and partly garbled
+  ("Mekh Police se boh raha hoon. Aap Digital Arrest me hai..."), CRITICAL 100; Hinglish (Rishi)
+  "Main CBI office a bowl raha hoon. Aap digital arrest me ho...", CRITICAL 100. Synthetic TTS is
+  clean speech; real phone recordings will be worse.
 
 ## Bank details and privacy settings
 
@@ -227,6 +277,7 @@ by hand is restored). Data is never dropped.
 | 6 `analyses_critical_level` | `analyses.risk_level` allows CRITICAL (same rebuild / swap); rows that stored CRITICAL as HIGH (exact level in `detail.risk_level`) are backfilled, only when the CHECK had to be widened |
 | 7 `analyses_insufficient_input` | `analyses.status` allows INSUFFICIENT_INPUT (Postgres also widens the column 16 -> 24) |
 | 8 `alerts_risk_level` | `alerts.risk_level` (nullable) for one risk alert per complaint and level |
+| 9 `evidence_transcripts` | table `evidence_transcripts` (one row per audio evidence file; definitive transcription outcomes only) + index |
 
 ## Analysis pipeline v2
 
@@ -244,12 +295,15 @@ A failing stage never blocks another and is never turned into LOW or BENIGN.
 | `url_fetch_reputation`, `contact_reputation_lookup` | always `unavailable` (no network lookups by design) |
 | `entity_format_checks` | phone (E.164-like, placeholders), UPI id format and known-handle list, email syntax. Weight 0: unusual values are data-quality notes, not evidence |
 | `geographic_context` | presence recorded as context; not scored (hotspot comparison is not part of this service) |
-| `audio_transcription`, `screenshot_ocr`, `document_text_extraction`, `evidence_content_analysis` | `unavailable` (no engine installed); files are listed under `unanalysed_attachments` by type and count |
+| `audio_transcription` | `available` (every audio file transcribed), `unavailable` (reason: the failing per-file status or `multiple_reasons`), `skipped_no_input` (`no_audio_evidence`); per-file detail in `audio_transcription[]` |
+| `audio_transcript_scoring` | call-guard scoring of the transcripts: `available`, `unavailable`, `skipped_no_input` (no transcript, or `no_speech_in_transcripts`) |
+| `screenshot_ocr`, `document_text_extraction`, `evidence_content_analysis` | `unavailable` (no OCR engine installed; document text not implemented; only audio content is analysed, via transcription); images and PDFs are listed under `unanalysed_attachments` by type and count |
 | `llm_explanation` | `unavailable` (`not_configured`, `non_local_host`, `unreachable`), `available`, `timeout`, `error`, `rejected` (grounding checks), `skipped_no_input` (`no_findings_to_rephrase`) |
 
 **Risk score** (`score_semantics: "uncalibrated_heuristic"`, 0-100, never a probability):
-`risk = min(100, max(text_score, category_prior) + round(25 * noisy_or(url_indicator_weights)))`.
-`text_score = round(100 * call-guard score)`. `category_prior` applies only when the classifier
+`risk = min(100, max(text_score, transcript_score, category_prior) + round(25 *
+noisy_or(url_indicator_weights)))`. `text_score = round(100 * call-guard score)` of the title and
+description; `transcript_score` the same for the audio transcripts (when any were transcribed). `category_prior` applies only when the classifier
 answered (DIGITAL_ARREST 70, OTP_SCAM 60, UPI/PHISHING/INVESTMENT 55, BANK/JOB 50,
 SOCIAL_MEDIA 45, OTHER 0); an abstention contributes nothing. Terms of unavailable stages are left
 out. The full formula is in `limitations` and `score_components`. Bands: LOW 0-34, MEDIUM 35-69,
@@ -265,10 +319,12 @@ and `/me/stats` has `by_risk_level` (latest analysis per own complaint, plus `no
 | title + description has fewer than 4 words (empty, whitespace, "help me") | `status: INSUFFICIENT_INPUT`, `risk_score`/`risk_level` null, the text scorer and category model are NOT run (`skipped_insufficient_input`); URL/format checks still reported |
 | text scorer cannot be imported / loaded, or raises | `text_risk_scorer: unavailable` (`ImportError`..., `scoring_error`), `status: PARTIAL`; a result that would be LOW is withheld (null) |
 | category model missing, SHA-256 pin mismatch, sklearn mismatch, failed smoke test, inference error | `category_classifier: unavailable` (`missing_artifact`, `pin_mismatch`, ..., `inference_error`), `status: PARTIAL`; a result that would be LOW is withheld (null) |
+| an audio evidence file was not transcribed (any status other than `transcribed` / `truncated`) | `audio_transcription: unavailable` with the reason, `status: PARTIAL`, the file listed in `unanalysed_attachments`; a result that would be LOW is withheld (null) |
 | nothing could be scored | `status: UNAVAILABLE`, no level |
 | Ollama timeout / garbage / ungrounded text | no LLM text, `llm_explanation: timeout | error | rejected` with the reason, `status: PARTIAL`; score, level and category unchanged |
 
-A LOW level is given only when both core text stages (scorer and category model) ran. Evidence that
+A LOW level is given only when both core text stages (scorer and category model) ran and every
+uploaded recording was transcribed and scored. Evidence that
 reaches MEDIUM or above without them is still reported (not lowered, not hidden). Every path has a
 test (`tests/test_failure_semantics.py`, `tests/test_llm_grounding.py`) asserting no LOW and no
 BENIGN.
@@ -288,7 +344,8 @@ fixed vocabulary, a `method` and an `evidence` pointer (`complaints/provenance.p
 `evidence` is one of: `text_span` (field `title`/`description`/`text`, `start`/`end` offsets into
 that field, a snippet of at most 160 characters, `granularity: sentence`: the sentence in which the
 call-guard rules found the cue; never the whole text), `field` (the input field, plus `host` for a
-URL), `whole_text` (a model that scores the whole text), `keyed_by` (guidance), `generated` (LLM).
+URL), `whole_text` (a model that scores the whole text), `evidence_transcript` (a cue in an audio
+transcript: `evidence_id`, `start_s`, `end_s`, snippet), `keyed_by` (guidance), `generated` (LLM).
 The old indicator `source` value (`call_guard`, `url_heuristics`) is kept as `stage`.
 `provenance` on the analysis lists `stages` (stage, source, method, status `ran | unavailable |
 skipped | not_configured | rejected | timeout | error`, reason, version), `ran`, `unavailable`,
@@ -328,13 +385,22 @@ compose names); anything else is `unavailable (non_local_host)` and is never cal
 default 8 s, at most 2 concurrent). **Grounding:** the prompt lists only the computed findings (up to
 5, strongest first: plain text + sanitised evidence snippet), the suggested category and the first 3
 static steps; the complaint text is not sent. The LLM is not called when there are no findings. The
-answer is tidied (complete sentences only, repeats and list echoes dropped, at most 3 sentences),
-links/addresses/numbers not in the prompt are stripped, and it is REJECTED (`rejected` + reason)
-when empty or too long (`output_too_long`, > 700 chars), not English (`wrong_language`), claiming a
-likelihood (`likelihood_claim`), certainty, safety or evidence (`unsupported_claim`, e.g. "the caller
-has evidence of a financial transaction"), turning the accusation on the caller (`role_inversion`,
-"the caller is under digital arrest"), naming a scam cue not among the findings
-(`ungrounded_indicator`) or referring to none of them (`not_grounded`). The rule explanation stays
+answer is checked by the shared `svckit.llm_grounding.review_output` (also used by Live
+Protection): links/addresses/numbers not in the prompt are stripped, every complete sentence is
+checked (at most 3 are shown; repeats and list echoes dropped), and it is REJECTED (`rejected` +
+reason) when empty or too long (`output_too_long`, > 700 chars), not English (`wrong_language`), a
+copy of the prompt's quoted evidence (`prompt_echo`), claiming a likelihood (`likelihood_claim`),
+certainty, safety or evidence, or telling the reader as a fact that they are under arrest
+(`unsupported_claim`, e.g. "the caller has evidence of a financial transaction", "You are under
+digital arrest."), turning the roles around (`role_inversion`: per sentence, ignoring quotes, case
+and punctuation, the caller / scammer / sender / officer described as under arrest, placed under
+(digital) arrest, investigated, threatened, the victim or asked to pay; "claims to be under
+arrest"; "you are from the CBI"; the safety steps attributed to the caller. Regression: "the caller
+is under 'digital arrest'", produced by qwen2.5:0.5b on 2026-10-15), repeating a scam instruction as
+advice (`repeats_scam_instruction`, "Do not tell anyone about this call."), naming a scam cue not
+among the findings (`ungrounded_indicator`) or referring to none of them (`not_grounded`).
+Attributed or negated wording passes ("the caller says you are under digital arrest", "the caller
+claims the victim is ...", "the victim was told ...", "you are not under digital arrest"). The rule explanation stays
 primary; the console shows accepted text separately as "LLM-generated (model), may be imprecise".
 These checks are heuristics: an accepted text can still be clumsy or imprecise (see the Phase B
 report for live outputs). `/admin/health` shows `ollama: not_configured | reachable | unreachable |
@@ -384,6 +450,8 @@ metrics file.
 | `COMPLAINTS_RATE_WRITE_PER_MIN`, `..._UPLOAD_...`, `..._ANALYSIS_...`, `..._READ_...` | per-user limits |
 | `COMPLAINTS_RATE_ANALYZE_PER_MIN` | per-user limit for `POST /analyze` (default 10) |
 | `COMPLAINTS_OLLAMA_URL` (wins) or `OLLAMA_URL`, `OLLAMA_MODEL` (default `qwen2.5:0.5b`), `OLLAMA_TIMEOUT_S` (default 8) | optional local, grounded LLM wording |
+| `COMPLAINTS_STT_ENABLED` (default 1), `COMPLAINTS_STT_MAX_FILES_PER_RUN` (2, 0-10), `COMPLAINTS_STT_MAX_SECONDS_PER_FILE` (180, 5-1800), `COMPLAINTS_STT_RUN_BUDGET_S` (120, 5-900) | audio evidence transcription and its limits |
+| `LIVE_STT_ENGINE` (default `faster_whisper`; `none` disables), `LIVE_STT_MODEL` (default `base`), `LIVE_STT_BEAM`, `LIVE_STT_CPU_THREADS`, `HF_HUB_OFFLINE` | the speech-to-text engine (shared with live-audio; see its README) |
 | `CATEGORY_MIN_CONFIDENCE` | overrides the artifact's abstention threshold (0-1) |
 | `COMPLAINTS_LOCAL_AUTH_OUTBOX` | **TEST ONLY.** A file path: local sign-in codes are also appended there as JSON lines `{"email", "code"}` (file mode 0600) so automated end-to-end tests can sign in. Refused (`ConfigError`) unless the mode is `local`/`demo`; never set it outside a test run |
 | `PORT`, `LOG_LEVEL` | listen port, log level |
@@ -416,9 +484,10 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 
 * Live Clerk verification not exercised; the Clerk template claim names are documented from the
   design, not from a running instance.
-* Uncalibrated score. The category model was trained on synthetic template data and never validated on real complaints. Audio, screenshots and PDFs are not analysed. URL checks are offline lexical heuristics.
+* Uncalibrated score. The category model was trained on synthetic template data and never validated on real complaints. Screenshots and PDFs are not analysed. Audio is analysed only through a machine transcript (local Whisper `base` on CPU; measured only on synthetic TTS speech; Hindi is written romanised and partly garbled; at most 180 s per file by default; the category model does not read transcripts). URL checks are offline lexical heuristics.
 * Evidence spans are sentence-level (where the rules found a cue), not exact token spans; the ML classifier cannot point to a span.
 * LLM grounding checks are keyword/pattern heuristics; a small model's accepted text can still be imprecise. It never affects the score, level or category.
+* Audio transcription runs inside the analysis request (bounded by the run budget, default 120 s); a slow first run can take that long. There is no background queue.
 * No malware scanning; no data-retention or erasure job; evidence stays on one volume (no
   replication).
 * The rate limiter and the (optional) backend email-lookup cache are per process.
@@ -433,7 +502,10 @@ INVESTIGATOR is not mapped onto the analyst/officer roles of the intelligence se
 
 ```
 pip install -e "services/complaints[dev]"          # also: pip install -e services/call_guard
+pip install -e "services/complaints[stt]"          # optional: audio evidence transcription
 cd services/complaints && python -m pytest -W error -q
+LIVE_STT_TESTS=1 HF_HUB_OFFLINE=1 python -m pytest -W error -q -s tests/test_stt_live.py   # real Whisper (macOS say)
+OLLAMA_LIVE_TESTS=1 python -m pytest -W error -q -s tests/test_ollama_live.py              # live local Ollama
 bash scripts/with_postgres.sh                      # whole suite on a disposable local Postgres
 python -m complaints.migrate                       # apply pending migrations (needs COMPLAINTS_DATABASE_URL)
 python -m complaints                               # uvicorn, access log off
