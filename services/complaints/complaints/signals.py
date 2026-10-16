@@ -61,8 +61,9 @@ BRANDS: dict[str, tuple[str, ...]] = {
     "flipkart": ("flipkart.com",),
 }
 KEYWORDS_PATH = ("login", "signin", "verify", "kyc", "otp", "update", "secure", "refund", "claim")
-# Second-level suffixes under which the registrable domain has three labels.
-_SLD_SUFFIXES = frozenset({
+# Second-level suffixes under which the registrable domain has three labels (also used by the
+# complaint network's registrable-domain rule, ``complaints.network``).
+SLD_SUFFIXES = frozenset({
     "co.in", "gov.in", "org.in", "net.in", "ac.in", "nic.in", "res.in", "co.uk", "com.au",
     "org.uk",
 })  # fmt: skip
@@ -83,7 +84,7 @@ def _ind(code: str, weight: float, text: str) -> dict[str, Any]:
 
 def _registrable(host: str) -> str:
     labels = host.split(".")
-    if len(labels) >= 3 and ".".join(labels[-2:]) in _SLD_SUFFIXES:
+    if len(labels) >= 3 and ".".join(labels[-2:]) in SLD_SUFFIXES:
         return ".".join(labels[-3:])
     return ".".join(labels[-2:]) if len(labels) >= 2 else host
 

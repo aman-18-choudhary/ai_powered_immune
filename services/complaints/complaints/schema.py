@@ -47,6 +47,10 @@ RISK_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 # migration 9: only definitive transcription outcomes are stored (transient ones such as a missing
 # engine or a timeout are reported per analysis run and retried; see complaints.transcribe)
 TRANSCRIPT_STATUSES = ("transcribed", "truncated", "decode_failed", "unsupported_format")
+# migration 10 (complaint network): identifier types and investigator review decisions
+ENTITY_TYPES = ("phone", "upi", "email", "url", "domain", "bank_account", "social_account")
+LINK_DECISIONS = ("confirmed", "rejected")
+LINK_BASES = ("observed", "inferred")
 
 
 def _in(col: str, values: tuple[str, ...]) -> str:
@@ -297,6 +301,52 @@ admin_audit = Table(
     Column("created_at", UTCDateTime, nullable=False),
     Index("ix_audit_created", "created_at"),
     Index("ix_audit_target", "target_user_id", "action"),
+)  # fmt: skip
+
+# migration 10: the identifiers of each complaint, taken ONLY from its structured fields
+# (``complaints.network``). ``value_norm`` is the normalised value (investigators need it for
+# matching); ``display`` is the masked form returned by the network API; ``value_hash`` (sha256 of
+# type + value) is the indexed join key because a URL can be longer than a Postgres b-tree entry
+# allows. Written with the complaint; rows of soft-deleted complaints stay but are never linked.
+complaint_entities = Table(
+    "complaint_entities", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("complaint_id", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("entity_type", String(16), nullable=False),
+    Column("value_norm", String(2048), nullable=False),
+    Column("value_hash", String(64), nullable=False),
+    Column("display", String(200), nullable=False),
+    Column("source_field", String(32), nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    UniqueConstraint("complaint_id", "entity_type", "value_hash", name="uq_entity_per_complaint"),
+    CheckConstraint(_in("entity_type", ENTITY_TYPES), name="ck_entity_type"),
+    Index("ix_entities_value", "entity_type", "value_hash"),
+    Index("ix_entities_complaint", "complaint_id"),
+)  # fmt: skip
+
+# migration 10: an investigator's review of a pair of complaints (ordered: complaint_low <
+# complaint_high). Every review is kept; the one with the highest ``seq`` for a pair is current.
+# ``basis`` records the relation the pair had when it was reviewed (observed or inferred).
+link_reviews = Table(
+    "link_reviews", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("complaint_low", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("complaint_high", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("decision", String(16), nullable=False),
+    Column("basis", String(16), nullable=False),
+    Column("reviewer_user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("note", String(500)),
+    Column("created_at", UTCDateTime, nullable=False),
+    UniqueConstraint("complaint_low", "complaint_high", "seq", name="uq_link_review_seq"),
+    CheckConstraint(_in("decision", LINK_DECISIONS), name="ck_link_review_decision"),
+    CheckConstraint(_in("basis", LINK_BASES), name="ck_link_review_basis"),
+    CheckConstraint("complaint_low < complaint_high", name="ck_link_review_order"),
+    Index("ix_link_reviews_high", "complaint_high"),
 )  # fmt: skip
 
 # POST /complaints replay protection (24 h). Only a hash of the client key is stored.

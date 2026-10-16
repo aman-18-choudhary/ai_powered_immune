@@ -41,11 +41,13 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 from . import migrations
 from .identity import Identity
+from .network import extract_entities, value_hash
 from .schema import (
     RISK_LEVELS,
     admin_audit,
     alerts,
     analyses,
+    complaint_entities,
     complaint_evidence,
     complaint_status_history,
     complaints,
@@ -575,6 +577,22 @@ class ComplaintStore:
                     actor_user_id=owner_id, note=None, created_at=now,
                 )
             )  # fmt: skip
+            # Phase 9: the complaint's identifiers (structured fields only), same transaction
+            ents = extract_entities(fields)
+            if ents:
+                conn.execute(
+                    insert(complaint_entities),
+                    [
+                        {
+                            "id": new_id(), "complaint_id": cid, "entity_type": e.entity_type,
+                            "value_norm": e.value_norm,
+                            "value_hash": value_hash(e.entity_type, e.value_norm),
+                            "display": e.display, "source_field": e.source_field,
+                            "created_at": now,
+                        }
+                        for e in ents
+                    ],
+                )  # fmt: skip
             if khash:
                 conn.execute(
                     insert(idempotency_keys).values(

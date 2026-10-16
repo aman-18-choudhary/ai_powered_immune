@@ -14,11 +14,12 @@ Rules for adding a migration
 * Nothing is ever dropped or rewritten destructively; data is preserved.
 """
 
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import MetaData, inspect, select, text, update
+from sqlalchemy import MetaData, insert, inspect, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateTable
 
@@ -224,6 +225,78 @@ def _evidence_transcripts(conn: Connection) -> None:
     ensure_index(conn, "evidence_transcripts", "ix_transcripts_complaint")
 
 
+NETWORK_VERSION = 10
+BACKFILL_CHUNK = 500
+
+
+def backfill_entities(conn: Connection, now: datetime | None = None) -> int:
+    """Write the identifiers of every stored complaint that are not there yet (idempotent: an
+    existing (complaint, type, value) row is never duplicated). Soft-deleted complaints are
+    included: they are excluded from linking at query time. Returns the rows written."""
+    from .network import IDENTIFIER_FIELDS, extract_entities, value_hash
+
+    ce = metadata.tables["complaint_entities"]
+    cx = metadata.tables["complaints"]
+    present = _columns(conn, "complaints")
+    cols = [cx.c.id] + [cx.c[f] for f in IDENTIFIER_FIELDS if f in present]
+    stamp = now or datetime.now(UTC)
+    written = 0
+    last = ""
+    while True:
+        rows = conn.execute(
+            select(*cols).where(cx.c.id > last).order_by(cx.c.id).limit(BACKFILL_CHUNK)
+        ).all()
+        if not rows:
+            return written
+        last = rows[-1].id
+        ids = [r.id for r in rows]
+        have = {
+            (r.complaint_id, r.entity_type, r.value_hash)
+            for r in conn.execute(
+                select(ce.c.complaint_id, ce.c.entity_type, ce.c.value_hash).where(
+                    ce.c.complaint_id.in_(ids)
+                )
+            )
+        }
+        new: list[dict[str, object]] = []
+        for r in rows:
+            for e in extract_entities(dict(r._mapping)):
+                h = value_hash(e.entity_type, e.value_norm)
+                if (r.id, e.entity_type, h) in have:
+                    continue
+                have.add((r.id, e.entity_type, h))
+                new.append({
+                    "id": str(uuid.uuid4()), "complaint_id": r.id, "entity_type": e.entity_type,
+                    "value_norm": e.value_norm, "value_hash": h, "display": e.display,
+                    "source_field": e.source_field, "created_at": stamp,
+                })  # fmt: skip
+        if new:
+            conn.execute(insert(ce), new)
+            written += len(new)
+
+
+def _complaint_network(conn: Connection) -> None:
+    """Tables ``complaint_entities`` and ``link_reviews`` (Phase 9) and the identifiers of the
+    complaints stored before them. The backfill runs when the version is not yet recorded, or when
+    the entities table is empty while complaints exist (it was dropped and has just been recreated
+    by the baseline step); otherwise this start-up re-check is an inspection."""
+    ce = metadata.tables["complaint_entities"]
+    ce.create(conn, checkfirst=True)
+    metadata.tables["link_reviews"].create(conn, checkfirst=True)
+    for idx in ("ix_entities_value", "ix_entities_complaint"):
+        ensure_index(conn, "complaint_entities", idx)
+    ensure_index(conn, "link_reviews", "ix_link_reviews_high")
+    recorded = conn.execute(
+        select(schema_migrations.c.version).where(schema_migrations.c.version == NETWORK_VERSION)
+    ).first()
+    emptied = (
+        conn.execute(select(ce.c.id).limit(1)).first() is None
+        and conn.execute(select(metadata.tables["complaints"].c.id).limit(1)).first() is not None
+    )
+    if recorded is None or emptied:
+        backfill_entities(conn)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -234,6 +307,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(7, "analyses_insufficient_input", _analyses_insufficient_input),
     Migration(8, "alerts_risk_level", _alerts_risk_level),
     Migration(9, "evidence_transcripts", _evidence_transcripts),
+    Migration(NETWORK_VERSION, "complaint_network", _complaint_network),
 )
 LATEST = MIGRATIONS[-1].version
 
