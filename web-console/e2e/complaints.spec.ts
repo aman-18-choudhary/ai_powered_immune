@@ -116,6 +116,40 @@ test("citizen: local sign-in, mandatory-only complaint with an image, visible in
   await expect(page.getByTestId("stat-total")).toContainText("1");
 });
 
+// REAL speech-to-text on the server (Phase 6): needs a server with a cached faster-whisper model
+// and a speech WAV (the same 16 kHz scam recording the live-audio spec uses).
+const AUDIO_WAV = process.env.E2E_AUDIO_WAV ?? process.env.LIVE_AUDIO_WAV ?? "";
+
+test("citizen: an attached call recording is transcribed locally; transcript and timed indicators are shown", async ({ page }) => {
+  test.skip(!AUDIO_WAV, "set E2E_AUDIO_WAV (or LIVE_AUDIO_WAV) to a speech WAV and run the server with faster-whisper");
+  // its own citizen, so the other tests' complaint counts are unchanged
+  await signIn(page, `citizen.audio.${run}@example.org`, "citizen");
+  await expect(page).toHaveURL(/\/me$/);
+  await page.getByTestId("new-complaint").click();
+  await page.getByTestId("f-category").selectOption("DIGITAL_ARREST");
+  await page.getByTestId("f-title").fill(`E2E recorded call ${run}`);
+  await page.getByTestId("f-description").fill("Someone called me today and I recorded part of the call on my phone.");
+  await page.getByTestId("f-evidence").setInputFiles(AUDIO_WAV);
+  await page.getByTestId("submit-complaint").click();
+  await expect(page.getByTestId("upload-item")).toHaveAttribute("data-status", "stored");
+  const status = page.getByTestId("transcription-status");
+  await expect(status).toHaveAttribute("data-status", "not_attempted");
+  await expect(status).toContainText("transcribed when the complaint analysis runs");
+  const ran = page.waitForResponse((r) => /\/analysis$/.test(r.url()) && r.request().method() === "POST");
+  await page.getByTestId("run-analysis").click();
+  const res = await ran;
+  expect(res.status()).toBe(201);
+  const a = (await res.json()) as { audio_transcription: { status: string }[]; indicators: { stage: string; evidence: { start_s: number | null } }[] };
+  expect(a.audio_transcription[0]!.status).toBe("transcribed");
+  expect(a.indicators.some((i) => i.stage === "audio_transcript" && typeof i.evidence.start_s === "number")).toBe(true);
+  await expect(status).toHaveAttribute("data-status", "transcribed");
+  await page.getByTestId("transcript-toggle").click();
+  await expect(page.getByTestId("transcript-segment").first()).toBeVisible();
+  await expect(page.getByTestId("transcript")).toContainText(/digital arrest/i);
+  await expect(page.getByTestId("audio-offset").first()).toHaveText(/^\d+:\d\d–\d+:\d\d$/);
+  await expect(page.getByTestId("audio-file").first()).toHaveAttribute("data-status", "transcribed");
+});
+
 test("citizen: check a message (nothing stored), register it pre-filled, run analysis twice with version history", async ({ page }) => {
   expect(complaintId).not.toBe("");
   await signIn(page, citizenEmail, "citizen");
@@ -140,7 +174,10 @@ test("citizen: check a message (nothing stored), register it pre-filled, run ana
   await expect(result.getByTestId("score-semantics")).toContainText("uncalibrated heuristic score, not a probability");
   await expect(result.getByTestId("indicator-group-rule")).toContainText("call_guard.rules");
   await expect(result.getByTestId("indicator-group-rule")).toContainText("url_heuristics");
-  await expect(result.getByTestId("input-capabilities")).toContainText("Audio: unavailable");
+  // audio is analysed only as complaint evidence; screenshots: no OCR engine (Phase 6 wording)
+  await expect(result.getByTestId("input-capabilities")).toContainText("Audio: not accepted here");
+  await expect(result.getByTestId("input-capabilities")).toContainText("attached to a complaint");
+  await expect(result.getByTestId("input-capabilities")).toContainText("no OCR engine is installed");
   await expect(result.getByTestId("model-versions")).toContainText("category-v1");
   // nothing was stored: the history still has one complaint
   const stats = await page.evaluate(async () => {
