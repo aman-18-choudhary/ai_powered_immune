@@ -12,7 +12,8 @@ command -v initdb >/dev/null || { echo "initdb not found" >&2; exit 2; }
 DIR="$(mktemp -d)"
 cleanup() { pg_ctl -D "$DIR/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$DIR"; }
 trap cleanup EXIT
-initdb -D "$DIR/data" -A trust -U cmp >/dev/null
+# UTF8 like the official Postgres image (the default here would be SQL_ASCII on a C locale)
+initdb -D "$DIR/data" -A trust -U cmp -E UTF8 --locale=C >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/log" -w start >/dev/null
 createdb -h 127.0.0.1 -p "$PORT" -U cmp cmptest
 export COMPLAINTS_TEST_POSTGRES_URL="postgresql+psycopg2://cmp@127.0.0.1:$PORT/cmptest"
