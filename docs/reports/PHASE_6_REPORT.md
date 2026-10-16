@@ -250,8 +250,7 @@ keys, OCR engine, Docker daemon.
 
 ## 11. Features that remain incomplete
 
-OCR of screenshots (no engine); document text extraction; background queue for long audio; the
-category model does not read transcripts; speaker separation; evaluation on real recordings; a 3B
+OCR of screenshots (no engine); document text extraction; background queue for long audio; speaker separation; evaluation on real recordings; a 3B
 local model (not tested on this 8 GB machine). Everything outside Phase 6 in the roadmap.
 
 ## 12. Known bugs and limitations
@@ -305,3 +304,27 @@ the timed indicators; on `/check` read the attachments note; on `/models` the sp
 2. Next: **Phase 9** (complaint network from shared identifiers; no new software), then Phase 8
    (Fraud DNA). Consider evaluating `qwen2.5:3b` where hardware allows, since 0.5b answers are
    mostly rejected.
+
+## Addendum (2026-10-17): owner review fixes and push
+
+Two findings from the owner's review were fixed before pushing (no other findings were changed in
+this batch):
+
+1. **An optional LLM failure no longer marks the analysis PARTIAL.** A rejected, timed-out or
+   failed LLM explanation is still reported (`unavailable_capabilities`, provenance stage
+   `rejected`/`timeout`/`error`, and a limitation saying the rule explanation is shown and the
+   score, level and category are unaffected), but the status stays `COMPLETED` when every
+   required stage ran.
+2. **The category model reads audio transcripts.** It classifies the description together with
+   the transcripts of audio evidence (bounded); `category_model.evidence.audio_transcripts_included`
+   records how many were included.
+
+Verification (controller, 2026-10-17): complaints 495 passed, 7 skipped (Python 3.13); complaints
+on Python 3.11 in the CI-like environment 490 passed, 12 skipped; ruff check clean; real Whisper
+(4) and live Ollama (2) tests passed; demo_server 210 passed. On the running server, the audio test
+complaint re-analysed as `COMPLETED`, CRITICAL 100, category DIGITAL_ARREST 0.65 with one transcript
+included (before: `PARTIAL`, OTHER 0.41), with the LLM text still rejected (`role_inversion`).
+
+Tracked separately (not changed here): seven files in `services/complaints` are not
+`ruff format`-clean (from the Phase 6 commits; CI runs `ruff check` only); the other findings in
+[PROJECT_STATUS.md](../../PROJECT_STATUS.md#3-known-limitations-and-open-findings).

@@ -117,14 +117,15 @@ Playwright and the Postgres run are still agent-only results.
 
 ## 3. Known limitations and open findings
 
-1. ~~LLM grounding gap~~ **Fixed in Phase 6, agent-verified; owner verification pending** (tests incl. the observed sentence as a
+1. ~~LLM grounding gap~~ **Fixed in Phase 6; re-verified by the controller 2026-10-17** (the observed sentence and variants rejected, correct sentences pass; live qwen2.5:0.5b again wrote "The caller is under digital arrest…" and it was rejected) (tests incl. the observed sentence as a
    regression, and live runs where such answers were rejected). The checks remain keyword/pattern
    heuristics: an accepted text can still be imprecise; it is labelled and never changes the score.
-2. ~~Live-audio LLM explainer is ungrounded~~ **Fixed in Phase 6, agent-verified; owner
-   verification pending** (shared checks, findings-only prompt, default qwen2.5:0.5b; tests and
+2. ~~Live-audio LLM explainer is ungrounded~~ **Fixed in Phase 6; live test re-run by the
+   controller 2026-10-17** (shared checks, findings-only prompt, default qwen2.5:0.5b; tests and
    live runs). Same heuristic caveat.
-3. ~~Inaccurate transcription message~~ **Fixed in Phase 6, agent-verified; owner verification
-   pending**: audio evidence is transcribed and
+3. ~~Inaccurate transcription message~~ **Fixed in Phase 6; verified by the controller
+   2026-10-17** (real Whisper tests; a recording uploaded on the live server was transcribed and
+   shown with its transcript in the browser): audio evidence is transcribed and
    every state has a precise reason; old analysis rows read as `not_implemented_at_analysis_time`.
    Tests and Playwright (agent runs).
 4. **Evidence storage**: local disk, random names, not encrypted, not malware-scanned; downloads not
@@ -154,8 +155,16 @@ Playwright and the Postgres run are still agent-only results.
     complaints 1 of 3 accepted, live audio 1 of 3); the 3B model was not tested (8 GB machine).
 17. Playwright `smoke.spec.ts` (simulator verify step) failed once out of three runs on 2026-10-16
     (`verify-status` not found); not reproduced; cause not investigated.
+18. Seven files in `services/complaints` are not `ruff format`-clean (introduced in Phase 6; CI
+    runs `ruff check` only, which passes). Formatting cleanup is tracked separately.
 
-Fixed in Phase 6 (2026-10-16, agent-verified): findings 1-3 above. Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
+Fixed on 2026-10-17 (controller-verified): (a) a rejected or failed optional LLM explanation no
+longer turns an otherwise complete analysis into PARTIAL; it is still listed in
+`unavailable_capabilities`, provenance and limitations; (b) the category model now reads audio
+transcripts together with the description (`category_model.evidence.audio_transcripts_included`);
+the live test complaint moved from OTHER 0.41 to DIGITAL_ARREST 0.65.
+
+Fixed in Phase 6 (2026-10-16): findings 1-3 above. Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
 txn-guard duplicate hub submission on Python 3.11; the flaky demo-server seek test.
 
 ## 4. External setup still required
