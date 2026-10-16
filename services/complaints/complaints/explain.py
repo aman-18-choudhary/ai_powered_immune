@@ -9,9 +9,11 @@
   recommended steps, and asks for a rephrasing of exactly those. The complaint text itself is not
   sent. Small models invent rationale (a smoke test of qwen2.5:0.5b claimed a fake-CBI "safe
   account" demand meant "the caller has evidence of a financial transaction"), so the output is
-  checked: links, addresses and numbers it invents are stripped; it is REJECTED when empty, too
-  long, not in the requested language, claiming a likelihood or a certainty / evidence, naming a
-  scam cue that is not among the given indicators, or not referring to any given indicator. A
+  checked by the shared ``svckit.llm_grounding`` module: links, addresses and numbers it invents
+  are stripped; it is REJECTED when empty, too long, not in the requested language, claiming a
+  likelihood or a certainty / evidence, turning the accusation onto the caller (role inversion,
+  checked per sentence ignoring quotes and case), naming a scam cue that is not among the given
+  indicators, or not referring to any given indicator. A
   rejection, timeout or error yields no LLM text and a named status (``rejected`` / ``timeout`` /
   ``error`` / ``unavailable``); the rule-based explanation stays primary and the LLM never
   touches the score, level or classification.
@@ -23,16 +25,14 @@ Ollama only with ``OLLAMA_LIVE_TESTS=1``.
 """
 
 import asyncio
-import ipaddress
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
+from svckit import llm_grounding as g
 
 log = logging.getLogger("complaints.explain")
 
@@ -48,16 +48,14 @@ PROBE_TTL_SECONDS = 30.0
 DEFAULT_MODEL = "qwen2.5:0.5b"
 DEFAULT_TIMEOUT_S = 8.0
 
-_URL = re.compile(
-    r"https?://\S+|www\.\S+|"
-    r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|in|xyz|top|click|info|co|io|me|ly|app|site|"
-    r"online|icu|buzz|cc|link|gov|edu)\b\S*",
-    re.IGNORECASE,
-)
-_EMAIL_UPI = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{2,}")
-_PHONE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{5,}\d")
-_DIGITS = re.compile(r"\d{5,}")
-_CLAIM = re.compile(r"probab|likelihood|\bchances?\b|\b\d{1,3}\s?%|percent", re.IGNORECASE)
+_URL = g.URL
+_EMAIL_UPI = g.EMAIL_UPI
+_PHONE = g.PHONE
+_DIGITS = g.DIGITS
+_CLAIM = g.CLAIM
+CUE_WORDS = g.CUE_WORDS
+tidy = g.tidy
+strip_invented = g.strip_invented
 
 
 def sanitise(text: str, limit: int = MAX_PROMPT_TEXT) -> str:
@@ -86,9 +84,12 @@ def build_prompt(description: str, facts: dict[str, Any], lang: str = "en") -> s
     ]
     for n, i in enumerate(ind, 1):
         line = f"{n}. {sanitise(str(i.get('text', '')), 160)}"
-        snip = (i.get("evidence") or {}).get("snippet")
+        ev = i.get("evidence") or {}
+        snip = ev.get("snippet")
         if snip:
-            line += f' (the message says: "{sanitise(str(snip), 160)}")'
+            where = "the recording says" if ev.get("type") == "evidence_transcript" else (
+                "the message says")  # fmt: skip
+            line += f' ({where}: "{sanitise(str(snip), 160)}")'
         lines.append(line)
     if not ind:
         lines.append("- No scam cue was detected by the checks.")
@@ -101,138 +102,26 @@ def build_prompt(description: str, facts: dict[str, Any], lang: str = "en") -> s
 
 def validate_output(text: Any, prompt: str) -> str | None:
     """Safety check. Return a rejection reason, or None when the text is acceptable."""
-    if not isinstance(text, str) or not text.strip():
-        return "bad_response"
-    if len(text) > MAX_LLM_OUTPUT:
-        return "output_too_long"
-    for rx in (_URL, _EMAIL_UPI, _PHONE, _DIGITS):
-        for m in rx.finditer(text):
-            if m.group(0) not in prompt:
-                return "unsafe_content"
-    norm_prompt = " ".join(re.sub(r"[^\w%\s]", " ", prompt.casefold()).split())
-    for m in _CLAIM.finditer(text):
-        # a phrase copied from the given steps ("the better the chance of a freeze") is allowed
-        words = re.sub(r"[^\w%\s]", " ", text[m.start() :].casefold()).split()[:4]
-        if " ".join(words) not in norm_prompt:
-            return "likelihood_claim"
-    return None
+    return g.validate_output(text, prompt, MAX_LLM_OUTPUT)
 
 
-_SENT = re.compile(r"[^.!?。！？]+[.!?。！？]+")
-_PLACEHOLDER = re.compile(r"\[(?:link|number|id)\]")
-# the canonical small-model mistake: the accusation turned around onto the caller
-_ROLE_INVERSION = re.compile(
-    r"\b(?:caller|sender|scammer|officer)\s+(?:is|was|are)\s+(?:\w+\s+){0,2}under\s+"
-    r"(?:a\s+)?(?:digital\s+)?arrest",
-    re.IGNORECASE,
-)
-
-
-def tidy(text: str) -> str:
-    """Keep complete sentences only (a token cap can cut the last one), drop repeated sentences
-    (small models loop) and keep at most ``MAX_SENTENCES``. Never adds words."""
-    # a small model often echoes the prompt as a list: keep the items, drop echoed headings
-    text = re.split(r"(?im)^\s*(?:recommended steps|findings|answer)\s*:", text)[0]
-    text = re.sub(r"(?m)^\s*(?:\d{1,2}[.)]|[-*•])\s+", " ", text)
-    out: list[str] = []
-    seen: set[str] = set()
-    for m in _SENT.finditer(text):
-        if len(m.group(0).strip()) < 8:  # list numbers such as "2." left after a cut
-            continue
-        s = " ".join(m.group(0).split())
-        key = s.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(s)
-        if len(out) == MAX_SENTENCES:
-            break
-    return " ".join(out)
-
-
-def strip_invented(text: str, prompt: str) -> str:
-    """Remove links, addresses, phone numbers and digit runs that are not in the prompt."""
-    for rx in (_URL, _EMAIL_UPI, _PHONE, _DIGITS):
-        text = rx.sub(lambda m: m.group(0) if m.group(0) in prompt else "", text)
-    text = _PLACEHOLDER.sub("", text)
-    return re.sub(r"[ \t]{2,}", " ", text).strip()
-
-
-# Scam cues the model could name (urgency words are left out: the static steps say "urgent" and
-# "immediately" themselves). A cue is "ungrounded" when the output names it but none of its
-# words appear in the prompt (i.e. it was not among the findings given to the model).
-CUE_WORDS: dict[str, tuple[str, ...]] = {
-    "digital_arrest": ("digital arrest",),
-    "safe_account": ("safe account", "rbi account", "verification account"),
-    "isolation": ("stay on the call", "tell anyone", "tell no one", "keep it secret"),
-    "authority": ("cbi", "police", "customs", "narcotics", "enforcement directorate", "officer"),
-    "legal_threat": ("warrant", "fir", "arrest", "jail", "laundering", "legal action", "seized"),
-    "credentials": ("otp", "cvv", "password", "pin"),
-    "kyc": ("kyc",),
-    "short_link": ("shortened", "short link", "shortener"),
-    "lookalike": ("look-alike", "lookalike", "imitat", "punycode"),
-    "prize": ("lottery", "prize", "reward", "cashback"),
-    "remote_access": ("anydesk", "teamviewer", "screen shar", "remote access"),
-}
-_UNSUPPORTED = re.compile(
-    r"\b(?:has|have|had|holds?|with)\s+(?:\w+\s+){0,2}(?:evidence|proof)\b|\bconfirmed\b|"
-    r"\bproven\b|\bdefinitely\b|\bcertainly\b|\bguarantee|\b(?:is|are|looks?)\s+"
-    r"(?:\w+\s+)?(?:safe|legitimate|genuine)\b|\bnot\s+a\s+(?:scam|fraud)\b",
-    re.IGNORECASE,
-)
-_STOP = frozenset(
-    "about above after again their there these those which would could should other being "
-    "where while asked asks message person money".split()
-)
-
-
-def _has(word: str, text: str) -> bool:
-    w = word.strip()
-    return re.search(rf"(?<![a-z]){re.escape(w)}", text, re.IGNORECASE) is not None and (
-        re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", text, re.IGNORECASE) is not None
-        or w.endswith(("imitat", "screen shar"))
-    )
-
-
-def _words(t: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z]{5,}", t.casefold()) if w not in _STOP}
+def findings_of(facts: dict[str, Any]) -> tuple[list[str], str]:
+    """The findings given to the model (indicator text, evidence snippet, code words) and the
+    context in which a named cue also counts as grounded (the suggested category)."""
+    findings = [
+        f"{i.get('text', '')} {(i.get('evidence') or {}).get('snippet', '')} "
+        f"{str(i.get('code', '')).replace('_', ' ')}"
+        for i in facts.get("indicators") or []
+    ]
+    return findings, str(facts.get("classification") or "").replace("_", " ")
 
 
 def ground_output(text: str, prompt: str, facts: dict[str, Any], lang: str = "en") -> str | None:
-    """Grounding check. Return a rejection reason, or None when the text only rephrases the
-    findings it was given."""
-    letters = [c for c in text if c.isalpha()]
-    if lang == "en" and letters and sum(c.isascii() for c in letters) / len(letters) < 0.9:
-        return "wrong_language"
-    if len(text) < 20:
-        return "empty_or_too_short"
-    if _UNSUPPORTED.search(text):
-        return "unsupported_claim"
-    if _ROLE_INVERSION.search(text):
-        return "role_inversion"
-    # cues may be named only if they are among the findings (indicators, their evidence snippets
-    # and the suggested category), not merely in the instructions or the static steps
-    findings = (
-        " ".join(
-            f"{i.get('text', '')} {(i.get('evidence') or {}).get('snippet', '')} "
-            f"{str(i.get('code', '')).replace('_', ' ')}"
-            for i in facts.get("indicators") or []
-        )
-        + " "
-        + str(facts.get("classification") or "").replace("_", " ")
-    )
-    for words in CUE_WORDS.values():
-        if any(_has(w, text) for w in words) and not any(_has(w, findings) for w in words):
-            return "ungrounded_indicator"
-    ind = facts.get("indicators") or []
-    if ind:
-        given: set[str] = set()
-        for i in ind:
-            given |= _words(f"{i.get('text', '')} {(i.get('evidence') or {}).get('snippet', '')}")
-            given |= _words(str(i.get("code", "")).replace("_", " "))
-        if not (_words(text) & given):
-            return "not_grounded"
-    return None
+    """Grounding check (``svckit.llm_grounding``). Return a rejection reason, or None when the
+    text only rephrases the findings it was given."""
+    del prompt
+    findings, context = findings_of(facts)
+    return g.ground_output(text, findings, context, lang)
 
 
 @dataclass(frozen=True)
@@ -269,21 +158,7 @@ class OllamaClient:
         """Only a LOCAL Ollama is ever contacted: loopback, ``*.localhost``, a private or
         link-local IP literal, or a single-label host name (a container on the same compose
         network, e.g. ``ollama``). Anything else is refused as ``non_local_host``."""
-        if self.url is None:
-            return False
-        try:
-            host = (urlsplit(self.url).hostname or "").casefold()
-        except ValueError:
-            return False
-        if not host:
-            return False
-        if host == "localhost" or host.endswith(".localhost"):
-            return True
-        try:
-            ip = ipaddress.ip_address(host)
-            return ip.is_loopback or ip.is_private or ip.is_link_local
-        except ValueError:
-            return "." not in host
+        return g.is_local_url(self.url)
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -322,17 +197,14 @@ class OllamaClient:
             return LlmResult("error", None, "bad_response")
         if not isinstance(text, str):
             return LlmResult("error", None, "bad_response")
-        if not text.strip():
-            return LlmResult("rejected", None, "empty_or_too_short")
-        if len(text) > MAX_LLM_OUTPUT:
-            return LlmResult("rejected", None, "output_too_long")
-        text = tidy(strip_invented(text.strip(), prompt))
-        why = validate_output(text, prompt) or ground_output(text, prompt, facts, lang)
-        if why:
-            reason = "empty_or_too_short" if why == "bad_response" else why
-            log.info("llm explanation rejected: %s", reason)  # reason only, never the text
-            return LlmResult("rejected", None, reason)
-        return LlmResult("available", text)
+        findings, context = findings_of(facts)
+        review = g.review_output(
+            text, prompt, findings, context, lang, MAX_LLM_OUTPUT, MAX_SENTENCES
+        )
+        if review.text is None:
+            log.info("llm explanation rejected: %s", review.reason)  # reason only, never text
+            return LlmResult("rejected", None, review.reason)
+        return LlmResult("available", review.text)
 
     async def probe(self) -> str:
         """``not_configured`` | ``reachable`` | ``unreachable``; cached for 30 s."""

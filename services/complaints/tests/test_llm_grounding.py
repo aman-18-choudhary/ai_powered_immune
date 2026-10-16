@@ -162,3 +162,30 @@ def test_complaints_ollama_url_wins(monkeypatch):
     monkeypatch.delenv("OLLAMA_URL")
     s = Settings.from_env()
     assert s.ollama_url is None and s.ollama_model == "qwen2.5:0.5b" and s.ollama_timeout_s == 8.0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # produced by qwen2.5:0.5b on 2026-10-15 and accepted by the old regex (finding 1)
+        "The message mentions digital arrest, and the caller is under 'digital arrest'.",
+        "The caller is under \"Digital Arrest\" and asks for money.",
+        "The caller was threatened with digital arrest and asked to pay.",
+    ],
+)
+async def test_role_inversion_variants_are_rejected_and_rules_text_is_kept(text):
+    reasons = (("DIGITAL_ARREST_PHRASE", 0.69, "caller says the victim is under 'digital arrest'"),)
+    base = await pipe(StubScorer(0.8, reasons), StubCategory("DIGITAL_ARREST", 0.7)).analyse(BARE)
+    out = await run(text, reasons=reasons)
+    assert out.capabilities["llm_explanation"] == "rejected"
+    assert out.extra["capability_reasons"]["llm_explanation"] == "role_inversion"
+    assert out.extra["llm_explanation"] is None and out.explanation == base.explanation
+    st = next(s for s in out.extra["provenance"]["stages"] if s["stage"] == "llm_explanation")
+    assert st["status"] == "rejected" and st["reason"] == "role_inversion"
+
+
+async def test_correct_digital_arrest_wording_is_accepted():
+    reasons = (("DIGITAL_ARREST_PHRASE", 0.69, "caller says the victim is under 'digital arrest'"),)
+    out = await run("The caller says you are under 'digital arrest'. This is a known scam cue.",
+                    reasons=reasons)  # fmt: skip
+    assert out.capabilities["llm_explanation"] == "available", out.extra["capability_reasons"]
