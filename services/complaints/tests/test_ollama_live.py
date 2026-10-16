@@ -32,7 +32,22 @@ async def test_live_grounded_explainer(name):
     url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
     timeout = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))  # first call loads the model
-    client = OllamaClient(url, model, timeout)
+    import httpx
+
+    seen: list[str] = []
+
+    class Recording(httpx.AsyncHTTPTransport):
+        """Keeps the raw answer of the SAME call that the grounding checks judge (for the
+        report; not stored anywhere)."""
+
+        async def handle_async_request(self, request):
+            resp = await super().handle_async_request(request)
+            if request.url.path == "/api/generate":
+                await resp.aread()
+                seen.append(httpx.Response(200, content=resp.content).json().get("response"))
+            return resp
+
+    client = OllamaClient(url, model, timeout, transport=Recording())
     st = await client.status()
     if st["status"] != "ready":
         pytest.skip(f"ollama not ready: {st}")
@@ -51,18 +66,7 @@ async def test_live_grounded_explainer(name):
         f"reason={out.extra['capability_reasons'].get('llm_explanation')} stage={llm_stage}"
     )
     print(f"[{name}] llm text={out.extra['llm_explanation']!r}")
-    # the raw model answer for the same grounded prompt (for the report; not stored anywhere)
-    import httpx
-
-    from complaints.explain import NUM_PREDICT, build_prompt
-
-    facts = {"indicators": out.indicators, "classification": out.classification,
-             "actions": out.recommended_actions}  # fmt: skip
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        r = await c.post(f"{url}/api/generate", json={
-            "model": model, "prompt": build_prompt("", facts), "stream": False,
-            "options": {"temperature": 0.1, "num_predict": NUM_PREDICT}})  # fmt: skip
-    print(f"[{name}] raw model answer={r.json().get('response')!r}")
+    print(f"[{name}] raw model answer judged={seen[-1] if seen else None!r}")
     print(f"[{name}] rule explanation={out.explanation!r}")
     assert (out.risk_score, out.risk_level, out.classification) == (
         base.risk_score, base.risk_level, base.classification,
