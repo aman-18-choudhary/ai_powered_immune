@@ -131,3 +131,30 @@ def test_spa_fallback_does_not_shadow_live_audio(tmp_path):
         assert (
             c.get("/api/live-audio/capabilities", headers=h).headers["cache-control"] == "no-store"
         )
+
+
+def test_complaints_evidence_shares_the_live_audio_engine(tmp_path):
+    """One speech-to-text engine object (one model in memory) for live audio and audio evidence.
+    MOCKED engine (ScriptEngine)."""
+    engine = ScriptEngine(["This is officer Sharma from the CBI. You are under digital arrest."])
+    app = create_app(make_settings(tmp_path), sleep=instant, live_audio_engine=engine)
+    assert app.state.complaints.state.stt.engine is app.state.live_audio.engine is engine
+    with TestClient(app) as c:
+        h = login(c, "citizen")
+        cid = c.post("/api/complaints/complaints", headers=h, json={
+            "category": "OTHER", "title": "A call I received",
+            "description": "Someone called me today and I recorded part of the call.",
+        }).json()["id"]  # fmt: skip
+        r = c.post(f"/api/complaints/complaints/{cid}/evidence", headers=h,
+                   files={"file": ("call.wav", wav(4.0), "audio/wav")})  # fmt: skip
+        assert r.status_code == 201, r.text
+        eid = r.json()["id"]
+        a = c.post(f"/api/complaints/complaints/{cid}/analysis", headers=h)
+        assert a.status_code == 201, a.text
+        assert a.json()["audio_transcription"][0]["status"] == "transcribed"
+        assert a.json()["audio_transcription"][0]["engine"] == "fake"
+        t = c.get(f"/api/complaints/complaints/{cid}/evidence/{eid}/transcript", headers=h)
+        assert t.status_code == 200 and "digital arrest" in t.json()["segments"][0]["text"]
+        other = login(c, "citizen")
+        r = c.get(f"/api/complaints/complaints/{cid}/evidence/{eid}/transcript", headers=other)
+        assert r.status_code == 404

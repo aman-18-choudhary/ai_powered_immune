@@ -151,7 +151,8 @@ def create_app(
     # Citizen complaints service (real persistence; not simulated), mounted at /api/complaints.
     # See complaints_mount.py and services/complaints/README.md.
     c_settings = complaints_settings or complaints_mount.complaints_settings(cfg)
-    complaints_app = complaints_mount.build(cfg, c_settings)
+    # one speech-to-text model in memory: audio evidence uses the live-audio engine object
+    complaints_app = complaints_mount.build(cfg, c_settings, stt_engine=live_audio.engine)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

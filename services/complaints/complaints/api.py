@@ -656,6 +656,7 @@ def create_app(
     app.state.store = store
     app.state.settings = settings
     app.state.local_auth = local_codes
+    app.state.stt = stt
     app.include_router(make_health_router(ready))
 
     # ------------------------------------------------------------------ errors

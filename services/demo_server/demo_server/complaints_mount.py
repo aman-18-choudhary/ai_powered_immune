@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from pathlib import Path
+from typing import Any
 
 from complaints.api import UPLOAD_OVERHEAD
 from complaints.api import create_app as create_complaints_app
@@ -61,10 +62,15 @@ def complaints_settings(cfg: Settings) -> ComplaintsSettings:
     )
 
 
-def build(cfg: Settings, settings: ComplaintsSettings | None = None) -> FastAPI:
+def build(
+    cfg: Settings, settings: ComplaintsSettings | None = None, *, stt_engine: Any = None
+) -> FastAPI:
+    """``stt_engine``: the live-audio speech-to-text engine object already created by this server;
+    the complaints service uses the SAME object for audio evidence, so one Whisper model is in
+    memory (it is loaded on first use by either feature)."""
     s = settings or complaints_settings(cfg)
     try:
-        return create_complaints_app(s)
+        return create_complaints_app(s, stt_engine=stt_engine)
     except ComplaintsConfigError as exc:
         raise ConfigError(f"complaints: {exc}") from exc
 
