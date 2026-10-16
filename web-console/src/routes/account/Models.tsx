@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, BrainCircuit, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, AudioLines, BrainCircuit, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
 import { Panel } from "@/components/common/Panel";
 import { ErrorBlock, LoadingBlock, PageHeader } from "@/components/complaints/ui";
 import { SourceBadge } from "@/components/complaints/AnalysisResultView";
@@ -13,7 +13,7 @@ const pct = (x: number | null | undefined) => (typeof x === "number" ? `${(x * 1
 const num = (x: number | null | undefined, d = 3) => (typeof x === "number" ? x.toFixed(d) : "not reported");
 
 function Runtime({ status, reason }: { status: string; reason: string | null }) {
-  const ok = status === "loaded" || status === "ready";
+  const ok = status === "loaded" || status === "ready" || status === "available_offline";
   const partial = status === "fallback_rules_only";
   const Icon = ok ? CheckCircle2 : partial ? AlertTriangle : status === "not_configured" ? CircleHelp : XCircle;
   const cls = ok ? "text-safe border-safe/40 bg-safe-soft" : partial ? "text-warn border-warn/40 bg-warn-soft" : "text-muted border-line bg-chip";
@@ -168,6 +168,39 @@ function Llm({ llm }: { llm: ModelsInfo["llm"] }) {
   );
 }
 
+const STT_STATE: Record<string, string> = {
+  ready: "The model is loaded.",
+  available_offline: "The model is in this server's local cache and is loaded on first use.",
+  model_not_available_offline: "The model is not in this server's local cache (it is never downloaded at runtime), so audio evidence is not transcribed.",
+  engine_not_configured: "No speech-to-text engine is configured for evidence, so audio evidence is not transcribed.",
+  configured: "A local whisper.cpp server is configured (not probed).",
+};
+
+function Stt({ stt }: { stt: NonNullable<ModelsInfo["stt"]> }) {
+  return (
+    <Panel title="Speech-to-text (audio evidence)" icon={<AudioLines className="h-3.5 w-3.5" aria-hidden />} actions={<Runtime status={stt.status} reason={stt.reason} />} data-testid="model-stt">
+      <div className="space-y-1 p-4 text-sm">
+        <p>
+          Engine <span className="mono">{stt.engine}</span>
+          {stt.model ? (
+            <>
+              {" "}
+              · model <span className="mono">{stt.model}</span>
+            </>
+          ) : null}
+          . Used for {stt.used_for}.
+        </p>
+        <p className="text-xs text-muted" data-testid="stt-state">
+          {STT_STATE[stt.status] ?? humanise(stt.status)} Runs on this server only.
+          {stt.evidence_transcription === "disabled" && " Evidence transcription is turned off in the configuration."}
+          {stt.limits && ` Limits per analysis: ${stt.limits.max_files_per_run} new file(s), ${stt.limits.max_seconds_per_file} s per file, ${stt.limits.run_budget_s} s in total.`}
+          {stt.decoders?.mp3_ogg_m4a === "unavailable" && " MP3, OGG and M4A cannot be decoded here (PyAV is not installed); WAV can."}
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
 export default function Models() {
   usePageTitle("Models");
   const res = useResource((s) => complaintsApi.models(s), "models");
@@ -192,6 +225,7 @@ export default function Models() {
             <ModelCard key={m.id} m={m} />
           ))}
           <Llm llm={res.data.llm} />
+          {res.data.stt && <Stt stt={res.data.stt} />}
           <p className="flex items-center gap-1.5 text-xs text-subtle">
             <BrainCircuit className="h-3.5 w-3.5" aria-hidden /> Rule components (call-guard cue rules, link and format checks) are not trained models and are not listed here.
           </p>

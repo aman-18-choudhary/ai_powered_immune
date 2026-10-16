@@ -1,20 +1,37 @@
 import { useRef, useState } from "react";
-import { Download, FileAudio, FileImage, FileText, Paperclip, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, FileAudio, FileImage, FileText, Paperclip, Trash2, Upload } from "lucide-react";
 import { EmptyState, Panel } from "@/components/common/Panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "./ui";
 import { UploadList } from "./UploadList";
+import { TranscriptViewer } from "./TranscriptViewer";
 import { complaintsApi, messageFor, saveBlob } from "@/lib/complaints/api";
 import { ACCEPT, MAX_FILES } from "@/lib/complaints/form";
 import { formatBytes, formatDateTime } from "@/lib/complaints/format";
-import type { AccountRole, ComplaintStatus, Evidence } from "@/lib/complaints/types";
+import { isTranscribed, transcriptionLabel } from "@/lib/complaints/transcription";
+import type { AccountRole, ComplaintStatus, Evidence, EvidenceTranscription } from "@/lib/complaints/types";
 import { uploadSequential, type UploadItem } from "@/lib/complaints/upload";
 
 function iconFor(mime: string) {
   if (mime.startsWith("audio/")) return FileAudio;
   if (mime.startsWith("image/")) return FileImage;
   return FileText;
+}
+
+/** Transcription state of one audio file, with the service's precise reason. */
+function TranscriptionLine({ t }: { t: EvidenceTranscription }) {
+  const ok = isTranscribed(t.status);
+  return (
+    <p className="mt-0.5 text-xs" data-testid="transcription-status" data-status={t.status}>
+      <span className={ok ? "font-medium text-fg" : "font-medium text-warn"}>{transcriptionLabel(t.status)}</span>
+      <span className="text-subtle">
+        {ok
+          ? ` · ${t.segment_count} segment${t.segment_count === 1 ? "" : "s"}${t.language ? ` · language ${t.language}` : ""}${t.truncated ? ` · first ${t.transcribed_s ?? "?"} s of ${t.duration_s ?? "?"} s` : ""}`
+          : ` · ${t.message}${t.source === "last_analysis" ? " (latest analysis run)" : ""}`}
+      </span>
+    </p>
+  );
 }
 
 /**
@@ -40,6 +57,7 @@ export function EvidenceManager({
   const [confirm, setConfirm] = useState<Evidence | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const owner = role === "CITIZEN";
@@ -134,6 +152,22 @@ export function EvidenceManager({
                   <p className="text-xs text-subtle">
                     {e.mime_type} · {formatBytes(e.size_bytes)} · added {formatDateTime(e.created_at)} · <span className="mono" title={e.sha256}>sha256 {e.sha256.slice(0, 12)}…</span>
                   </p>
+                  {e.transcription && <TranscriptionLine t={e.transcription} />}
+                  {e.transcription?.transcript_available && (
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex items-center gap-1 rounded text-xs font-medium text-fg underline underline-offset-2 hover:text-muted focus-visible:outline focus-visible:outline-2"
+                      aria-expanded={open === e.id}
+                      aria-controls={`tr-${e.id}`}
+                      onClick={() => setOpen(open === e.id ? null : e.id)}
+                      data-testid="transcript-toggle"
+                    >
+                      {open === e.id ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
+                      {open === e.id ? "Hide transcript" : "Show transcript"}
+                      <span className="sr-only"> of {e.original_filename}</span>
+                    </button>
+                  )}
+                  {open === e.id && <TranscriptViewer complaintId={complaintId} evidenceId={e.id} id={`tr-${e.id}`} />}
                 </div>
                 <div className="flex gap-1.5">
                   <Button size="sm" variant="secondary" onClick={() => void download(e)} disabled={busy === e.id} aria-label={`Download ${e.original_filename}`} data-testid="evidence-download">

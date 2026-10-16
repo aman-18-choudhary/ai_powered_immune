@@ -24,6 +24,7 @@ import type {
   MyStats,
   Page,
   SessionPayload,
+  Transcript,
 } from "./types";
 
 /** The complaints service as mounted by the demo server. */
@@ -206,6 +207,7 @@ export const complaintsApi = {
   deleteEvidence: (id: string, eid: string) =>
     request<{ id: string; status: "deleted"; file_removed: boolean }>("DELETE", `/complaints/${enc(id)}/evidence/${enc(eid)}`),
   downloadEvidence: (id: string, eid: string) => request<Blob>("GET", `/complaints/${enc(id)}/evidence/${enc(eid)}/download`, { blob: true }),
+  transcript: (id: string, eid: string, signal?: AbortSignal) => request<Transcript>("GET", `/complaints/${enc(id)}/evidence/${enc(eid)}/transcript`, { signal }),
   analysis: (id: string, signal?: AbortSignal) => request<Analysis>("GET", `/complaints/${enc(id)}/analysis`, { signal }),
   runAnalysis: (id: string) => request<Analysis>("POST", `/complaints/${enc(id)}/analysis`, { body: {} }),
   analysisVersions: (id: string, p: { limit: number; offset: number }, signal?: AbortSignal) =>

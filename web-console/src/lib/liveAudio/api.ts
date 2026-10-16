@@ -87,8 +87,14 @@ export interface SafetyAction {
 export interface Explanation {
   rules: string;
   llm: string | null;
+  /** available | rejected | timeout | error | unavailable | skipped | pending | idle | not_configured */
   llm_status: string;
   llm_at_s: number | null;
+  /** Rejection or failure reason (e.g. role_inversion); added with the grounding checks. */
+  llm_reason?: string | null;
+  llm_model?: string | null;
+  /** "LLM-generated (model), may be imprecise" when llm text is present. */
+  llm_label?: string | null;
 }
 
 export interface ServerError {

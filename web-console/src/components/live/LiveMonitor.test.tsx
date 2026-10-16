@@ -1,3 +1,4 @@
+// MOCKED live-audio API and capture (no server, no microphone).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderApp } from "@/test-utils";
@@ -255,6 +256,34 @@ describe("LiveMonitor", () => {
     expect(await screen.findByTestId("risk-stale")).toBeInTheDocument();
     expect(screen.getByTestId("live-level")).toHaveTextContent("Not assessed yet");
     expect(screen.getByTestId("errors")).toHaveTextContent("model_not_available");
+  });
+
+  it("an accepted LLM wording carries its model label; the rule explanation stays", async () => {
+    api.sendChunk.mockResolvedValue({
+      ...SCAM,
+      explanation: {
+        rules: "Risk HIGH (score 69/100).", llm: "The caller says you are under 'digital arrest'.", llm_status: "available",
+        llm_at_s: 1, llm_reason: null, llm_model: "qwen2.5:0.5b", llm_label: "LLM-generated (qwen2.5:0.5b), may be imprecise",
+      },
+    });
+    await startMonitoring();
+    speak(1.0);
+    expect(await screen.findByTestId("llm-label")).toHaveTextContent("LLM-generated (qwen2.5:0.5b), may be imprecise");
+    expect(screen.getByTestId("llm-explanation")).toHaveTextContent("The caller says you are under 'digital arrest'.");
+    expect(screen.getByTestId("rules-explanation")).toHaveTextContent("Risk HIGH (score 69/100).");
+    expect(screen.queryByTestId("llm-rejected")).not.toBeInTheDocument();
+  });
+
+  it("a rejected LLM wording is not shown; the rule explanation is, with the reason", async () => {
+    api.sendChunk.mockResolvedValue({
+      ...SCAM,
+      explanation: { rules: "Risk HIGH (score 69/100).", llm: null, llm_status: "rejected", llm_at_s: null, llm_reason: "role_inversion", llm_model: null, llm_label: null },
+    });
+    await startMonitoring();
+    speak(1.0);
+    expect(await screen.findByTestId("llm-rejected")).toHaveTextContent("rejected by the grounding checks (role inversion)");
+    expect(screen.getByTestId("rules-explanation")).toHaveTextContent("Risk HIGH (score 69/100).");
+    expect(screen.queryByTestId("llm-explanation")).not.toBeInTheDocument();
   });
 
   it("hindi interface strings", async () => {

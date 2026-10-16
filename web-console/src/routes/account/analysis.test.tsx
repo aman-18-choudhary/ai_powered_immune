@@ -27,7 +27,7 @@ function result(over: Record<string, unknown> = {}) {
   return {
     pipeline_version: "complaints-analysis-v2+clf-v1+category-v1",
     status: "COMPLETED",
-    capabilities: { text_risk_scorer: "available", category_classifier: "available", llm_explanation: "unavailable", audio_transcription: "unavailable" },
+    capabilities: { text_risk_scorer: "available", category_classifier: "available", llm_explanation: "unavailable", audio_transcription: "skipped_no_input" },
     risk_score: 93,
     risk_level: "CRITICAL",
     score_semantics: "uncalibrated_heuristic",
@@ -57,7 +57,7 @@ function result(over: Record<string, unknown> = {}) {
     explanation_source: "rules",
     llm_explanation: null,
     llm_model: null,
-    capability_reasons: { llm_explanation: "not_configured", audio_transcription: "no_transcription_engine_installed" },
+    capability_reasons: { llm_explanation: "not_configured", audio_transcription: "no_audio_evidence" },
     unavailable_capabilities: [],
     unanalysed_attachments: [],
     category_model: {
@@ -85,8 +85,8 @@ function result(over: Record<string, unknown> = {}) {
       text: { status: "analysed" },
       url: { status: "analysed", note: "offline lexical checks" },
       upi_id: { status: "not_provided" },
-      audio: { status: "unavailable", reason: "audio transcription is planned for Phase C" },
-      screenshot: { status: "unavailable", reason: "screenshot OCR is planned for Phase C" },
+      audio: { status: "not_accepted_here", reason: "Audio recordings are analysed only when they are attached to a complaint: they are transcribed locally when the complaint analysis runs. This check takes text and the optional fields only.", where: "complaint_evidence" },
+      screenshot: { status: "unavailable", reason: "Screenshots are not analysed: no OCR engine is installed on this server. This check takes text and the optional fields only.", cause: "no_ocr_engine_installed" },
     },
     ...over,
   };
@@ -137,7 +137,8 @@ describe("check a message or link", () => {
     expect(within(res).getByTestId("confidence-interpretation")).toHaveTextContent("uncalibrated");
     expect(within(res).getByTestId("top-categories")).toHaveTextContent("abstains below 0.25");
     expect(within(within(res).getByTestId("top-categories")).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(res).getByTestId("input-capabilities")).toHaveTextContent("Audio: unavailable");
+    expect(within(res).getByTestId("input-capabilities")).toHaveTextContent("Audio: not accepted here · Audio recordings are analysed only when they are attached to a complaint");
+    expect(within(res).getByTestId("input-capabilities")).toHaveTextContent("Screenshot: unavailable · Screenshots are not analysed: no OCR engine is installed");
     expect(within(res).getByTestId("model-versions")).toHaveTextContent("category-v1");
     const badges = within(within(res).getByTestId("explanation-parts")).getAllByTestId("source-badge").map((b) => b.getAttribute("data-source"));
     expect(badges).toEqual(["rule", "ml"]);

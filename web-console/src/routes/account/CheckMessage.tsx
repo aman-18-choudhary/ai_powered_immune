@@ -162,7 +162,10 @@ export default function CheckMessage() {
           </Field>
         </div>
         <p className="flex items-start gap-1.5 text-xs text-subtle">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> Audio recordings and screenshots cannot be checked here yet.
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span data-testid="chk-attachments-note">
+            This check takes text and the optional details only. Call recordings are analysed when you attach them to a complaint: they are transcribed on this server when the complaint analysis runs. Screenshots are not analysed: no OCR (text-recognition) engine is installed.
+          </span>
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="submit" variant="primary" disabled={busy} data-testid="chk-submit">

@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { BookOpen, Cpu, Gauge, History, ListChecks, Sparkles, type LucideIcon } from "lucide-react";
+import { BookOpen, Cpu, FileAudio, Gauge, History, ListChecks, Sparkles, type LucideIcon } from "lucide-react";
 import { RiskBadge } from "./ui";
 import { CATEGORY_LABEL, formatDateTime, humanise } from "@/lib/complaints/format";
+import { isTranscribed, span, transcriptionLabel } from "@/lib/complaints/transcription";
 import type { AnalysisResult, Category, ExplanationPart, Indicator, ProvenanceEvidence } from "@/lib/complaints/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -53,6 +54,19 @@ function EvidenceNote({ ev }: { ev?: ProvenanceEvidence }) {
   } else if (ev.type === "text_span") body = <>in {ev.field ?? "the text"} (span not located)</>;
   else if (ev.type === "field") body = <>from the field {ev.field}{ev.host ? ` (host ${ev.host})` : ""}</>;
   else if (ev.type === "whole_text") body = <>scores the whole text, not a span</>;
+  else if (ev.type === "evidence_transcript" && typeof ev.start_s === "number") {
+    body = (
+      <>
+        in the audio recording{ev.evidence_id ? <> <span className="mono">{ev.evidence_id.slice(0, 8)}</span></> : ""} at{" "}
+        <span className="tnum" data-testid="audio-offset">{span(ev.start_s, ev.end_s)}</span>
+        {ev.snippet ? (
+          <>
+            : <q className="text-fg">{ev.snippet}</q>
+          </>
+        ) : null}
+      </>
+    );
+  } else if (ev.type === "evidence_transcript") body = <>in the audio transcript ({ev.note ?? "position not located"})</>;
   else if (ev.type === "not_recorded") body = <>evidence not recorded (older analysis)</>;
   else return null;
   return (
@@ -120,7 +134,7 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
         <span>
           Risk score {a.risk_score ?? "not given"}
           {a.risk_score !== null ? "/100" : ""}: an uncalibrated heuristic score, not a probability.
-          {a.risk_level === null && " No level is shown when a core check did not run or the input was too short; that is not a finding that it is safe."}
+          {a.risk_level === null && " No level is shown when a core check did not run, an uploaded recording could not be transcribed, or the input was too short; that is not a finding that it is safe."}
         </span>
       </p>
 
@@ -205,6 +219,28 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
         </section>
       )}
 
+      {(a.audio_transcription?.length ?? 0) > 0 && (
+        <section aria-labelledby={id("audio")} data-testid="audio-evidence">
+          {sectionHead(id("audio"), "Audio evidence")}
+          <ul className="mt-1 space-y-1">
+            {a.audio_transcription!.map((f) => (
+              <li key={f.evidence_id} className="flex items-start gap-1.5 text-xs" data-testid="audio-file" data-status={f.status}>
+                <FileAudio className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+                <span>
+                  <span className="mono">{f.evidence_id.slice(0, 8)}</span> · <strong className={isTranscribed(f.status) ? "font-medium" : "font-medium text-warn"}>{transcriptionLabel(f.status)}</strong>
+                  <span className="text-subtle">
+                    {isTranscribed(f.status)
+                      ? ` · ${f.segment_count} segment${f.segment_count === 1 ? "" : "s"}${f.engine ? ` · ${f.engine}:${f.model}` : ""}${f.reused ? " · stored transcript reused" : ""}${f.truncated ? ` · first ${f.transcribed_s ?? "?"} s of ${f.duration_s ?? "?"} s` : ""}`
+                      : ` · ${f.message}`}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-subtle">Transcripts are scored by the same rules and classifier as the description; indicators found in them are listed above with their time in the recording.</p>
+        </section>
+      )}
+
       {a.recommended_actions.length > 0 && (
         <section aria-labelledby={id("act")}>
           {sectionHead(id("act"), <>Recommended actions <SourceBadge source="static_guidance" className="ml-1 align-middle normal-case tracking-normal" /></>)}
@@ -240,10 +276,11 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
             <p className="mt-1">{prov.note ?? "Not recorded for this analysis."}</p>
           ) : (
             <ul className="mt-1 space-y-0.5">
-              {(prov.stages ?? []).map((s) => (
-                <li key={s.stage}>
+              {(prov.stages ?? []).map((s, n) => (
+                <li key={`${s.stage}-${n}`}>
                   <SourceBadge source={s.source} /> {humanise(s.stage)} <span className="mono">{s.method}</span>: {humanise(s.status).toLowerCase()}
                   {s.reason ? ` (${humanise(s.reason).toLowerCase()})` : ""}
+                  {s.evidence_id ? <> · file <span className="mono">{s.evidence_id.slice(0, 8)}</span>{s.reused ? ", stored transcript reused" : ""}</> : null}
                 </li>
               ))}
               {!prov.stages && prov.ran && <li>Ran: {prov.ran.map(humanise).join(", ")}</li>}

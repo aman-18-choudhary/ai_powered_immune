@@ -97,6 +97,45 @@ export interface AnalysisSummary {
   score_semantics: string;
 }
 
+/**
+ * Per-file transcription outcome (services/complaints/complaints/transcribe.py). Stored:
+ * transcribed | truncated | decode_failed | unsupported_format. Reported per analysis run:
+ * engine_not_configured | model_not_available_offline | timeout | decode_unavailable |
+ * budget_exhausted | not_attempted_limit | engine_error. Before any run: not_attempted.
+ */
+export type TranscriptionStatus =
+  | "transcribed"
+  | "truncated"
+  | "engine_not_configured"
+  | "model_not_available_offline"
+  | "timeout"
+  | "decode_failed"
+  | "decode_unavailable"
+  | "unsupported_format"
+  | "budget_exhausted"
+  | "not_attempted_limit"
+  | "engine_error"
+  | "not_attempted"
+  | (string & {});
+
+export interface EvidenceTranscription {
+  status: TranscriptionStatus;
+  reason: string;
+  /** Plain-language reason from the service. */
+  message: string;
+  /** stored = a transcript row; last_analysis = outcome of the latest run; none = not yet run. */
+  source: "stored" | "last_analysis" | "none";
+  transcript_available: boolean;
+  engine: string | null;
+  model: string | null;
+  language: string | null;
+  duration_s: number | null;
+  transcribed_s: number | null;
+  truncated: boolean;
+  segment_count: number;
+  checked_at: string | null;
+}
+
 export interface Evidence {
   id: string;
   complaint_id: string;
@@ -106,6 +145,49 @@ export interface Evidence {
   sha256: string;
   status: "stored" | "rejected" | "deleted";
   created_at: string | null;
+  /** Added with audio transcription (Phase 6); absent from older servers. */
+  kind?: "audio" | "image" | "document" | "other";
+  /** Audio files only; null for other kinds. */
+  transcription?: EvidenceTranscription | null;
+}
+
+export interface TranscriptSegment {
+  start_s: number;
+  end_s: number;
+  text: string;
+}
+
+/** GET /complaints/{id}/evidence/{eid}/transcript */
+export interface Transcript {
+  evidence_id: string;
+  complaint_id: string;
+  status: "transcribed" | "truncated";
+  engine: string | null;
+  model: string | null;
+  language: string | null;
+  duration_s: number | null;
+  transcribed_s: number | null;
+  truncated: boolean;
+  segments: TranscriptSegment[];
+  created_at: string | null;
+  note: string;
+}
+
+/** One audio file in an analysis (`audio_transcription`). */
+export interface AudioTranscriptionSummary {
+  evidence_id: string;
+  mime_type: string;
+  status: TranscriptionStatus;
+  reason: string;
+  message: string;
+  engine: string | null;
+  model: string | null;
+  language: string | null;
+  duration_s: number | null;
+  transcribed_s: number | null;
+  truncated: boolean;
+  segment_count: number;
+  reused: boolean;
 }
 
 export interface StatusHistoryRow {
@@ -170,7 +252,11 @@ export interface Page<T> {
 export type ProvenanceSource = "rule" | "ml" | "llm" | "static_guidance" | "legacy";
 
 export interface ProvenanceEvidence {
-  type: "text_span" | "field" | "whole_text" | "keyed_by" | "not_recorded" | "generated" | string;
+  type: "text_span" | "field" | "whole_text" | "keyed_by" | "not_recorded" | "generated" | "evidence_transcript" | string;
+  /** evidence_transcript: the audio evidence file and the segment's time range (seconds). */
+  evidence_id?: string | null;
+  start_s?: number | null;
+  end_s?: number | null;
   field?: string;
   start?: number;
   end?: number;
@@ -216,6 +302,9 @@ export interface ProvenanceStage {
   status: "ran" | "unavailable" | "skipped" | "not_configured" | string;
   reason: string | null;
   version: string | null;
+  /** audio_transcription stages: one per audio file. */
+  evidence_id?: string;
+  reused?: boolean;
 }
 
 export interface Provenance {
@@ -265,6 +354,8 @@ export interface AnalysisResult {
   capability_reasons: Record<string, string>;
   unavailable_capabilities: string[];
   unanalysed_attachments: unknown[];
+  /** Per audio evidence file (complaint analyses since Phase 6). */
+  audio_transcription?: AudioTranscriptionSummary[];
   category_model: CategoryModelOut | null;
   provenance?: Provenance | null;
 }
@@ -334,6 +425,18 @@ export interface ModelsInfo {
   score_semantics: string;
   models: ModelEntry[];
   llm: { provider: string; status: "not_configured" | "unavailable" | "ready" | string; model: string | null; reason: string | null; used_for: string };
+  /** Speech-to-text for audio evidence (Phase 6). */
+  stt?: {
+    status: "ready" | "available_offline" | "model_not_available_offline" | "engine_not_configured" | "configured" | "not_loaded" | string;
+    engine: string;
+    model: string | null;
+    reason: string | null;
+    local: boolean;
+    evidence_transcription: "enabled" | "disabled";
+    used_for: string;
+    limits?: { max_seconds_per_file: number; max_files_per_run: number; run_budget_s: number };
+    decoders?: { wav: string; mp3_ogg_m4a: string };
+  };
 }
 
 export interface Analysis {
@@ -362,6 +465,7 @@ export interface Analysis {
   capability_reasons: Record<string, string>;
   unavailable_capabilities: string[];
   unanalysed_attachments: unknown[];
+  audio_transcription?: AudioTranscriptionSummary[];
   category_model: CategoryModelOut | null;
   provenance?: Provenance | null;
   history?: AnalysisSummary[];

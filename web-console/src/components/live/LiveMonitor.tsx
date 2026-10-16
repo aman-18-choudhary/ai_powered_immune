@@ -373,9 +373,17 @@ export function LiveMonitor() {
                 <div className="font-semibold text-fg">{tr("explanationTitle")}</div>
                 <p data-testid="rules-explanation">{st.explanation.rules}</p>
                 {st.explanation.llm && (
-                  <p className="mt-1">
+                  <p className="mt-1" data-testid="llm-explanation">
+                    <span className="block text-[11px] font-medium text-warn" data-testid="llm-label">
+                      {st.explanation.llm_label ?? tr("llmModelLabel", { model: st.explanation.llm_model ?? st.caps?.llm.model ?? "local" })}
+                    </span>
                     <span className="mr-1 rounded border border-line px-1 text-[10px] uppercase">{tr("llmTag")}</span>
                     {st.explanation.llm}
+                  </p>
+                )}
+                {!st.explanation.llm && st.explanation.llm_status === "rejected" && (
+                  <p className="mt-1 text-[11px] text-subtle" data-testid="llm-rejected">
+                    {tr("llmRejected", { reason: (st.explanation.llm_reason ?? "rejected").replace(/_/g, " ") })}
                   </p>
                 )}
               </div>
