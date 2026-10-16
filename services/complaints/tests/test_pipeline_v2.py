@@ -381,7 +381,9 @@ async def test_llm_failures_yield_null_flagged_and_unchanged_result(handler, cap
     assert (out.risk_score, out.risk_level, out.classification) == (
         base.risk_score, base.risk_level, base.classification,
     )  # fmt: skip
-    assert out.status == "PARTIAL" and "llm_explanation" in out.extra["unavailable_capabilities"]
+    # the LLM wording is optional: its failure is reported, not turned into a PARTIAL analysis
+    assert out.status == base.status and "llm_explanation" in out.extra["unavailable_capabilities"]
+    assert any("optional wording only" in x for x in out.limitations)
 
 
 def test_validate_output_rules():

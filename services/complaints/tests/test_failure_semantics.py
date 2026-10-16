@@ -16,13 +16,14 @@ from complaints.analysis import ComplaintAnalysisPipeline
 from complaints.schema import ANALYSIS_STATUSES
 
 
-def _no_low_or_benign(out) -> None:
+def _no_low_or_benign(out, *, optional_stage_only: bool = False) -> None:
     assert out.risk_level != "LOW", out.risk_level
     blob = json.dumps(
         {"e": out.explanation, "x": out.extra, "i": out.indicators, "l": out.limitations}
     )
     assert "BENIGN" not in blob.upper()
-    assert out.status != "COMPLETED"
+    if not optional_stage_only:
+        assert out.status != "COMPLETED"
 
 
 def _scorer_import_failure():
@@ -103,7 +104,10 @@ async def test_ollama_timeout_or_garbage_never_low_and_no_text(handler):
     out = await pipe(
         StubScorer(0.5), StubCategory("PHISHING", 0.6), explainer=ollama(handler)
     ).analyse(BARE)
-    _no_low_or_benign(out)
+    # only the optional LLM wording failed: the analysis keeps its status (finding 1, 2026-10-17)
+    _no_low_or_benign(out, optional_stage_only=True)
+    assert out.status == base.status == "COMPLETED"
+    assert "llm_explanation" in out.extra["unavailable_capabilities"]
     assert out.risk_level == base.risk_level and out.risk_score == base.risk_score
     assert out.extra["llm_explanation"] is None
     assert not [p for p in out.extra["explanation_parts"] if p["source"] == "llm"]

@@ -520,8 +520,15 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         elif cat_model is None:
             reasons["category_classifier"] = self._cat_reason or "unavailable"
         else:
+            # transcripts of audio evidence are part of what the complaint says: classify the
+            # description together with them (bounded like the description)
+            cat_text = text
+            n_transcripts = 0
+            if tlayout is not None and tlayout.text.strip():
+                cat_text = f"{text}\n{tlayout.text}"[: 2 * MAX_TEXT_CHARS]
+                n_transcripts = len(tr_files)
             try:
-                pred = await asyncio.to_thread(cat_model.predict, text)
+                pred = await asyncio.to_thread(cat_model.predict, cat_text)
                 classification, confidence = pred.label, pred.confidence
                 caps["category_classifier"] = "available"
                 top3 = [{"category": c, "score": p} for c, p in pred.top[:3]]
@@ -533,7 +540,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                     "abstention_threshold": cat_model.min_confidence,
                     "trained_on": "synthetic data only",
                     "source": "ml", "method": cat_method,
-                    "evidence": {"type": "whole_text", "field": layout.field_label},
+                    "evidence": {"type": "whole_text", "field": layout.field_label,
+                                 "audio_transcripts_included": n_transcripts},
                 }  # fmt: skip
                 versions["category"] = cat_model.version
             except Exception as exc:
@@ -638,6 +646,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
 
         # status: applicable stages that were not available are named
         applicable_failed: list[str] = []
+        # optional stages (the LLM wording) are reported but never make the analysis PARTIAL:
+        # the score, level, category and rule explanation do not depend on them
+        optional_failed: list[str] = []
         for cap in ("text_risk_scorer", "category_classifier"):
             if caps[cap] in UNAVAILABLE_STATES:
                 applicable_failed.append(cap)
@@ -699,7 +710,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                     reasons.pop("llm_explanation", None)
                 else:
                     reasons["llm_explanation"] = res.reason or res.status
-                    applicable_failed.append("llm_explanation")
+                    optional_failed.append("llm_explanation")
         if llm_text:
             versions["llm"] = self._explainer.model if self._explainer else None
             stage("llm_explanation", "llm", llm_method, "ran", version=versions["llm"])
@@ -783,6 +794,12 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 f"{cap.replace('_', ' ').capitalize()} was not available "
                 f"({reasons.get(cap, caps.get(cap, 'unavailable'))})."
             )
+        for cap in optional_failed:
+            limitations.append(
+                f"{cap.replace('_', ' ').capitalize()} (optional wording only) was not used "
+                f"({reasons.get(cap, caps.get(cap, 'unavailable'))}); the rule explanation is "
+                "shown and the score, level and category are unaffected."
+            )
         if unanalysed:
             limitations.append(
                 "Some uploaded evidence files were not analysed; they are listed as unanalysed "
@@ -826,7 +843,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "llm_explanation": llm_text,
             "llm_model": self._explainer.model if llm_text and self._explainer else None,
             "capability_reasons": reasons,
-            "unavailable_capabilities": sorted(set(applicable_failed)),
+            "unavailable_capabilities": sorted(set(applicable_failed) | set(optional_failed)),
             "unanalysed_attachments": unanalysed,
             "audio_transcription": audio_results,
             "category_model": cat_detail,

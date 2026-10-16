@@ -414,3 +414,25 @@ async def test_no_audio_means_skipped_no_input():
     assert out.capabilities["audio_transcription"] == "skipped_no_input"
     assert out.extra["capability_reasons"]["audio_transcription"] == "no_audio_evidence"
     assert out.status == "COMPLETED" and out.risk_level == "LOW"
+
+
+# ------------------------------------------------------------------ category sees transcripts
+async def test_category_model_classifies_description_and_transcripts(make_app, tok):
+    # finding 2 (2026-10-17): an audio-only complaint was categorised from the description alone
+    cat = StubCategory("DIGITAL_ARREST", 0.7)
+    app = make_app(analysis=pipe(StubScorer(0.1), cat), stt_engine=FakeStt())
+    c = cl(app)
+    comp = await create(c, tok("a"), **BENIGN)
+    await up(c, tok("a"), comp["id"], data=make_wav(seconds=10.0))
+    a = await analyse(c, tok("a"), comp["id"])
+    assert "You are under digital arrest." in cat.seen[-1]  # the transcript reached the model
+    assert BENIGN["description"] in cat.seen[-1]  # together with the description
+    assert a["category_model"]["evidence"]["audio_transcripts_included"] == 1
+    assert a["classification"] == "DIGITAL_ARREST"
+
+
+async def test_category_model_sees_only_the_description_without_audio():
+    cat = StubCategory("OTHER", 0.7)
+    out = await pipe(StubScorer(0.1), cat).analyse({**BENIGN, "evidence": []})
+    assert cat.seen[-1] == f"{BENIGN['title']}\n{BENIGN['description']}"
+    assert out.extra["category_model"]["evidence"]["audio_transcripts_included"] == 0
