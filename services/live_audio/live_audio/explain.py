@@ -1,13 +1,21 @@
 """Explanations: a deterministic rules text always; an optional local-LLM text.
 
-* ``rules_explanation`` is built only from the computed level, score and indicator labels.
-* ``OllamaExplainer`` follows the approach of ``services/complaints/complaints/explain.py``
-  (local Ollama ``/api/generate``, non-streaming, temperature 0.2, hard timeout, output length
-  cap, output rejected if it contains a link / id / number not in the prompt or claims a
-  likelihood). The prompt carries ONLY indicator codes, labels and REDACTED excerpts (links,
-  UPI ids, e-mails, phone numbers and digit runs replaced by placeholders), never the transcript.
-  The LLM never changes the score or level. Not exercised against a live Ollama here (not
-  installed); tests use a fake HTTP transport.
+* ``rules_explanation`` is built only from the computed level, score and indicator labels. It is
+  always shown and stays primary.
+* ``OllamaExplainer`` (local Ollama ``/api/generate``, non-streaming, temperature 0.1, at most
+  120 tokens, hard timeout) gets a FINDINGS-ONLY prompt: the indicator labels with REDACTED
+  excerpts (links, UPI ids, e-mails, phone numbers and digit runs replaced by placeholders) and
+  fixed safety steps; never the transcript, the score or the level. The answer is untrusted and
+  goes through the shared ``svckit.llm_grounding.review_output`` (the same checks as the
+  complaints explainer): invented links / numbers stripped, complete sentences only, rejected
+  (``status: rejected`` + reason) when empty, too long, claiming a likelihood or certainty,
+  turning the accusation onto the caller (role inversion), naming a cue that was not detected or
+  referring to none of the findings. On rejection, timeout or error there is no LLM text and the
+  console shows the rules explanation. The LLM never changes the score or level.
+* Default model ``qwen2.5:0.5b`` (fits an 8 GB machine; ``qwen2.5:3b`` is preferred when the
+  hardware allows, ``OLLAMA_MODEL``). Off unless ``OLLAMA_URL`` is set. Unit tests use a fake
+  HTTP transport; ``tests/test_ollama_live.py`` runs against a live local Ollama only with
+  ``OLLAMA_LIVE_TESTS=1``.
 """
 
 from __future__ import annotations
@@ -21,14 +29,22 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from svckit import llm_grounding as g
 
 log = logging.getLogger("live_audio.explain")
 
-DEFAULT_MODEL = "qwen2.5:3b"
+DEFAULT_MODEL = "qwen2.5:0.5b"
 DEFAULT_TIMEOUT_S = 20.0
-MAX_LLM_OUTPUT = 1200
+MAX_LLM_OUTPUT = 700
+NUM_PREDICT = 120
+MAX_FINDINGS = 5
 MAX_RESPONSE_BYTES = 256 * 1024
 PROBE_TTL_S = 30.0
+STEPS = (
+    "Hang up the call.",
+    "Do not pay, transfer money or share any code.",
+    "Call your bank on the number printed on your card and report to the helpline 1930.",
+)
 
 _UPI = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{2,}")
 _URL = re.compile(
@@ -38,7 +54,6 @@ _URL = re.compile(
 )
 _PHONE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{5,}\d")
 _DIGITS = re.compile(r"\d{4,}")
-_CLAIM = re.compile(r"probab|likelihood|\bchances?\b|\b\d{1,3}\s?%|percent", re.IGNORECASE)
 
 
 def redact(text: str, limit: int = 160) -> str:
@@ -49,46 +64,44 @@ def redact(text: str, limit: int = 160) -> str:
     return t[:limit]
 
 
+def _ranked(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(facts.get("indicators") or [])[:MAX_FINDINGS]
+
+
 def build_prompt(facts: dict[str, Any]) -> str:
+    """Findings-only prompt: indicator labels with redacted excerpts and fixed steps."""
     lines = [
-        "You explain the result of an automated check of a phone conversation to the person who "
-        "is on the call. Write at most four short plain sentences using ONLY the facts below, "
-        "then one sentence of safety advice (hang up, do not pay or share codes, call the bank "
-        "on the number printed on the card, report to 1930).",
-        "Do not add any fact, name, number or link. Do not state a probability, percentage or "
-        "chance. These are indicators detected in speech; this is not a confirmation of fraud.",
+        "Rewrite the findings below as two or three short, plain English sentences for the person "
+        "who is on this phone call.",
+        "Rules: use ONLY the findings and steps listed. Do not add any new fact, reason, guess, "
+        "name, number or link. Do not say the call is safe, confirmed or proven. Do not state a "
+        "probability, percentage or chance. These are indicators heard in the speech, not a "
+        "confirmation of fraud. Write in English only.",
         "",
-        f"Risk level: {facts.get('level') or 'not assessed'}",
-        "Indicators:",
+        "Findings:",
     ]
-    ind = facts.get("indicators") or []
-    for i in ind[:12]:
+    ind = _ranked(facts)
+    for n, i in enumerate(ind, 1):
         ex = "; ".join(redact(str(x)) for x in (i.get("excerpts") or [])[:2])
-        lines.append(
-            f"- {i.get('code', '')}: {i.get('label', '')}" + (f' (heard: "{ex}")' if ex else "")
-        )
+        heard = f' (heard: "{ex}")' if ex else ""
+        lines.append(f"{n}. {redact(str(i.get('label', '')))}{heard}")
     if not ind:
-        lines.append("- none")
+        lines.append("- No scam cue was detected in the speech.")
+    lines += ["Recommended steps:", *[f"- {t}" for t in STEPS], "", "Answer:"]
     return "\n".join(lines)
 
 
-def validate_output(text: Any, prompt: str) -> str | None:
-    if not isinstance(text, str) or not text.strip():
-        return "bad_response"
-    if len(text) > MAX_LLM_OUTPUT:
-        return "output_too_long"
-    for rx in (_URL, _UPI, _PHONE, _DIGITS):
-        for m in rx.finditer(text):
-            if m.group(0) not in prompt:
-                return "unsafe_content"
-    if _CLAIM.search(text):
-        return "likelihood_claim"
-    return None
+def findings_of(facts: dict[str, Any]) -> list[str]:
+    return [
+        f"{i.get('label', '')} {' '.join(redact(str(x)) for x in (i.get('excerpts') or [])[:2])} "
+        f"{str(i.get('code', '')).replace('_', ' ').lower()}"
+        for i in _ranked(facts)
+    ]
 
 
 @dataclass(frozen=True)
 class LlmResult:
-    status: str  # available | not_configured | unavailable | timeout | error
+    status: str  # available | not_configured | unavailable | timeout | error | rejected
     text: str | None
     reason: str | None = None
 
@@ -123,12 +136,15 @@ class OllamaExplainer:
     async def explain(self, facts: dict[str, Any]) -> LlmResult:
         if not self.configured:
             return LlmResult("not_configured", None, "not_configured")
+        findings = findings_of(facts)
+        if not findings:
+            return LlmResult("skipped", None, "no_findings_to_rephrase")
         if self._sem is None:
             self._sem = asyncio.Semaphore(1)
         prompt = build_prompt(facts)
         body = {
             "model": self.model, "prompt": prompt, "stream": False,
-            "options": {"temperature": 0.2, "num_predict": 200},
+            "options": {"temperature": 0.1, "num_predict": NUM_PREDICT},
         }  # fmt: skip
         try:
             async with self._sem, asyncio.timeout(self.timeout_s):
@@ -150,10 +166,13 @@ class OllamaExplainer:
             text = data.get("response") if isinstance(data, dict) else None
         except ValueError:
             return LlmResult("error", None, "bad_response")
-        why = validate_output(text, prompt)
-        if why:
-            return LlmResult("error", None, why)
-        return LlmResult("available", str(text).strip())
+        if not isinstance(text, str):
+            return LlmResult("error", None, "bad_response")
+        review = g.review_output(text, prompt, findings, max_len=MAX_LLM_OUTPUT)
+        if review.text is None:
+            log.info("llm explanation rejected: %s", review.reason)  # reason only, never text
+            return LlmResult("rejected", None, review.reason)
+        return LlmResult("available", review.text)
 
     async def probe(self) -> str:
         """``not_configured`` | ``reachable`` | ``unreachable`` (cached 30 s)."""

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Consent-based microphone monitoring: chunked local Whisper transcription analysed by the call-guard scorer"
 requires-python = ">=3.11"
 dependencies = [
-    "scam-contracts", "call-guard", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27",
+    "scam-contracts", "svckit", "call-guard", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27",
     "numpy>=1.26", "PyJWT>=2.8",
 ]
 

@@ -367,6 +367,9 @@ def _run_scam(c):
     return sid, out
 
 
+GROUNDED = "The caller claims to be an officer from the CBI. Hang up the call."
+
+
 def test_llm_explanation_never_changes_score(make_client, engine):
     import time as _t
 
@@ -380,7 +383,7 @@ def test_llm_explanation_never_changes_score(make_client, engine):
         if req.url.path == "/api/tags":
             return httpx.Response(200, json={"models": []})
         prompts.append(req.content.decode())
-        return httpx.Response(200, json={"response": "The caller used scam phrases. Hang up."})
+        return httpx.Response(200, json={"response": GROUNDED})
 
     engine.script = list(SCAM)
     plain = make_client()
@@ -396,8 +399,10 @@ def test_llm_explanation_never_changes_score(make_client, engine):
         if s["explanation"]["llm"]:
             break
         _t.sleep(0.02)
-    assert s["explanation"]["llm"] == "The caller used scam phrases. Hang up."
+    assert s["explanation"]["llm"] == GROUNDED
     assert s["explanation"]["llm_status"] == "available"
+    assert s["explanation"]["llm_label"] == "LLM-generated (qwen2.5:0.5b), may be imprecise"
+    assert s["explanation"]["rules"]  # the rules text is always there
     assert s["risk"]["score"] == base[-1]["risk"]["score"]
     # rate limited: one call within 20 s even though the level rose more than once
     assert len(prompts) == 1
@@ -425,3 +430,33 @@ def test_llm_unreachable_degrades(make_client, engine):
         c.get("/api/live-audio/capabilities", headers=auth()).json()["llm"]["status"]
         == "unreachable"
     )
+
+
+def test_llm_rejected_answer_shows_rules_only(make_client, engine):
+    import time as _t
+
+    import httpx
+
+    from live_audio.explain import OllamaExplainer
+
+    def h(req: httpx.Request):
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": []})
+        # the role-inverted sentence qwen2.5:0.5b produced on 2026-10-15 (finding 1)
+        return httpx.Response(200, json={"response": "The caller is under 'digital arrest'."})
+
+    engine.script = list(SCAM)
+    c = make_client(explainer=OllamaExplainer("http://127.0.0.1:11434",
+                                              transport=httpx.MockTransport(h)))  # fmt: skip
+    sid, _ = _run_scam(c)
+    for _ in range(50):
+        s = c.get(f"/api/live-audio/sessions/{sid}", headers=auth()).json()
+        if s["explanation"]["llm_status"] not in ("pending", "idle"):
+            break
+        _t.sleep(0.02)
+    ex = s["explanation"]
+    assert ex["llm"] is None and ex["llm_label"] is None
+    assert ex["llm_status"] == "rejected" and ex["llm_reason"] in (
+        "role_inversion", "ungrounded_indicator",
+    )  # fmt: skip
+    assert ex["rules"].startswith("Risk ")

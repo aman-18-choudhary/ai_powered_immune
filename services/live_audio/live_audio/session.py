@@ -92,6 +92,8 @@ class LiveSession:
     last_status: dict[str, str] = field(default_factory=dict)
     llm_status: str = "idle"
     llm_text: str | None = None
+    llm_reason: str | None = None
+    llm_model: str | None = None
     llm_at_s: float | None = None
     llm_level: str | None = None
     llm_last: float = -math.inf

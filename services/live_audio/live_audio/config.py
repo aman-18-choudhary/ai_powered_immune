@@ -45,7 +45,7 @@ class LiveAudioConfig:
     max_segments: int = 2000
     max_transcript_chars: int = 200_000
     ollama_url: str | None = None
-    ollama_model: str = "qwen2.5:3b"
+    ollama_model: str = "qwen2.5:0.5b"
     ollama_timeout_s: float = 20.0
     llm_min_interval_s: float = 20.0
 
@@ -62,7 +62,7 @@ class LiveAudioConfig:
             chunk_ms=int(_f(e, "LIVE_CHUNK_MS", 4000, 1000, 10000)),
             chunks_per_minute=int(_f(e, "LIVE_CHUNKS_PER_MINUTE", 40, 1, 600)),
             ollama_url=e.get("OLLAMA_URL") or None,
-            ollama_model=e.get("OLLAMA_MODEL") or "qwen2.5:3b",
+            ollama_model=e.get("OLLAMA_MODEL") or "qwen2.5:0.5b",
             ollama_timeout_s=_f(e, "OLLAMA_TIMEOUT_S", 20.0, 1.0, 120.0),
         )
 
