@@ -57,7 +57,8 @@ async def test_present():
     assert body["model"] == "qwen2.5:0.5b" and body["stream"] is False
     assert body["options"] == {"temperature": 0.1, "num_predict": 120}
     assert "ramesh@ybl" not in body["prompt"]  # redacted
-    assert "Says you are under 'digital arrest'" in body["prompt"]
+    assert "- The caller says you are under 'digital arrest'." in body["prompt"]
+    assert 'Words heard (redacted): "under digital arrest"; "[payment-id]"' in body["prompt"]
     assert "64" not in body["prompt"] and "HIGH" not in body["prompt"]  # findings only
     assert await ex.probe() == "reachable"
 
@@ -74,6 +75,13 @@ async def test_present():
         ("There is a 93% chance that this digital arrest call is fraud.", "likelihood_claim"),
         ("Please stay careful with everything you hear in general.", "not_grounded"),
         ("Visit http://evil.example now", "empty_or_too_short"),
+        # qwen2.5:0.5b on 2026-10-16 echoed the prompt list back, with "You are from the CBI"
+        ('1. You are under \'digital arrest\' (heard: "You are under digital arrest.")\n  2. A '
+         'UPI ID was mentioned (heard: "[payment-id].")', "prompt_echo"),
+        ("You are from the CBI. The caller says you are under digital arrest.", "role_inversion"),
+        ("You are under digital arrest. Hang up the call.", "unsupported_claim"),
+        ("The caller says you are under digital arrest. Do not tell anyone about this call.",
+         "repeats_scam_instruction"),
         ("x" * 5000, "output_too_long"),
     ],
 )  # fmt: skip

@@ -10,7 +10,7 @@ import os
 import httpx
 import pytest
 
-from live_audio.explain import NUM_PREDICT, OllamaExplainer, build_prompt
+from live_audio.explain import OllamaExplainer, build_prompt
 
 pytestmark = pytest.mark.skipif(
     os.getenv("OLLAMA_LIVE_TESTS") != "1", reason="set OLLAMA_LIVE_TESTS=1 to use a live Ollama"
@@ -34,15 +34,24 @@ async def test_live_explainer_is_grounded_or_rejected():
     url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
     timeout = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))
-    ex = OllamaExplainer(url, model, timeout)
+    seen: list[str] = []
+
+    class Recording(httpx.AsyncHTTPTransport):
+        """Keeps the raw answer of the SAME call that the grounding checks judge."""
+
+        async def handle_async_request(self, request):
+            resp = await super().handle_async_request(request)
+            if request.url.path == "/api/generate":
+                await resp.aread()
+                seen.append(httpx.Response(200, content=resp.content).json().get("response"))
+            return resp
+
+    ex = OllamaExplainer(url, model, timeout, transport=Recording())
     if await ex.probe() != "reachable":
         pytest.skip("ollama not reachable")
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        r = await c.post(f"{url}/api/generate", json={
-            "model": model, "prompt": build_prompt(FACTS), "stream": False,
-            "options": {"temperature": 0.1, "num_predict": NUM_PREDICT}})  # fmt: skip
-    print(f"\n[live] raw model answer={r.json().get('response')!r}")
+    print(f"\n[live] prompt={build_prompt(FACTS)!r}")
     res = await ex.explain(FACTS)
+    print(f"[live] raw model answer judged={seen[-1] if seen else None!r}")
     print(f"[live] status={res.status} reason={res.reason} text={res.text!r}")
     assert res.status in ("available", "rejected", "timeout")
     if res.status == "available":

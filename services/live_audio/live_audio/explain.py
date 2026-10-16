@@ -3,15 +3,18 @@
 * ``rules_explanation`` is built only from the computed level, score and indicator labels. It is
   always shown and stays primary.
 * ``OllamaExplainer`` (local Ollama ``/api/generate``, non-streaming, temperature 0.1, at most
-  120 tokens, hard timeout) gets a FINDINGS-ONLY prompt: the indicator labels with REDACTED
-  excerpts (links, UPI ids, e-mails, phone numbers and digit runs replaced by placeholders) and
-  fixed safety steps; never the transcript, the score or the level. The answer is untrusted and
-  goes through the shared ``svckit.llm_grounding.review_output`` (the same checks as the
-  complaints explainer): invented links / numbers stripped, complete sentences only, rejected
-  (``status: rejected`` + reason) when empty, too long, claiming a likelihood or certainty,
-  turning the accusation onto the caller (role inversion), naming a cue that was not detected or
-  referring to none of the findings. On rejection, timeout or error there is no LLM text and the
-  console shows the rules explanation. The LLM never changes the score or level.
+  120 tokens, hard timeout) gets a FINDINGS-ONLY prompt: the indicator labels in the third person
+  ("The caller says you are under 'digital arrest'."), the REDACTED words heard (links, UPI ids,
+  e-mails, phone numbers and digit runs replaced by placeholders; one excerpt per finding, in a
+  separate block) and fixed safety steps; never the transcript, the score or the level. The
+  answer is untrusted and goes through the shared ``svckit.llm_grounding.review_output`` (the
+  same checks as the complaints explainer): invented links / numbers stripped, complete
+  sentences only, rejected (``status: rejected`` + reason) when empty, too long, a prompt echo,
+  claiming a likelihood or certainty, telling the listener as a fact that they are under arrest,
+  turning the roles around, repeating a scam instruction as advice ("Do not tell anyone"),
+  naming a cue that was not detected or referring to none of the findings. On rejection, timeout
+  or error there is no LLM text and the console shows the rules explanation. The LLM never
+  changes the score or level.
 * Default model ``qwen2.5:0.5b`` (fits an 8 GB machine; ``qwen2.5:3b`` is preferred when the
   hardware allows, ``OLLAMA_MODEL``). Off unless ``OLLAMA_URL`` is set. Unit tests use a fake
   HTTP transport; ``tests/test_ollama_live.py`` runs against a live local Ollama only with
@@ -68,26 +71,40 @@ def _ranked(facts: dict[str, Any]) -> list[dict[str, Any]]:
     return list(facts.get("indicators") or [])[:MAX_FINDINGS]
 
 
+_VERB = re.compile(r"^(?:Says|Asks|Demands|Claims|Alleges|Instructs|Threatens|Tells)\b")
+
+
+def third_person(label: str) -> str:
+    """Labels are verb phrases about the caller ("Says you are under 'digital arrest'"); the
+    prompt states the subject, which keeps a small model from turning the roles around."""
+    return "The caller " + label[0].lower() + label[1:] if _VERB.match(label) else label
+
+
 def build_prompt(facts: dict[str, Any]) -> str:
-    """Findings-only prompt: indicator labels with redacted excerpts and fixed steps."""
+    """Findings-only prompt: the indicator labels (third person), the redacted words heard in a
+    separate block (an inline "(heard: ...)" is copied back verbatim by small models) and fixed
+    steps. No transcript, score or level."""
     lines = [
         "Rewrite the findings below as two or three short, plain English sentences for the person "
         "who is on this phone call.",
-        "Rules: use ONLY the findings and steps listed. Do not add any new fact, reason, guess, "
-        "name, number or link. Do not say the call is safe, confirmed or proven. Do not state a "
-        "probability, percentage or chance. These are indicators heard in the speech, not a "
-        "confirmation of fraud. Write in English only.",
+        "Rules: use ONLY the findings and steps listed. Do not copy the list. Do not add any new "
+        "fact, reason, guess, name, number or link. Do not say the call is safe, confirmed or "
+        "proven. Do not state a probability, percentage or chance. These are indicators heard in "
+        "the speech, not a confirmation of fraud. Write in English only.",
         "",
         "Findings:",
     ]
     ind = _ranked(facts)
-    for n, i in enumerate(ind, 1):
-        ex = "; ".join(redact(str(x)) for x in (i.get("excerpts") or [])[:2])
-        heard = f' (heard: "{ex}")' if ex else ""
-        lines.append(f"{n}. {redact(str(i.get('label', '')))}{heard}")
+    heard: list[str] = []
+    for i in ind:
+        label = redact(str(i.get("label", ""))).rstrip(".")
+        lines.append(f"- {third_person(label)}.")
+        heard += [f'"{redact(str(x))}"' for x in (i.get("excerpts") or [])[:1]]
     if not ind:
         lines.append("- No scam cue was detected in the speech.")
-    lines += ["Recommended steps:", *[f"- {t}" for t in STEPS], "", "Answer:"]
+    if heard:
+        lines += ["", "Words heard (redacted): " + "; ".join(heard)]
+    lines += ["", "Recommended steps:", *[f"- {t}" for t in STEPS], "", "Answer:"]
     return "\n".join(lines)
 
 
