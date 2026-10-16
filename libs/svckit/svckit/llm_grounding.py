@@ -9,10 +9,14 @@ Steps (``review_output``): empty -> ``empty_or_too_short``; longer than ``max_le
 ``output_too_long``; links / addresses / numbers that are not in the prompt are stripped
 (``strip_invented``); complete, non-repeated sentences only (``tidy``); then ``validate_output``
 (``unsafe_content``, ``likelihood_claim``) and ``ground_output``: ``wrong_language``,
-``empty_or_too_short``, ``unsupported_claim`` (certainty, safety, "has evidence"),
-``role_inversion`` (the caller / scammer / sender / officer described as the one under arrest,
-investigated, threatened, the victim or asked to pay), ``ungrounded_indicator`` (a scam cue not
-among the findings), ``not_grounded`` (refers to none of the findings).
+``empty_or_too_short``, ``prompt_echo`` (the prompt's quoted evidence copied back),
+``unsupported_claim`` (certainty, safety, "has evidence", or telling the listener as a fact
+that they are under arrest), ``role_inversion`` (the caller /
+scammer / sender / officer described as the one under arrest, investigated, threatened, the
+victim or asked to pay; or the listener given the caller's authority role, "you are from the
+CBI"), ``repeats_scam_instruction`` (a detected scam instruction given as an imperative, e.g.
+"Do not tell anyone about this call."), ``ungrounded_indicator`` (a scam cue not among the
+findings), ``not_grounded`` (refers to none of the findings).
 
 These are keyword and pattern heuristics, not understanding: an accepted text can still be
 clumsy or imprecise, which is why callers label it "LLM-generated (model), may be imprecise".
@@ -125,12 +129,18 @@ _AUX = frozenset(
     "is are was were be been being has have had will would shall gets got get must need needs "
     "should".split()
 )
-# participles that, after an auxiliary, make the role the one acted upon; without an auxiliary the
-# same word is an active verb with the role as the agent (scan ends, accepted)
+# participles that, after a form of "be", make the role the one acted upon; otherwise the same
+# word is an active verb with the role as the agent (scan ends, accepted)
 _PASSIVE = frozenset(
     "asked told threatened arrested investigated detained charged accused forced pressured "
-    "pressurised pressurized blackmailed extorted made instructed ordered".split()
+    "pressurised pressurized blackmailed extorted made instructed ordered advised "
+    "requested required".split()
 )
+_BE = frozenset("is are was were be been being".split())
+_ADVERBS = frozenset(
+    "now also already just currently himself herself themselves itself still even".split()
+)
+_HELD_VERBS = frozenset("placed put kept held taken".split())
 _PAY = frozenset("pay transfer send deposit".split())
 _HELD = frozenset("arrest custody investigation detention".split())
 _HELD_FILLER = frozenset("a an the digital police cbi judicial".split())
@@ -143,20 +153,32 @@ def _words(sentence: str) -> list[str]:
 
 
 def _inverted(words: list[str], i: int) -> bool:
-    aux = False
+    aux = False  # an auxiliary or modal right before ("is", "has to", "must", "will be", ...)
+    be = False  # that auxiliary is a form of "be": a participle after it is passive
     for j in range(i + 1, min(len(words), i + 1 + _SCAN)):
         w = words[j]
-        if w in ("victim", "victims") and aux:
+        if w in ("victim", "victims"):
             between = words[i + 1 : j]
-            if all(x in _AUX or x in _VICTIM_FILLER for x in between):
+            if any(x in _BE for x in between) and all(
+                x in _AUX or x in _VICTIM_FILLER for x in between
+            ):
                 return True  # "the caller is the victim"
+        if w in _REPORTING and words[j + 1 : j + 3] == ["to", "be"]:
+            aux = be = True  # "claims to be ...": about the role itself, keep scanning
+            continue
+        if w in ("to", "be") and aux:
+            be = be or w == "be"
+            continue
+        if be and (w in _PASSIVE or (w in _REPORTING and w.endswith("ed"))):
+            return True  # "the caller was asked / told / warned / threatened ..."
         if w in _OBJECTS or w in _REPORTING:
             return False
         if w in _AUX:
             aux = True
+            be = w in _BE
             continue
         if w in _PASSIVE:
-            return aux
+            return False  # active ("the caller asked you", "the caller has asked you")
         if w in _PAY and aux:
             return True  # "the caller has to pay"
         if w in ("under", "in") and (aux or w == "under"):
@@ -166,15 +188,148 @@ def _inverted(words: list[str], i: int) -> bool:
                 return True
         if w in ("faces", "facing", "face") and any(x in _HELD for x in words[j + 1 : j + 3]):
             return True
+        if w not in _ADVERBS and w not in _HELD_VERBS:
+            aux = be = False  # an auxiliary binds only the words right after it
+    return False
+
+
+_AUTHORITY = frozenset(
+    "cbi police policeman policemen officer officers inspector customs narcotics rbi "
+    "enforcement".split()
+)
+_ARTICLES = frozenset("a an the".split())
+
+
+def _listener_as_authority(words: list[str]) -> bool:
+    """The mirror inversion: "you are from the CBI", "you are a police officer"."""
+    for i, w in enumerate(words[:-2]):
+        if w != "you" or words[i + 1] not in ("are", "were"):
+            continue
+        rest = [x for x in words[i + 2 : i + 6] if x not in _ARTICLES]
+        if rest and rest[0] == "from":
+            rest = rest[1:]
+        if rest and rest[0] in _AUTHORITY:
+            return True
+    return False
+
+
+_NEGATION = frozenset("no not never cannot cant can t nobody none".split())
+
+
+def asserts_arrest(text: str) -> bool:
+    """A sentence that tells the listener, as a fact, that they are (or will be) under arrest:
+    "You are under digital arrest." Allowed when attributed ("the caller says ...", "you are
+    told ...") or negated ("you are not under digital arrest", "no agency can ...")."""
+    for sentence in re.split(r"[.!?;:。！？\n]+", text):
+        words = _words(sentence)
+        for i, w in enumerate(words):
+            if w != "you":
+                continue
+            before = words[:i]
+            if any(x in _REPORTING or x in _NEGATION or x in _PASSIVE for x in before):
+                continue
+            rest = words[i + 1 : i + 7]
+            k = 0
+            while k < len(rest) and rest[k] in _AUX | {"now", "already", "placed", "put",
+                                                       "kept", "being"}:  # fmt: skip
+                k += 1
+            if k == 0 or any(x in _NEGATION for x in rest[:k]):
+                continue
+            nxt = rest[k : k + 4]
+            if nxt and nxt[0] == "arrested":
+                return True
+            if nxt and nxt[0] in ("under", "in"):
+                held = [x for x in nxt[1:] if x not in _HELD_FILLER]
+                if held and held[0] in _HELD:
+                    return True
+    return False
+
+
+# A sentence that gives the scammer's instruction as an imperative ("Do not tell anyone about this
+# call.", "Stay on the call.", "Share the OTP."): the model has turned a detected cue into advice.
+# Safety advice ("Do not pay", "Hang up", "Do not share your OTP") is not matched.
+_LEAD = (("please",), ("so",), ("and",), ("you", "should"), ("you", "must"),
+         ("you", "need", "to"), ("make", "sure", "to"), ("be", "sure", "to"))  # fmt: skip
+_NEG = (("do", "not"), ("don", "t"), ("dont",), ("never",))
+_SECRET_FROM = frozenset(
+    "anyone anybody nobody family friends friend bank police relatives parents husband wife "
+    "spouse".split()
+)
+_STAY = frozenset("call line video phone".split())
+_MONEY = frozenset("money funds amount payment rupees savings".split())
+_CODE = frozenset("otp pin code password cvv passcode".split())
+_REMOTE = frozenset("anydesk teamviewer quicksupport rustdesk".split())
+
+
+def _strip_lead(words: list[str]) -> list[str]:
+    changed = True
+    while changed and words:
+        changed = False
+        for lead in _LEAD:
+            if tuple(words[: len(lead)]) == lead:
+                words = words[len(lead) :]
+                changed = True
+    return words
+
+
+def _imperative_instruction(w: list[str]) -> bool:
+    neg = next((n for n in _NEG if tuple(w[: len(n)]) == n), None)
+    if neg is not None:
+        rest = w[len(neg) :]
+        if rest[:1] == ["tell"] and any(x in _SECRET_FROM for x in rest[1:4]):
+            return True  # "do not tell anyone / your family"
+        if rest[:1] in (["disconnect"], ["hang"], ["end"], ["cut"]):
+            return True  # "do not disconnect / hang up / end the call"
+        return False  # "do not pay", "never transfer", "do not share your OTP": advice
+    if w[:3] in (["tell", "no", "one"], ["tell", "nobody"]):
+        return True
+    if w[:1] == ["stay"] and any(x in _STAY for x in w[1:5]):
+        return True
+    if w[:1] == ["keep"] and "secret" in w[1:4]:
+        return True
+    if w[:1] and w[0] in ("transfer", "send", "pay", "deposit", "move") and any(
+        x in _MONEY for x in w[1:4]
+    ):
+        return True
+    if w[:1] and w[0] in ("share", "give", "tell", "read") and any(x in _CODE for x in w[1:4]):
+        return True
+    return w[:1] == ["install"] and (any(x in _REMOTE for x in w[1:3]) or "app" in w[1:4])
+
+
+def repeats_scam_instruction(text: str) -> bool:
+    for sentence in re.split(r"[.!?;:。！？\n]+", text):
+        words = _strip_lead(_words(sentence))
+        if words and _imperative_instruction(words):
+            return True
+    return False
+
+
+_ADVISES = frozenset(
+    "advise advises advised suggest suggests suggested recommend recommends recommended urge "
+    "urges urged encourage encourages encouraged".split()
+)
+_SAFETY = frozenset("hang report bank helpline 1930 police not".split())
+
+
+def _caller_gives_safety_advice(words: list[str]) -> bool:
+    """The safety steps attributed to the caller: "the caller advises you to hang up"."""
+    for i, w in enumerate(words[:-1]):
+        if w in _ROLES and words[i + 1] in _ADVISES:
+            if any(x in _SAFETY for x in words[i + 2 : i + 9]):
+                return True
     return False
 
 
 def role_inversion(text: str) -> bool:
     """True when a sentence describes the caller (or scammer, sender, officer) as the one under
-    arrest, investigated, threatened, the victim or asked to pay."""
+    arrest, investigated, threatened, the victim or asked to pay, gives the listener the caller's
+    authority role ("you are from the CBI") or attributes the safety steps to the caller ("the
+    caller advises you to hang up")."""
     for sentence in re.split(r"[.!?;:。！？\n]+", text):
         words = _words(sentence)
         if any(w in _ROLES and _inverted(words, i) for i, w in enumerate(words)):
+            return True
+        if _listener_as_authority(words) or _caller_gives_safety_advice(words):
             return True
     return False
 
@@ -202,6 +357,8 @@ UNSUPPORTED = re.compile(
     r"(?:\w+\s+)?(?:safe|legitimate|genuine)\b|\bnot\s+a\s+(?:scam|fraud)\b",
     re.IGNORECASE,
 )
+# the prompt's own quoting of evidence copied back ("(heard: ...)", "(the message says: ...)")
+PROMPT_ECHO = re.compile(r"\((?:heard|the message says|the recording says)\s*:", re.IGNORECASE)
 _STOP = frozenset(
     "about above after again their there these those which would could should other being "
     "where while asked asks message person money".split()
@@ -233,10 +390,14 @@ def ground_output(
         return "wrong_language"
     if len(text) < 20:
         return "empty_or_too_short"
-    if UNSUPPORTED.search(text):
+    if PROMPT_ECHO.search(text):
+        return "prompt_echo"
+    if UNSUPPORTED.search(text) or asserts_arrest(text):
         return "unsupported_claim"
     if role_inversion(text):
         return "role_inversion"
+    if repeats_scam_instruction(text):
+        return "repeats_scam_instruction"
     known = " ".join(findings) + " " + context
     for words in CUE_WORDS.values():
         if any(_has(w, text) for w in words) and not any(_has(w, known) for w in words):
@@ -272,11 +433,14 @@ def review_output(
         return Review(None, "empty_or_too_short")
     if len(raw) > max_len:
         return Review(None, "output_too_long")
-    text = tidy(strip_invented(raw.strip(), prompt), max_sentences)
-    why = validate_output(text, prompt, max_len) or ground_output(text, findings, context, lang)
+    clean = strip_invented(raw.strip(), prompt)
+    # every complete sentence the model wrote is checked (not only the ones that will be shown):
+    # an answer that goes wrong after its third sentence is not trusted for its first three
+    full = tidy(clean, 1000)
+    why = validate_output(full, prompt, max_len) or ground_output(full, findings, context, lang)
     if why:
         return Review(None, "empty_or_too_short" if why == "bad_response" else why)
-    return Review(text, None)
+    return Review(tidy(clean, max_sentences), None)
 
 
 def is_local_url(url: str | None) -> bool:

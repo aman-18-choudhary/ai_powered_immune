@@ -9,6 +9,7 @@ import pytest
 from svckit.llm_grounding import (
     ground_output,
     is_local_url,
+    repeats_scam_instruction,
     review_output,
     role_inversion,
     strip_invented,
@@ -44,6 +45,22 @@ MUST_REJECT = [
     "The fraudster is in digital arrest.",
     "Your money is safe. The caller is under 'digital arrest'.",  # second sentence
     "The callers are under digital arrest.",
+    # the mirror inversion: the listener given the caller's authority role (qwen2.5:0.5b in the
+    # Live Protection prompt, 2026-10-16: "You are from the CBI")
+    "You are from the CBI.",
+    "You are a police officer.",
+    "You are an officer from customs.",
+    # "claims to be" describes the caller himself (qwen2.5:0.5b, 2026-10-16)
+    "The caller claims to be under 'digital arrest' and is not to be contacted.",
+    "The officer pretends to be under investigation.",
+    # passive "be" + participle: the caller is the one acted upon
+    "The caller is advised to hang up the call.",
+    "The caller is warned not to pay.",
+    "The fraudster has been put in police custody.",
+    # the safety steps attributed to the caller (qwen2.5:0.5b, Live Protection, 2026-10-16)
+    "The caller advises you to hang up the call.",
+    "The caller advises you not to pay, transfer money or share any code.",
+    "The caller suggests calling your bank and reporting to the helpline.",
 ]
 
 MUST_PASS = [
@@ -63,7 +80,48 @@ MUST_PASS = [
     "The message says the person is under investigation.",
     "The caller keeps you under digital arrest on a video call.",
     "No agency can place you under digital arrest.",
+    "You are speaking to someone who claims to be from the CBI.",
+    "You are being threatened by a fake police officer.",
+    "You are told the caller is from the CBI.",
+    "The caller claims to be from the CBI.",
+    "The caller pretends to be a police officer.",
+    # perfect tense is active: the caller is the agent
+    "The caller has asked you to pay money.",
+    "The caller has claimed that you are under digital arrest.",
+    "The caller had threatened you with arrest.",
+    # an auxiliary binds only the words right after it
+    "The caller claimed to be from an authority and asked you to move money to a safe account.",
+    "The caller is from the bank and asked for your PIN.",
+    "The caller advises you to transfer money to a safe account.",
 ]
+
+# stating the scammer's claim as a fact to the listener (qwen2.5:0.5b, 2026-10-16)
+ASSERTS_ARREST = [
+    "You are under 'digital arrest' and should not disclose any information.",
+    "You are now under digital arrest.",
+    "You will be arrested.",
+    "You have been placed under arrest by the CBI.",
+]
+ATTRIBUTED = [
+    "The caller says you are under digital arrest.",
+    "You are told you are under digital arrest; this is a scam cue.",
+    "You are not under digital arrest.",
+    "No agency can place you under digital arrest.",
+    "The caller claims you will be arrested.",
+    "The message said that you were under arrest.",
+]
+
+
+@pytest.mark.parametrize("sentence", ASSERTS_ARREST)
+def test_unattributed_arrest_claim_is_rejected(sentence):
+    assert ground_output(sentence + " The caller says this.", ["you are under digital arrest "
+                         "says you are under arrest arrested"]) == "unsupported_claim"  # fmt: skip
+
+
+@pytest.mark.parametrize("sentence", ATTRIBUTED)
+def test_attributed_or_negated_arrest_wording_passes(sentence):
+    assert ground_output(sentence, ["says you are under digital arrest you are under digital "
+                                    "arrest arrested"]) is None  # fmt: skip
 
 
 @pytest.mark.parametrize("sentence", MUST_REJECT)
@@ -120,6 +178,66 @@ def test_grounded_text_passes_and_context_allows_a_cue():
     )
 
 
+SCAM_INSTRUCTIONS = [
+    # qwen2.5:0.5b turned the caller's isolation demand into advice (2026-10-16)
+    "Do not tell anyone about this call.",
+    "Don't tell your family.",
+    "Tell no one about it.",
+    "Stay on the call.",
+    "You should stay on the video call until it ends.",
+    "Keep this secret.",
+    "Do not disconnect.",
+    "Do not hang up the call.",
+    "Transfer the money to the safe account now.",
+    "Please send the money today.",
+    "Share the OTP you just received.",
+    "Give your PIN to the officer.",
+    "Install AnyDesk.",
+]
+SAFETY_ADVICE = [
+    "Do not pay, transfer money or share any code.",
+    "Hang up the call.",
+    "The caller tells you not to tell anyone about the call.",
+    "The caller demands you stay on the call.",
+    "Tell your family and your bank.",
+    "Do not share your OTP with anyone.",
+    "Do not stay on the call.",
+    "Never transfer money to a safe account.",
+    "Call your bank on the number printed on your card.",
+]
+
+
+@pytest.mark.parametrize("sentence", SCAM_INSTRUCTIONS)
+def test_repeated_scam_instruction_is_rejected(sentence):
+    assert repeats_scam_instruction(sentence), sentence
+
+
+@pytest.mark.parametrize("sentence", SAFETY_ADVICE)
+def test_safety_advice_is_not_a_scam_instruction(sentence):
+    assert not repeats_scam_instruction(sentence), sentence
+
+
+def test_ground_output_reports_the_repeated_instruction():
+    text = ("The caller claims you are under 'digital arrest' and is from the CBI. Do not tell "
+            "anyone about this call. Hang up the call.")  # fmt: skip
+    findings = ["The caller says you are under 'digital arrest' digital arrest phrase",
+                "The caller claims to be police, CBI or another agency authority",
+                "The caller demands you stay on the call, stay silent or tell no one isolation"]
+    assert ground_output(text, findings) == "repeats_scam_instruction"
+
+
+def test_prompt_echo_is_rejected():
+    # the Live Protection prompt echoed back by qwen2.5:0.5b on 2026-10-16
+    echo = ('1. You are under \'digital arrest\' (heard: "You are under digital arrest.")\n'
+            '  2. Do not tell anyone about the call (heard: "Do not tell anyone about this call.")')
+    findings = ["Says you are under 'digital arrest' You are under digital arrest.",
+                "Tells you not to tell anyone Do not tell anyone about this call."]  # fmt: skip
+    res = review_output(echo, "prompt " + echo, findings)
+    assert res.text is None and res.reason == "prompt_echo"
+    assert ground_output('The caller (the message says: "pay now") wants money now.',
+                         ["wants money"]) == "prompt_echo"  # fmt: skip
+
+
 def test_no_findings_means_only_cue_checks():
     assert ground_output("No scam cue was detected by the checks here.", []) is None
     assert ground_output("The caller threatened arrest.", []) == "ungrounded_indicator"
@@ -141,6 +259,14 @@ def test_validate_strip_tidy():
     assert tidy("1. First item here.\n2. Second item.\nFindings:\n- x") == (
         "First item here. Second item."
     )
+
+
+def test_review_checks_sentences_beyond_the_shown_ones():
+    ok = "The caller claimed authority and asked to move money to a safe account. "
+    bad = "The caller is under digital arrest."
+    res = review_output(ok * 1 + "Call for help now. Hang up the call now. " + bad, PROMPT,
+                        FINDINGS)  # fmt: skip
+    assert res.text is None and res.reason == "role_inversion"
 
 
 def test_review_output_pipeline():
