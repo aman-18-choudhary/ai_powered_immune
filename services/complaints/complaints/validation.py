@@ -333,3 +333,38 @@ class AnalyzeIn(BaseModel):
     def value(self, short: str) -> str | None:
         v = getattr(self, short)
         return v if v is not None else getattr(self, ANALYZE_ALIASES[short])
+
+
+EntityType = Literal["phone", "upi", "email", "url", "domain", "bank_account", "social_account"]
+
+
+class EntitySearchBody(BaseModel):
+    """POST /entities/search. The identifier travels in the body, never in the URL; it is
+    normalised like the complaint form does and never echoed in an error."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: EntityType
+    value: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2048)]
+    platform: _opt(50) = None  # type: ignore[valid-type]  # required for social_account
+    limit: Annotated[int, Field(ge=1, le=50)] = 20
+    offset: Annotated[int, Field(ge=0, le=10_000)] = 0
+
+
+class LinkReviewBody(BaseModel):
+    """POST /complaint-links/review: an investigator's decision about a pair of complaints."""
+
+    model_config = ConfigDict(extra="forbid")
+    complaint_a: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
+    ]
+    complaint_b: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
+    ]
+    decision: Literal["confirmed", "rejected"]
+    note: _opt(500, lambda v: _clean(v, multiline=True)) = None  # type: ignore[valid-type]
+
+    @model_validator(mode="after")
+    def _two_complaints(self) -> "LinkReviewBody":
+        if self.complaint_a == self.complaint_b:
+            raise ValueError("a link needs two different complaints")
+        return self

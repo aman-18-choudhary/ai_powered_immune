@@ -55,6 +55,8 @@ from .identity import (
     normalise_email,
 )
 from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited, file_outbox
+from .network_api import register_network_routes
+from .network_store import NetworkStore
 from .provenance import legacy_action, legacy_indicator, legacy_provenance
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
@@ -101,12 +103,13 @@ CAPABILITIES: dict[str, list[str]] = {
     "INVESTIGATOR": [
         "complaints:read_all", "complaints:update_status", "evidence:read_all",
         "analysis:run_all", "analysis:read_all", "analysis:stateless", "alerts:read_own",
-        "stats:read_own",
+        "stats:read_own", "network:read", "network:review",
     ],
     "ADMIN": [
         "complaints:read_all", "complaints:update_status", "evidence:read_all",
         "analysis:run_all", "analysis:read_all", "analysis:stateless", "alerts:read_own",
-        "stats:read_own", "admin:users", "admin:roles", "admin:audit", "admin:health",
+        "stats:read_own", "network:read", "network:review", "admin:users", "admin:roles",
+        "admin:audit", "admin:health",
     ],
 }  # fmt: skip
 
@@ -867,6 +870,11 @@ def create_app(
             raise ApiError(429, "rate_limited", "Too many requests. Try again shortly.",
                            {"Retry-After": str(wait)})  # fmt: skip
 
+    # complaint network (Phase 9): staff-only routes in network_api.py
+    register_network_routes(
+        app, network=NetworkStore(store), staff=StaffUser, throttle=throttle, now=now
+    )
+
     def session_payload(row: CurrentUser) -> dict[str, Any]:
         return {
             "user": {
@@ -1506,6 +1514,11 @@ def create_app(
         }
         for name in ("qdrant", "neo4j", "postgis", "redis"):
             out[name] = {"status": "not_configured"}
+        # complaint network queries run as SQL on the complaints database (Phase 9)
+        out["graph"] = {
+            "status": "sql", "backend": "sql", "neo4j": "not_configured",
+            "message": "sql (neo4j not configured)",
+        }  # fmt: skip
         if isinstance(analysis_service, ComplaintAnalysisPipeline):
             out["category_model"] = await analysis_service.category_health()
         else:
@@ -1547,6 +1560,10 @@ _CONFLICT_TEXT = {
     "role_conflict": "The user's role changed. Reload and try again.",
     "last_admin": "At least one active administrator must remain.",
     "target_email_not_verified": "The user has no verified email address.",
+    "link_no_relation": "These complaints share no identifier, so there is no link to review.",
+    "link_complaint_deleted": "One of these complaints has been deleted.",
+    "link_matching_disabled": "Linking is off for one of these complaints at the complainant's "
+    "request.",
 }
 
 
