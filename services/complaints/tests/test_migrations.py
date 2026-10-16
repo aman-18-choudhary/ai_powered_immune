@@ -179,3 +179,71 @@ def test_module_entry_point_migrates(tmp_path):
         timeout=120, check=False,
     )  # fmt: skip
     assert out2.returncode == 0 and "applied: none" in out2.stdout
+
+
+# ------------------------------------------------------------------ migration 9 (transcripts)
+def _transcript(st: ComplaintStore, eid: str = "e1", cid: str = "c1") -> None:
+    import datetime as dt
+
+    rec = {"evidence_id": eid, "status": "transcribed", "engine": "fake", "model": "m",
+           "language": "en", "duration_s": 1.0, "transcribed_s": 1.0, "truncated": False,
+           "segments": [{"start_s": 0.0, "end_s": 1.0, "text": "hello there"}]}  # fmt: skip
+    assert st.save_transcript(cid, rec, dt.datetime.now(dt.UTC)) is None
+
+
+def test_database_at_version_8_gets_the_transcripts_table(tmp_path):
+    url = _url(tmp_path)
+    _legacy_db(url, with_detail=True)
+    ComplaintStore(url).close()
+    eng = sa.create_engine(url)
+    with eng.begin() as c:  # back to the version 8 schema, data kept
+        c.execute(sa.text("DROP TABLE evidence_transcripts"))
+        c.execute(sa.text("DELETE FROM schema_migrations WHERE version = 9"))
+    eng.dispose()
+    assert "evidence_transcripts" not in _columns(url)
+    st = ComplaintStore(url, create_schema=False)
+    try:
+        assert st.migrate() == [9]
+        assert [e["id"] for e in st.list_evidence("c1")] == ["e1"]  # rows kept
+        _transcript(st)
+        assert st.list_transcripts("c1")["e1"]["segments"][0]["text"] == "hello there"
+        assert st.migrate() == []  # re-run keeps the transcript
+        assert "e1" in st.list_transcripts("c1")
+        with pytest.raises(sa.exc.IntegrityError), st.engine.begin() as c:
+            c.execute(sa.text("UPDATE evidence_transcripts SET status = 'bogus'"))
+    finally:
+        st.close()
+    assert _applied(url) == ALL
+    assert _expected()["evidence_transcripts"] <= _columns(url)["evidence_transcripts"]
+
+
+def test_pre_versioning_database_can_store_transcripts_after_the_upgrade(tmp_path):
+    # the SQLite evidence-table rebuild (migration 5) runs after the baseline created
+    # evidence_transcripts; its foreign key must still resolve to the rebuilt table
+    url = _url(tmp_path)
+    _legacy_db(url, with_detail=False)
+    st = ComplaintStore(url)
+    try:
+        import datetime as dt
+
+        _transcript(st)
+        first = st.list_transcripts("c1")["e1"]
+        # unique per evidence file: a second save returns the stored row instead of a duplicate
+        again = st.save_transcript("c1", {"evidence_id": "e1", "status": "decode_failed",
+                                          "reason": "x"}, dt.datetime.now(dt.UTC))  # fmt: skip
+        assert again is not None and again["id"] == first["id"] and again["status"] == "transcribed"
+    finally:
+        st.close()
+    eng = sa.create_engine(url)
+    try:
+        with eng.begin() as c:
+            if c.dialect.name == "sqlite":
+                c.execute(sa.text("PRAGMA foreign_keys=ON"))
+                assert c.execute(sa.text("PRAGMA foreign_key_check")).all() == []
+            with pytest.raises(sa.exc.IntegrityError):
+                c.execute(sa.text(
+                    "INSERT INTO evidence_transcripts (id, evidence_id, complaint_id, status, "
+                    "truncated, segments, created_at) VALUES ('t2', 'missing', 'c1', "
+                    "'transcribed', :f, '[]', '2026-01-01 00:00:00')"), {"f": False})  # fmt: skip
+    finally:
+        eng.dispose()

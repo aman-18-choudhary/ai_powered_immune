@@ -15,8 +15,10 @@ Vocabulary (``source``, fixed and small):
 ``url_heuristics``, ``entity_checks``, ``risk_formula``, ``explanation_template``,
 ``static_guidance_table``, ``ollama:<model>``). ``evidence`` points to where the output came
 from: a sentence-level span of the analysed text (offsets into the named field and a short
-snippet, never the whole text), a field name, or ``whole_text`` for a model that scores the text
-as a whole and cannot point to a span.
+snippet, never the whole text), a field name, ``whole_text`` for a model that scores the text
+as a whole and cannot point to a span, or ``evidence_transcript`` (field ``evidence_transcript``,
+the audio ``evidence_id``, ``start_s`` / ``end_s`` of the transcript segment and a snippet) for a
+cue found in the transcript of uploaded audio evidence.
 
 Rows stored before provenance existed get a provenance derived from what they recorded
 (``derived_from_legacy: true``); when nothing can be derived they are marked ``legacy``.
@@ -150,6 +152,116 @@ def tag_call_guard(
                 evidence=spans.get(r.code) or {"type": "text_span", "field": layout.field_label,
                                                "span": None, "note": "span not located"},
             )  # fmt: skip
+        out.append(ind)
+    return out
+
+
+# ------------------------------------------------------------------------- audio transcripts
+TRANSCRIPT_FIELD = "evidence_transcript"
+TRANSCRIPT_STAGE = "audio_transcript"
+
+
+class TranscriptLayout:
+    """The transcripts of the complaint's audio evidence as ONE text for the scorer (segments
+    joined by newlines, files in upload order, bounded to ``max_chars``), with a map from each
+    segment back to its evidence id and time range."""
+
+    def __init__(self, files: list[tuple[str, list[dict[str, Any]]]], max_chars: int) -> None:
+        self.pieces: list[tuple[int, int, str, float, float]] = []
+        self.evidence_ids: list[str] = []
+        self.truncated = False
+        chunks: list[str] = []
+        pos = 0
+        for eid, segments in files:
+            for seg in segments:
+                text = " ".join(str(seg.get("text", "")).split())
+                if not text:
+                    continue
+                sep = 1 if chunks else 0
+                if pos + sep + len(text) > max_chars:
+                    self.truncated = True
+                    break
+                if sep:
+                    chunks.append("\n")
+                    pos += 1
+                self.pieces.append(
+                    (pos, pos + len(text), eid, float(seg["start_s"]), float(seg["end_s"]))
+                )
+                chunks.append(text)
+                pos += len(text)
+                if eid not in self.evidence_ids:
+                    self.evidence_ids.append(eid)
+            if self.truncated:
+                break
+        self.text = "".join(chunks)
+
+    def pointer(self, i: int, j: int | None = None) -> dict[str, Any]:
+        """Evidence pointer for segment ``i`` (through ``j`` of the same file)."""
+        a, b, eid, start_s, end_s = self.pieces[i]
+        if j is not None:
+            b, end_s = self.pieces[j][1], self.pieces[j][4]
+        return {
+            "type": "evidence_transcript", "field": TRANSCRIPT_FIELD, "evidence_id": eid,
+            "start_s": start_s, "end_s": end_s, "snippet": snippet(self.text[a:b]),
+            "granularity": "segment",
+        }  # fmt: skip
+
+    def whole(self, note: str) -> dict[str, Any]:
+        one = self.evidence_ids[0] if len(self.evidence_ids) == 1 else None
+        return {"type": "evidence_transcript", "field": TRANSCRIPT_FIELD, "evidence_id": one,
+                "evidence_ids": list(self.evidence_ids), "start_s": None, "end_s": None,
+                "note": note}  # fmt: skip
+
+
+def locate_transcript_cues(layout: TranscriptLayout, codes: set[str]) -> dict[str, dict[str, Any]]:
+    """For each call-guard rule code, the first transcript segment in which the rules find it,
+    else the first pair of adjacent segments of the same file (a spoken sentence can span two)."""
+    if not codes:
+        return {}
+    try:
+        from call_guard.rules import analyse as rules_analyse
+    except Exception:
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    n = len(layout.pieces)
+    for width in (1, 2):
+        for i in range(n - width + 1):
+            if len(found) == len(codes):
+                return found
+            j = i + width - 1
+            if layout.pieces[i][2] != layout.pieces[j][2]:
+                continue
+            a, b = layout.pieces[i][0], layout.pieces[j][1]
+            try:
+                _, reasons, _ = rules_analyse(layout.text[a:b])
+            except Exception:
+                return found
+            for r in reasons:
+                if r.code in codes and r.code not in found:
+                    found[r.code] = layout.pointer(i, j if width > 1 else None)
+    return found
+
+
+def tag_transcript(
+    reasons: list[Any], layout: TranscriptLayout, text_version: str, humanise: Any
+) -> list[dict[str, Any]]:
+    codes = {r.code for r in reasons if r.code not in (CLASSIFIER_CODE, "NO_RISK_INDICATORS")}
+    spans = locate_transcript_cues(layout, codes)
+    out = []
+    for r in reasons:
+        if r.code == "NO_RISK_INDICATORS":
+            continue
+        ind: dict[str, Any] = {
+            "code": r.code, "weight": r.weight, "text": r.detail or humanise(r.code),
+            "stage": TRANSCRIPT_STAGE,
+        }  # fmt: skip
+        if r.code == CLASSIFIER_CODE:
+            ind.update(source="ml", method=classifier_method(text_version),
+                       evidence=layout.whole("the classifier scores the whole transcript; it "
+                                             "does not point to a segment"))  # fmt: skip
+        else:
+            ind.update(source="rule", method=RULES_METHOD,
+                       evidence=spans.get(r.code) or layout.whole("segment not located"))
         out.append(ind)
     return out
 

@@ -58,6 +58,7 @@ from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited, file_
 from .provenance import legacy_action, legacy_indicator, legacy_provenance
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
+from .transcribe import STATUS_TEXT, TRANSCRIBED, NoEngine, Transcriber, engine_from_env
 from .validation import (
     ANALYZE_ALIASES,
     BANK_FIELDS,
@@ -307,10 +308,29 @@ def _version_view(a: dict[str, Any]) -> dict[str, Any]:
     }  # fmt: skip
 
 
+# Rows written before audio evidence was transcribed (Phase 6) stored the inaccurate reason
+# "no_transcription_engine_installed" (faster-whisper was installed, just not wired to evidence).
+# They are shown with an accurate reason; the stored row itself is not changed.
+_LEGACY_AUDIO_REASON = "no_transcription_engine_installed"
+_LEGACY_AUDIO_TEXT = "audio transcription of evidence was not implemented when this analysis ran"
+
+
+def _legacy_audio(d: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    reasons = dict(d.get("capability_reasons") or {})
+    files = [dict(a) for a in d.get("unanalysed_attachments") or []]
+    if reasons.get("audio_transcription") == _LEGACY_AUDIO_REASON:
+        reasons["audio_transcription"] = "not_implemented_at_analysis_time"
+        for a in files:
+            if a.get("type") == "audio" and "status" not in a:
+                a.update(reason=_LEGACY_AUDIO_TEXT, status="not_implemented_at_analysis_time")
+    return reasons, files
+
+
 def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) -> dict[str, Any]:
     """Pipeline v2 fields; defaults for rows written by v1 (additive API fields only). Rows
     stored before provenance existed get a derived provenance (``derived_from_legacy``)."""
     d = d or {}
+    cap_reasons, unanalysed = _legacy_audio(d)
     prov = d.get("provenance")
     if prov is None and row is not None:
         prov = legacy_provenance(row)
@@ -328,9 +348,10 @@ def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) 
         "llm_model": d.get("llm_model"),
         "confidence_semantics": d.get("confidence_semantics"),
         "confidence_interpretation": conf_int,
-        "capability_reasons": d.get("capability_reasons") or {},
+        "capability_reasons": cap_reasons,
         "unavailable_capabilities": d.get("unavailable_capabilities") or [],
-        "unanalysed_attachments": d.get("unanalysed_attachments") or [],
+        "unanalysed_attachments": unanalysed,
+        "audio_transcription": d.get("audio_transcription") or [],
         "category_model": d.get("category_model"),
         "url_analysis": d.get("url_analysis"),
         "entity_checks": d.get("entity_checks"),
@@ -375,7 +396,15 @@ def _outcome_view(out: AnalysisOutcome, created_at: datetime) -> dict[str, Any]:
     }  # fmt: skip
 
 
-_PHASE_C = "planned for Phase C; this check takes text and the optional fields only"
+_AUDIO_HERE = (
+    "Audio recordings are analysed only when they are attached to a complaint: they are "
+    "transcribed locally when the complaint analysis runs. This check takes text and the "
+    "optional fields only."
+)
+_SCREENSHOT_HERE = (
+    "Screenshots are not analysed: no OCR engine is installed on this server. This check takes "
+    "text and the optional fields only."
+)
 
 
 def _input_capabilities(c: dict[str, Any], out: AnalysisOutcome) -> dict[str, Any]:
@@ -421,17 +450,79 @@ def _input_capabilities(c: dict[str, Any], out: AnalysisOutcome) -> dict[str, An
         out_caps[name] = {"status": "not_provided"} if not given(name) else {
             "status": "context_only", "note": "recorded as context; does not change the score",
         }  # fmt: skip
-    out_caps["audio"] = {"status": "unavailable", "reason": "audio transcription is " + _PHASE_C}
-    out_caps["screenshot"] = {"status": "unavailable", "reason": "screenshot OCR is " + _PHASE_C}
+    out_caps["audio"] = {"status": "not_accepted_here", "reason": _AUDIO_HERE,
+                         "where": "complaint_evidence"}  # fmt: skip
+    out_caps["screenshot"] = {"status": "unavailable", "reason": _SCREENSHOT_HERE,
+                              "cause": "no_ocr_engine_installed"}  # fmt: skip
     return out_caps
 
 
-def _evidence_view(e: dict[str, Any]) -> dict[str, Any]:
+def _kind(mime: str) -> str:
+    return (
+        "audio" if mime.startswith("audio/") else "image" if mime.startswith("image/")
+        else "document" if mime == "application/pdf" else "other"
+    )  # fmt: skip
+
+
+_NOT_YET = "not transcribed yet: audio evidence is transcribed when the complaint analysis runs"
+
+
+def _transcription_view(
+    e: dict[str, Any], row: dict[str, Any] | None, last: dict[str, Any] | None,
+    last_at: datetime | None,
+) -> dict[str, Any] | None:  # fmt: skip
+    """Transcription state of one audio file: the stored transcript, else the outcome of the
+    latest analysis run for this file (a transient reason such as a missing engine), else not
+    yet attempted. ``None`` for files that are not audio."""
+    if _kind(e["mime_type"]) != "audio":
+        return None
+    if row is not None:
+        st = row["status"]
+        return {
+            "status": st, "reason": row.get("error_reason") or st,
+            "message": STATUS_TEXT.get(st, st), "source": "stored",
+            "transcript_available": st in TRANSCRIBED, "engine": row.get("engine"),
+            "model": row.get("model"), "language": row.get("language"),
+            "duration_s": row.get("duration_s"), "transcribed_s": row.get("transcribed_s"),
+            "truncated": bool(row.get("truncated")), "segment_count": len(row["segments"]),
+            "checked_at": _iso(row.get("created_at")),
+        }  # fmt: skip
+    if last is not None:
+        st = last.get("status") or "not_attempted"
+        return {
+            "status": st, "reason": last.get("reason") or st,
+            "message": last.get("message") or STATUS_TEXT.get(st, st),
+            "source": "last_analysis", "transcript_available": False,
+            "engine": last.get("engine"), "model": last.get("model"), "language": None,
+            "duration_s": last.get("duration_s"), "transcribed_s": None, "truncated": False,
+            "segment_count": 0, "checked_at": _iso(last_at),
+        }  # fmt: skip
+    return {
+        "status": "not_attempted", "reason": "not_attempted", "message": _NOT_YET,
+        "source": "none", "transcript_available": False, "engine": None, "model": None,
+        "language": None, "duration_s": None, "transcribed_s": None, "truncated": False,
+        "segment_count": 0, "checked_at": None,
+    }  # fmt: skip
+
+
+def _evidence_view(
+    e: dict[str, Any],
+    transcripts: dict[str, dict[str, Any]] | None = None,
+    latest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    last_runs = {
+        a.get("evidence_id"): a
+        for a in ((latest or {}).get("detail") or {}).get("audio_transcription") or []
+    }
     return {
         "id": e["id"], "complaint_id": e["complaint_id"],
         "original_filename": e["original_filename"], "mime_type": e["mime_type"],
         "size_bytes": e["size_bytes"], "sha256": e["sha256"], "status": e["status"],
-        "created_at": _iso(e["created_at"]),
+        "created_at": _iso(e["created_at"]), "kind": _kind(e["mime_type"]),
+        "transcription": _transcription_view(
+            e, (transcripts or {}).get(e["id"]), last_runs.get(e["id"]),
+            (latest or {}).get("created_at"),
+        ),
     }  # fmt: skip
 
 
@@ -453,7 +544,12 @@ def create_app(
     clock: Callable[[], datetime] | None = None,
     backend_client: ClerkBackendClient | None = None,
     local_auth: LocalAuth | None = None,
+    stt_engine: Any = None,
+    transcriber: Transcriber | None = None,
 ) -> FastAPI:
+    """``stt_engine``: an already-built speech-to-text engine to share (the demo server passes
+    its live-audio engine so one model is in memory); default: ``LIVE_STT_ENGINE`` /
+    ``LIVE_STT_MODEL`` through live_audio, or none when the optional 'stt' extra is missing."""
     settings = settings or Settings.from_env()
     settings.validate()
     now = clock or (lambda: datetime.now(UTC))
@@ -496,6 +592,17 @@ def create_app(
     analysis_service: AnalysisService = analysis or ComplaintAnalysisPipeline(
         explainer=ollama_client
     )
+    if transcriber is None:
+        engine = None
+        if settings.stt_enabled:
+            engine = stt_engine if stt_engine is not None else engine_from_env()
+        transcriber = Transcriber(
+            engine or NoEngine("disabled_by_config"),
+            max_seconds=settings.stt_max_seconds_per_file,
+            max_files=settings.stt_max_files_per_run, budget_s=settings.stt_run_budget_s,
+            enabled=settings.stt_enabled,
+        )  # fmt: skip
+    stt = transcriber
 
     local_codes: LocalAuth | None = None
     if settings.local_auth_enabled:
@@ -835,6 +942,14 @@ def create_app(
         c = await asyncio.to_thread(store.get_complaint, complaint_id)
         return _own_or_404(user, c)
 
+    async def _evidence_views(
+        complaint_id: str, evidence: list[dict[str, Any]], latest: dict[str, Any] | None
+    ) -> list[dict[str, Any]]:
+        transcripts: dict[str, dict[str, Any]] = {}
+        if any(_kind(e["mime_type"]) == "audio" for e in evidence):
+            transcripts = await asyncio.to_thread(store.list_transcripts, complaint_id)
+        return [_evidence_view(e, transcripts, latest) for e in evidence]
+
     async def _detail(user: CurrentUser, c: dict[str, Any]) -> dict[str, Any]:
         history = await asyncio.to_thread(store.complaint_history, c["id"])
         latest = await asyncio.to_thread(store.latest_analysis, c["id"])
@@ -842,7 +957,7 @@ def create_app(
         return complaint_view(
             c, staff=user.staff, status_history=_history_view(history),
             latest_analysis=_analysis_summary(latest),
-            evidence=[_evidence_view(e) for e in evidence],
+            evidence=await _evidence_views(c["id"], evidence, latest),
         )  # fmt: skip
 
     def _time_checks(body: ComplaintIn) -> tuple[datetime | None, datetime | None]:
@@ -1008,14 +1123,45 @@ def create_app(
             raise
         if not created:  # the same bytes were already stored for this complaint: a retry
             await asyncio.to_thread(storage.remove, stored.storage_key)
-        return JSONResponse(_evidence_view(rec), status_code=201 if created else 200)
+        view = (await _evidence_views(complaint_id, [rec], None))[0]
+        return JSONResponse(view, status_code=201 if created else 200)
 
     @app.get("/complaints/{complaint_id}/evidence")
     async def list_evidence(complaint_id: str, user: User) -> dict[str, Any]:
         throttle("read", user)
         await _load(user, complaint_id)
         rows = await asyncio.to_thread(store.list_evidence, complaint_id)
-        return {"items": [_evidence_view(e) for e in rows]}
+        latest = await asyncio.to_thread(store.latest_analysis, complaint_id)
+        return {"items": await _evidence_views(complaint_id, rows, latest)}
+
+    @app.get("/complaints/{complaint_id}/evidence/{evidence_id}/transcript")
+    async def get_transcript(complaint_id: str, evidence_id: str, user: User) -> Response:
+        """The stored transcript of one audio evidence file (owner and staff; others 404)."""
+        throttle("read", user)
+        await _load(user, complaint_id)
+        ev = await asyncio.to_thread(store.get_evidence, complaint_id, evidence_id[:64])
+        if ev is None:
+            raise ApiError(404, "not_found", "Not found.")
+        if _kind(ev["mime_type"]) != "audio":
+            raise ApiError(404, "not_audio_evidence", "This evidence file is not audio.")
+        row = await asyncio.to_thread(store.get_transcript, complaint_id, ev["id"])
+        if row is None or row["status"] not in TRANSCRIBED:
+            latest = await asyncio.to_thread(store.latest_analysis, complaint_id)
+            view = _evidence_view(ev, {ev["id"]: row} if row else {}, latest)["transcription"]
+            return JSONResponse(
+                {"error": "transcript_not_available",
+                 "message": "No transcript is available for this file: " + view["message"] + ".",
+                 "transcription": view}, status_code=404,
+            )  # fmt: skip
+        return JSONResponse({
+            "evidence_id": ev["id"], "complaint_id": complaint_id, "status": row["status"],
+            "engine": row["engine"], "model": row["model"], "language": row["language"],
+            "duration_s": row["duration_s"], "transcribed_s": row["transcribed_s"],
+            "truncated": row["truncated"], "segments": row["segments"],
+            "created_at": _iso(row["created_at"]),
+            "note": "Machine transcription made locally; words can be misheard and time offsets "
+            "are approximate.",
+        })  # fmt: skip
 
     @app.delete("/complaints/{complaint_id}/evidence/{evidence_id}")
     async def delete_evidence(complaint_id: str, evidence_id: str, user: User) -> Response:
@@ -1064,11 +1210,28 @@ def create_app(
         throttle("analysis", user)
         c = await _load(user, complaint_id)
         files = await asyncio.to_thread(store.list_evidence, complaint_id)
+
+        def path_for(f: dict[str, Any]) -> Any:
+            try:
+                return storage.path_for(f["storage_key"])
+            except ValueError:
+                return storage.root / "missing"
+
+        async def load_existing() -> dict[str, dict[str, Any]]:
+            return await asyncio.to_thread(store.list_transcripts, complaint_id)
+
+        async def save(rec: dict[str, Any]) -> dict[str, Any] | None:
+            return await asyncio.to_thread(store.save_transcript, complaint_id, rec, now())
+
+        # audio evidence: transcribed once (synchronously, within the run's budget), reused after
+        transcripts = await stt.prepare(complaint_id, files, path_for, load_existing, save)
         out = await analysis_service.analyse(
             {
                 **c,
                 "evidence": [
-                    {"mime_type": e["mime_type"], "size_bytes": e["size_bytes"]} for e in files
+                    {"evidence_id": e["id"], "mime_type": e["mime_type"],
+                     "size_bytes": e["size_bytes"], "transcription": transcripts.get(e["id"])}
+                    for e in files
                 ],
             }  # fmt: skip
         )
@@ -1163,6 +1326,11 @@ def create_app(
             "llm": {
                 "provider": "ollama", **llm,
                 "used_for": "explanation wording only; never the score, level or category",
+            },
+            "stt": {
+                **await stt.health(),
+                "used_for": "transcribing uploaded audio evidence when a complaint analysis runs; "
+                "the transcript is scored by the same rules and classifier as the description",
             },
         }  # fmt: skip
 
@@ -1316,6 +1484,7 @@ def create_app(
             "status": await ollama_client.probe(),
             "model": ollama_client.model if ollama_client.configured else None,
         }
+        out["stt"] = await stt.health()
         return out
 
     # ------------------------------------------------------------------ middleware stack

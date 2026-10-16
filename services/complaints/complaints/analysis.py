@@ -211,10 +211,13 @@ class CallGuardTextAnalysis:
 # =============================================================================================
 PIPELINE_V2 = "complaints-analysis-v2"
 RISK_FORMULA = (
-    "risk = min(100, max(text_score, category_prior) + round(25 * noisy_or(url_indicator_weights)))"
-    "; text_score = round(100 * call-guard score); category_prior applies only when the category "
-    "model answered (not UNDETERMINED); terms of unavailable stages are left out; if the text "
-    "scorer did not run, a result that would be LOW is withheld (risk_score and risk_level null)"
+    "risk = min(100, max(text_score, transcript_score, category_prior) + round(25 * "
+    "noisy_or(url_indicator_weights))); text_score = round(100 * call-guard score of the title "
+    "and description); transcript_score = round(100 * call-guard score of the audio evidence "
+    "transcripts) when audio evidence was transcribed; category_prior applies only when the "
+    "category model answered (not UNDETERMINED); terms of unavailable stages are left out; if the "
+    "text scorer did not run or an audio file could not be transcribed, a result that would be "
+    "LOW is withheld (risk_score and risk_level null)"
 )
 BANDS_V2 = {"LOW": "0-34", "MEDIUM": "35-69", "HIGH": "70-89", "CRITICAL": "90-100"}
 CATEGORY_PRIOR: dict[str, int] = {
@@ -250,7 +253,13 @@ def stored_level(level: str | None) -> str | None:
 
 
 def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], set[str]]:
+    """Files whose content was NOT analysed: images and PDFs grouped by type, and each audio file
+    that has no transcript, with the precise reason (``complaints.transcribe.STATUS_TEXT``)."""
+    from .transcribe import STATUS_TEXT, TRANSCRIBED
+
     kinds: dict[tuple[str, str], int] = {}
+    seen: set[str] = set()
+    audio: list[dict[str, Any]] = []
     for e in evidence or []:
         mime = str(e.get("mime_type") or "unknown")[:60]
         kind = (
@@ -259,18 +268,52 @@ def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, 
             else "document" if mime == "application/pdf"
             else "other"
         )  # fmt: skip
+        seen.add(kind)
+        if kind == "audio":
+            st = (e.get("transcription") or {}).get("status") or "not_attempted"
+            if st not in TRANSCRIBED:
+                audio.append({
+                    "type": "audio", "mime_type": mime, "count": 1, "analysed": False,
+                    "reason": STATUS_TEXT.get(st, st), "status": st,
+                    "evidence_id": e.get("evidence_id"),
+                })  # fmt: skip
+            continue
         kinds[(kind, mime)] = kinds.get((kind, mime), 0) + 1
     reasons = {
-        "audio": "no speech-to-text engine is installed",
         "screenshot_or_image": "no OCR engine is installed",
         "document": "no document text extraction is implemented",
         "other": "this file type is not analysed",
     }
     out = [
         {"type": k, "mime_type": m, "count": n, "analysed": False, "reason": reasons[k]}
-        for (k, m), n in sorted(kinds.items())
-    ]
-    return out, {k for k, _ in kinds}
+        for (k, m), n in kinds.items()
+    ] + audio
+    out.sort(key=lambda x: (x["type"], x["mime_type"]))
+    return out, seen
+
+
+_STAGE_STATUS = {
+    "transcribed": "ran", "truncated": "ran", "engine_not_configured": "not_configured",
+    "model_not_available_offline": "unavailable", "timeout": "timeout",
+    "decode_failed": "error", "decode_unavailable": "unavailable",
+    "unsupported_format": "unavailable", "budget_exhausted": "skipped",
+    "not_attempted_limit": "skipped", "engine_error": "error", "not_attempted": "skipped",
+}  # fmt: skip
+
+
+def _audio_summary(e: dict[str, Any]) -> dict[str, Any]:
+    from .transcribe import STATUS_TEXT
+
+    tr = e.get("transcription") or {}
+    st = tr.get("status") or "not_attempted"
+    return {
+        "evidence_id": e.get("evidence_id"), "mime_type": e.get("mime_type"), "status": st,
+        "reason": tr.get("reason") or st, "message": STATUS_TEXT.get(st, st),
+        "engine": tr.get("engine"), "model": tr.get("model"), "language": tr.get("language"),
+        "duration_s": tr.get("duration_s"), "transcribed_s": tr.get("transcribed_s"),
+        "truncated": bool(tr.get("truncated")), "segment_count": len(tr.get("segments") or []),
+        "reused": bool(tr.get("reused")),
+    }  # fmt: skip
 
 
 class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
@@ -374,9 +417,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         stages: list[dict[str, Any]] = []
 
         def stage(name: str, source: str, method: str, status: str, reason: str | None = None,
-                  version: str | None = None) -> None:  # fmt: skip
+                  version: str | None = None, **extra: Any) -> None:  # fmt: skip
             stages.append({"stage": name, "source": source, "method": method, "status": status,
-                           "reason": reason, "version": version})  # fmt: skip
+                           "reason": reason, "version": version, **extra})  # fmt: skip
 
         # (a) text scam scoring (call-guard rules + clf-v1 script classifier)
         text_score: int | None = None
@@ -416,6 +459,54 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 versions["call_guard_classifier"] = text_version
                 stage("script_classifier", "ml", pv.classifier_method(text_version), "ran",
                       version=text_version)  # fmt: skip
+
+        # (a2) audio evidence transcripts (made by the API before this call; see
+        # complaints.transcribe): scored by the same call-guard scorer (rules + clf-v1) as the
+        # description; indicators point to the evidence id and the segment's time range
+        from .transcribe import TRANSCRIBED
+
+        audio_ev = [e for e in complaint.get("evidence") or []
+                    if str(e.get("mime_type") or "").startswith("audio/")]  # fmt: skip
+        tr_files = [
+            (str(e.get("evidence_id") or ""), list((e.get("transcription") or {}).get("segments")
+                                                   or []))
+            for e in audio_ev if (e.get("transcription") or {}).get("status") in TRANSCRIBED
+        ]  # fmt: skip
+        tlayout = pv.TranscriptLayout(tr_files, MAX_TEXT_CHARS) if tr_files else None
+        transcript_score: int | None = None
+        transcript_scoring: str | None = None  # ran | no_speech | skipped | unavailable
+        if tlayout is not None:
+            if not tlayout.text.strip():
+                transcript_scoring = "no_speech"
+            elif insufficient:
+                transcript_scoring = "skipped"
+            elif scorer is None:
+                transcript_scoring = "unavailable"
+                reasons["audio_transcript_scoring"] = reasons.get(
+                    "text_risk_scorer", "not_installed_or_not_loadable")
+            else:
+                try:
+                    t_score, t_rs, t_ver = await asyncio.to_thread(scorer.score_text, tlayout.text)
+                    transcript_score = max(0, min(100, round(float(t_score) * 100)))
+                    indicators += pv.tag_transcript(list(t_rs), tlayout, t_ver, _humanise)
+                    transcript_scoring = "ran"
+                except Exception as exc:
+                    log.warning("transcript scoring failed: %s", type(exc).__name__)
+                    transcript_scoring = "unavailable"
+                    reasons["audio_transcript_scoring"] = "scoring_error"
+        caps["audio_transcript_scoring"] = {
+            None: "skipped_no_input", "ran": "available", "no_speech": "skipped_no_input",
+            "skipped": SKIPPED_SHORT, "unavailable": "unavailable",
+        }[transcript_scoring]  # fmt: skip
+        if transcript_scoring == "no_speech":
+            reasons["audio_transcript_scoring"] = "no_speech_in_transcripts"
+        if tlayout is not None:
+            stage("transcript_scoring", "rule", pv.RULES_METHOD,
+                  {"ran": "ran", "unavailable": "unavailable"}.get(transcript_scoring or "",
+                                                                   "skipped"),
+                  None if transcript_scoring == "ran" else (
+                      reasons.get("audio_transcript_scoring") or transcript_scoring),
+                  version=rules_version if transcript_scoring == "ran" else None)  # fmt: skip
 
         # (b) category classification with abstention
         classification: str | None = None
@@ -493,15 +584,28 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         has_geo = ctx["geographic"]["present"]
         caps["geographic_context"] = "available" if has_geo else "skipped_no_input"
 
-        # (f) attachments: audio transcript / OCR are not available; list what was not analysed
+        # (f) attachments: audio is transcribed (per file, see above); OCR and document text are
+        # not available; list what was not analysed with the precise reason
         unanalysed, kinds = _attachments(complaint.get("evidence"))
-        caps["audio_transcription"] = "unavailable"
-        reasons["audio_transcription"] = "no_transcription_engine_installed"
+        audio_results = [_audio_summary(e) for e in audio_ev]
+        failed_audio = sorted({a["status"] for a in audio_results
+                               if a["status"] not in TRANSCRIBED})  # fmt: skip
+        if not audio_ev:
+            caps["audio_transcription"] = "skipped_no_input"
+            reasons["audio_transcription"] = "no_audio_evidence"
+        elif not failed_audio:
+            caps["audio_transcription"] = "available"
+        else:
+            caps["audio_transcription"] = "unavailable"
+            reasons["audio_transcription"] = (
+                failed_audio[0] if len(failed_audio) == 1 else "multiple_reasons"
+            )
+        audio_missing = bool(failed_audio) or transcript_scoring == "unavailable"
         caps["screenshot_ocr"] = "unavailable"
         reasons["screenshot_ocr"] = "no_ocr_engine_installed"
         caps["document_text_extraction"] = "unavailable"
         reasons["document_text_extraction"] = "not_implemented"
-        reasons["evidence_content_analysis"] = "no_engines_installed"
+        reasons["evidence_content_analysis"] = "audio_only_via_transcription"
 
         # (h) risk score
         weights = [float(i["weight"]) for i in indicators if i.get("stage") == "url_heuristics"]
@@ -512,21 +616,25 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         prior: int | None = None
         if classification and classification != "UNDETERMINED":
             prior = CATEGORY_PRIOR.get(classification)
-        bases = [b for b in (text_score, prior) if b is not None]
+        bases = [b for b in (text_score, transcript_score, prior) if b is not None]
         risk: int | None = None
         if bases or (url_analysis and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
         scored = (
             text_score is not None or prior is not None or classification is not None
-            or bool(weights)
+            or bool(weights) or transcript_score is not None
         )  # fmt: skip
         level: str | None = band_v2(risk) if risk is not None else None
         withheld = False
+        withheld_audio = False
         if insufficient:
             risk, level = None, None
         elif (text_score is None or cat_detail is None) and level in (None, "LOW"):
             # never LOW unless both core text stages (scorer and category model) ran
             risk, level, withheld = None, None, True
+        elif audio_missing and level in (None, "LOW"):
+            # never LOW while an uploaded recording could not be transcribed and scored
+            risk, level, withheld, withheld_audio = None, None, True, True
 
         # status: applicable stages that were not available are named
         applicable_failed: list[str] = []
@@ -535,8 +643,10 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 applicable_failed.append(cap)
         if url and caps["url_heuristics"] in UNAVAILABLE_STATES:
             applicable_failed.append("url_heuristics")
-        if "audio" in kinds:
+        if failed_audio:
             applicable_failed.append("audio_transcription")
+        if transcript_scoring == "unavailable":
+            applicable_failed.append("audio_transcript_scoring")
         if "screenshot_or_image" in kinds:
             applicable_failed.append("screenshot_ocr")
         if "document" in kinds:
@@ -555,6 +665,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "unavailable": [c.replace("_", " ") for c in applicable_failed],
             "category_model_version": versions["category"],
             "insufficient_input": insufficient,
+            "transcripts_scored": transcript_scoring == "ran",
+            "transcripts_no_speech": transcript_scoring == "no_speech",
         }  # fmt: skip
         parts = explanation_parts(facts)
         explanation = " ".join(p["text"] for p in parts)
@@ -629,12 +741,37 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "Location, amount and payment method are context only and do not change the score.",
             "Recommended actions are general static guidance, not a finding about this complaint.",
         ]
-        if withheld:
+        if withheld and not withheld_audio:
             limitations.append(
                 "No risk level is given because a core text stage (the text scorer or the "
                 "category model) did not run and the other evidence did not reach MEDIUM; this "
                 "is not a finding that the report is low risk."
             )
+        if withheld_audio:
+            limitations.append(
+                "No risk level is given because an uploaded audio recording could not be "
+                "transcribed and analysed and the other evidence did not reach MEDIUM; this is "
+                "not a finding that the report is low risk."
+            )
+        if tr_files:
+            used = sorted({f"{a['engine']}:{a['model']}" for a in audio_results
+                           if a["status"] in TRANSCRIBED and a["engine"]})  # fmt: skip
+            limitations.append(
+                "Audio evidence was transcribed locally (" + (", ".join(used) or "speech-to-text")
+                + "). Machine transcription can mishear words, especially Hindi and Hinglish "
+                "speech, so a cue can be missed or misread; time offsets are approximate."
+            )
+            cut = [a for a in audio_results if a["truncated"]]
+            if cut:
+                limitations.append(
+                    f"{len(cut)} recording(s) were transcribed only up to the per-file limit of "
+                    f"{cut[0]['transcribed_s']:g} s; the rest was not analysed."
+                )
+            if tlayout is not None and tlayout.truncated:
+                limitations.append(
+                    f"Only the first {MAX_TEXT_CHARS} characters of the audio transcripts were "
+                    "scored."
+                )
         if insufficient:
             limitations.append(
                 f"The text has fewer than {MIN_WORDS} words, so the text scorer and the category "
@@ -648,8 +785,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             )
         if unanalysed:
             limitations.append(
-                "Uploaded evidence files were not analysed; they are listed as unanalysed "
-                "attachments."
+                "Some uploaded evidence files were not analysed; they are listed as unanalysed "
+                "attachments with the reason."
             )
 
         guidance_cat = (
@@ -658,7 +795,13 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         )  # fmt: skip
         actions = pv.tag_guidance(static_guidance(guidance_cat, level), guidance_cat, level)
         stage("static_guidance", "static_guidance", pv.GUIDANCE_METHOD, "ran")
-        for cap in ("audio_transcription", "screenshot_ocr", "document_text_extraction"):
+        for a in audio_results:  # one stage per audio file
+            stage("audio_transcription", "ml",
+                  f"{a['engine']}:{a['model']}" if a["engine"] and a["model"] else
+                  "speech_to_text", _STAGE_STATUS.get(a["status"], "unavailable"),
+                  None if a["status"] == "transcribed" else a["status"], version=a["model"],
+                  evidence_id=a["evidence_id"], reused=a["reused"])  # fmt: skip
+        for cap in ("screenshot_ocr", "document_text_extraction"):
             if cap in applicable_failed:
                 stage(cap, "rule" if cap == "document_text_extraction" else "ml", cap,
                       "unavailable", reasons.get(cap))  # fmt: skip
@@ -666,10 +809,12 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "schema": pv.PROVENANCE_SCHEMA, "derived_from_legacy": False, "legacy": False,
             "pipeline": PIPELINE_V2, "stages": stages,
             "ran": [x["stage"] for x in stages if x["status"] == "ran"],
-            "unavailable": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
-                            if x["status"] in _NOT_RUN],
-            "skipped": [{"stage": x["stage"], "reason": x["reason"]} for x in stages
-                        if x["status"] == "skipped"],
+            "unavailable": [{"stage": x["stage"], "reason": x["reason"],
+                             **({"evidence_id": x["evidence_id"]} if "evidence_id" in x else {})}
+                            for x in stages if x["status"] in _NOT_RUN],
+            "skipped": [{"stage": x["stage"], "reason": x["reason"],
+                         **({"evidence_id": x["evidence_id"]} if "evidence_id" in x else {})}
+                        for x in stages if x["status"] == "skipped"],
             "model_versions": versions,
             "sources": list(pv.SOURCES),
         }  # fmt: skip
@@ -683,6 +828,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "capability_reasons": reasons,
             "unavailable_capabilities": sorted(set(applicable_failed)),
             "unanalysed_attachments": unanalysed,
+            "audio_transcription": audio_results,
             "category_model": cat_detail,
             "confidence_semantics": "model_confidence_uncalibrated" if confidence is not None
             else None,  # fmt: skip
@@ -693,7 +839,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "entity_checks": entities,
             "context": ctx,
             "score_components": {
-                "text_score": text_score, "category_prior": prior, "url_adjustment": adj,
+                "text_score": text_score, "transcript_score": transcript_score,
+                "category_prior": prior, "url_adjustment": adj,
                 "formula": RISK_FORMULA, "bands": BANDS_V2, "withheld": withheld,
                 "source": "rule", "method": "risk_formula",
             },

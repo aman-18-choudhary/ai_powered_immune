@@ -86,6 +86,12 @@ class Settings:
     ollama_url: str | None = None  # local Ollama server; None = LLM explanation not configured
     ollama_model: str = "qwen2.5:0.5b"  # qwen2.5:3b preferred when the hardware allows
     ollama_timeout_s: float = 8.0
+    # uploaded audio evidence transcription (complaints.transcribe; engine selected by the
+    # live-audio variables LIVE_STT_ENGINE / LIVE_STT_MODEL; needs the optional 'stt' extra)
+    stt_enabled: bool = True
+    stt_max_seconds_per_file: float = 180.0
+    stt_max_files_per_run: int = 2
+    stt_run_budget_s: float = 120.0
     # TEST ONLY: also append local sign-in codes to this file (end-to-end tests read it). Refused
     # in clerk mode; never set it outside an automated test run.
     local_auth_outbox: Path | None = None
@@ -131,6 +137,13 @@ class Settings:
             or None,
             ollama_model=(os.getenv("OLLAMA_MODEL") or "").strip() or "qwen2.5:0.5b",
             ollama_timeout_s=_float("OLLAMA_TIMEOUT_S", 8.0, 1.0, 120.0),
+            stt_enabled=(os.getenv("COMPLAINTS_STT_ENABLED") or "1").strip().lower()
+            not in ("0", "false", "no", "off"),
+            stt_max_seconds_per_file=_float(
+                "COMPLAINTS_STT_MAX_SECONDS_PER_FILE", 180.0, 5.0, 1800.0
+            ),
+            stt_max_files_per_run=_int("COMPLAINTS_STT_MAX_FILES_PER_RUN", 2, 0, 10),
+            stt_run_budget_s=_float("COMPLAINTS_STT_RUN_BUDGET_S", 120.0, 5.0, 900.0),
             local_auth_outbox=(
                 Path(os.environ["COMPLAINTS_LOCAL_AUTH_OUTBOX"].strip())
                 if (os.getenv("COMPLAINTS_LOCAL_AUTH_OUTBOX") or "").strip()

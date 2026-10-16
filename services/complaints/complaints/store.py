@@ -49,6 +49,7 @@ from .schema import (
     complaint_evidence,
     complaint_status_history,
     complaints,
+    evidence_transcripts,
     idempotency_keys,
     users,
 )
@@ -843,6 +844,9 @@ class ComplaintStore:
             )
             if res.rowcount != 1:
                 raise NotFound()
+            # the transcript is derived from the file and goes with it (same transaction)
+            et = evidence_transcripts
+            conn.execute(delete(et).where(et.c.evidence_id == evidence_id))
             self._audit(
                 conn, actor_id, "evidence_delete", cur["owner_user_id"],
                 {"complaint_id": complaint_id, "evidence_id": evidence_id, "status": "stored"},
@@ -875,6 +879,69 @@ class ComplaintStore:
                 )
             ).first()
         return {**dict(row._mapping), "created_at": _aware(row.created_at)} if row else None
+
+    # ------------------------------------------------------------------ transcripts
+    @staticmethod
+    def _transcript_row(row: Any) -> dict[str, Any]:
+        d = dict(row._mapping)
+        d["created_at"] = _aware(d["created_at"])
+        d["truncated"] = bool(d["truncated"])
+        d["segments"] = list(d.get("segments") or [])
+        return d
+
+    def list_transcripts(self, complaint_id: str) -> dict[str, dict[str, Any]]:
+        """Transcripts of the complaint's STORED evidence, by evidence id."""
+        with self.engine.connect() as c:
+            rows = c.execute(
+                select(evidence_transcripts)
+                .join(complaint_evidence,
+                      complaint_evidence.c.id == evidence_transcripts.c.evidence_id)
+                .where(evidence_transcripts.c.complaint_id == complaint_id,
+                       complaint_evidence.c.status == "stored")
+            ).all()  # fmt: skip
+        return {r.evidence_id: self._transcript_row(r) for r in rows}
+
+    def get_transcript(self, complaint_id: str, evidence_id: str) -> dict[str, Any] | None:
+        return self.list_transcripts(complaint_id).get(evidence_id)
+
+    def save_transcript(
+        self, complaint_id: str, rec: dict[str, Any], now: datetime
+    ) -> dict[str, Any] | None:
+        """Store a transcript once. Returns None when this call stored it, or the row that was
+        already there (written by a concurrent run). Nothing is stored for evidence that is no
+        longer ``stored`` (removed meanwhile)."""
+        values = {
+            "evidence_id": rec["evidence_id"], "complaint_id": complaint_id,
+            "status": rec["status"], "engine": rec.get("engine"), "model": rec.get("model"),
+            "language": rec.get("language"), "duration_s": rec.get("duration_s"),
+            "transcribed_s": rec.get("transcribed_s"), "truncated": bool(rec.get("truncated")),
+            "segments": list(rec.get("segments") or []),
+            "error_reason": None if rec["status"] in ("transcribed", "truncated")
+            else (rec.get("reason") or rec["status"])[:64],
+        }  # fmt: skip
+        try:
+            with self._tx() as conn:
+                ev = conn.execute(
+                    select(complaint_evidence.c.id).where(
+                        complaint_evidence.c.id == rec["evidence_id"],
+                        complaint_evidence.c.complaint_id == complaint_id,
+                        complaint_evidence.c.status == "stored",
+                    )
+                ).first()
+                if ev is None:
+                    return None
+                conn.execute(
+                    insert(evidence_transcripts).values(id=new_id(), created_at=now, **values)
+                )
+            return None
+        except IntegrityError:
+            with self.engine.connect() as c:
+                row = c.execute(
+                    select(evidence_transcripts).where(
+                        evidence_transcripts.c.evidence_id == rec["evidence_id"]
+                    )
+                ).first()
+            return self._transcript_row(row) if row else None
 
     # ------------------------------------------------------------------ analyses
     @staticmethod

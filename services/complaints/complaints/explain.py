@@ -303,6 +303,32 @@ def explanation_parts(facts: dict[str, Any]) -> list[dict[str, Any]]:
             "ml", str(i.get("method") or "call_guard.clf-v1"), type="indicators",
             codes=[i["code"]],
         ))  # fmt: skip
+    tr_ind = [i for i in inds if i.get("stage") == "audio_transcript"]
+    tr_rule = [i for i in tr_ind if i.get("source") == "rule"]
+    tr_ml = [i for i in tr_ind if i.get("source") == "ml"]
+    if tr_rule:
+        parts.append(_part(
+            "The audio recording matched: "
+            + "; ".join(f"{i['text']} ({_at(i.get('evidence') or {})})" for i in tr_rule[:5])
+            + ".", "rule", "call_guard.rules", type="indicators", field="evidence_transcript",
+            codes=[i["code"] for i in tr_rule[:5]],
+        ))  # fmt: skip
+    elif facts.get("transcripts_scored"):
+        parts.append(_part(
+            "The rules matched no specific scam cue in the audio transcript." if tr_ml
+            else "The audio transcript matched no specific scam cue.", "rule", "call_guard.rules",
+            type="indicators", field="evidence_transcript", codes=[],
+        ))  # fmt: skip
+    for i in tr_ml[:1]:
+        parts.append(_part(
+            "The script classifier found the audio transcript similar to known digital-arrest "
+            "call scripts.", "ml", str(i.get("method") or "call_guard.clf-v1"),
+            type="indicators", field="evidence_transcript", codes=[i["code"]],
+        ))  # fmt: skip
+    if facts.get("transcripts_no_speech"):
+        parts.append(_part("No speech was recognised in the uploaded audio.", "rule",
+                           "explanation_template", type="field",
+                           field="evidence_transcript"))  # fmt: skip
     cls = facts.get("classification")
     cat_method = str(facts.get("category_model_version") or "category-v1")
     if cls == "UNDETERMINED":
@@ -346,6 +372,17 @@ def explanation_parts(facts: dict[str, Any]) -> list[dict[str, Any]]:
         parts.append(_part("Not analysed: " + ", ".join(unavailable) + ".", "rule",
                            "pipeline_status", type="capabilities"))  # fmt: skip
     return parts
+
+
+def _clock(t: float) -> str:
+    t = max(0, int(t))
+    return f"{t // 60}:{t % 60:02d}"
+
+
+def _at(ev: dict[str, Any]) -> str:
+    if ev.get("start_s") is None:
+        return "position not located"
+    return f"at {_clock(ev['start_s'])}-{_clock(ev.get('end_s') or ev['start_s'])}"
 
 
 def rules_explanation(facts: dict[str, Any]) -> str:

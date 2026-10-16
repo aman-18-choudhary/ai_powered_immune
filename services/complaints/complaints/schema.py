@@ -13,6 +13,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -43,6 +44,9 @@ ANALYSIS_STATUSES = ("COMPLETED", "PARTIAL", "UNAVAILABLE", "INSUFFICIENT_INPUT"
 # CRITICAL: migration 6 widens the CHECK on an existing database (before it, CRITICAL was stored
 # as HIGH with the exact level in ``analyses.detail``; the migration backfills those rows)
 RISK_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+# migration 9: only definitive transcription outcomes are stored (transient ones such as a missing
+# engine or a timeout are reported per analysis run and retried; see complaints.transcribe)
+TRANSCRIPT_STATUSES = ("transcribed", "truncated", "decode_failed", "unsupported_format")
 
 
 def _in(col: str, values: tuple[str, ...]) -> str:
@@ -210,6 +214,30 @@ complaint_evidence = Table(
     CheckConstraint(_in("status", EVIDENCE_STATUSES), name="ck_evidence_status"),
     CheckConstraint("size_bytes >= 0", name="ck_evidence_size"),
     Index("ix_evidence_complaint", "complaint_id", "status"),
+)  # fmt: skip
+
+# migration 9: one transcript per stored audio evidence file (written once, reused by every later
+# analysis). Same access as the evidence (owner + staff); deleted with the evidence. Segment text
+# is user content: it is never logged.
+evidence_transcripts = Table(
+    "evidence_transcripts", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("evidence_id", String(36), ForeignKey("complaint_evidence.id", ondelete="RESTRICT"),
+           nullable=False, unique=True),
+    Column("complaint_id", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("engine", String(32)),
+    Column("model", String(64)),
+    Column("language", String(8)),
+    Column("duration_s", Float),
+    Column("transcribed_s", Float),
+    Column("truncated", Boolean, nullable=False, default=False),
+    Column("segments", JSON, nullable=False),  # [{start_s, end_s, text}]
+    Column("error_reason", String(64)),
+    Column("created_at", UTCDateTime, nullable=False),
+    CheckConstraint(_in("status", TRANSCRIPT_STATUSES), name="ck_transcript_status"),
+    Index("ix_transcripts_complaint", "complaint_id"),
 )  # fmt: skip
 
 analyses = Table(

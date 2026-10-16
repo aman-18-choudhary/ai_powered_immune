@@ -17,6 +17,11 @@ postgres = ["psycopg2-binary>=2.9"]
 # call-guard is the in-process text scorer used by the first AnalysisService; without it the
 # service still runs and reports analysis status UNAVAILABLE.
 analysis = ["call-guard", "scikit-learn", "joblib", "numpy"]
+# Transcription of uploaded audio evidence: the live-audio speech-to-text engine (faster-whisper,
+# which also brings PyAV for MP3 / OGG / M4A decoding) and numpy. Imported lazily: without it the
+# service runs and reports audio evidence as engine_not_configured. Opt-in like live-audio's own
+# 'stt' group (CI skips it).
+stt = ["live-audio[stt]", "numpy"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "cryptography>=42"]
 
 [tool.setuptools.packages.find]

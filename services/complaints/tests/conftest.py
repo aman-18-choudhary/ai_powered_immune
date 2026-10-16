@@ -19,6 +19,7 @@ from jwt.algorithms import RSAAlgorithm
 from complaints.analysis import CAPABILITIES_NONE, AnalysisOutcome
 from complaints.api import create_app
 from complaints.config import Settings
+from complaints.transcribe import NoEngine
 
 ISSUER = "https://clerk.test.example"
 AZP = "http://localhost:5173"
@@ -142,6 +143,8 @@ def make_app(settings, idp, analysis) -> Iterator[Callable[..., object]]:
     def _make(**kw):
         s = kw.pop("settings", settings)
         jwks = kw.pop("jwks", idp.jwks())
+        # no real speech-to-text in API tests unless a test passes an engine (mocked or real)
+        kw.setdefault("stt_engine", NoEngine("engine_disabled"))
         app = create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
         made.append(app)
         return app

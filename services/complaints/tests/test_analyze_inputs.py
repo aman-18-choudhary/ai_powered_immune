@@ -42,8 +42,12 @@ async def test_short_names_accepted_and_reported_per_input(app_cl, tok):
     assert ic["phone"]["status"] == "format_checked" and ic["email"]["status"] == "format_checked"
     assert ic["amount"]["status"] == "context_only"
     assert ic["payment_method"]["status"] == "context_only"
-    for k in ("audio", "screenshot"):
-        assert ic[k]["status"] == "unavailable" and ic[k]["reason"]
+    # audio is analysed only as complaint evidence (no claim that no engine exists)
+    assert ic["audio"]["status"] == "not_accepted_here"
+    assert "attached to a complaint" in ic["audio"]["reason"]
+    assert "no speech-to-text engine" not in ic["audio"]["reason"]
+    assert ic["screenshot"]["status"] == "unavailable"
+    assert "no OCR engine is installed" in ic["screenshot"]["reason"]
     url_ind = [i for i in a["indicators"] if i["stage"] == "url_heuristics"]
     assert url_ind and url_ind[0]["evidence"]["field"] == "url"
     fields = {c["evidence"]["field"] for c in a["entity_checks"]["checks"]}

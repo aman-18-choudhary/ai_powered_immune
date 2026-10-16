@@ -129,9 +129,11 @@ def _evidence_check_current(conn: Connection) -> bool:
 
 def _rebuild_sqlite_table(conn: Connection, name: str) -> None:
     """SQLite cannot alter a CHECK constraint: copy into a table created from the current
-    metadata, drop the old one, rename, recreate the indexes. Only used for tables that no other
-    table references (``complaint_evidence``, ``analyses``), so foreign keys stay valid; every row
-    and column value is kept."""
+    metadata, drop the old one, rename, recreate the indexes. Used for ``complaint_evidence`` and
+    ``analyses``; every row and column value is kept. ``evidence_transcripts`` (migration 9)
+    references ``complaint_evidence``: on a database old enough to need the evidence rebuild
+    (before migration 5) the baseline step has just created it empty, so the drop finds no child
+    rows, and SQLite resolves the reference by name again after the rename."""
     table = metadata.tables[name]
     tmp_name = f"{name}__migrating"
     scratch = MetaData()  # the referenced tables must exist in the copy for its foreign keys
@@ -216,6 +218,12 @@ def _alerts_risk_level(conn: Connection) -> None:
     add_column(conn, "alerts", "risk_level")
 
 
+def _evidence_transcripts(conn: Connection) -> None:
+    """Table ``evidence_transcripts`` (one row per transcribed audio evidence file)."""
+    metadata.tables["evidence_transcripts"].create(conn, checkfirst=True)
+    ensure_index(conn, "evidence_transcripts", "ix_transcripts_complaint")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -225,6 +233,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(6, "analyses_critical_level", _analyses_critical_level),
     Migration(7, "analyses_insufficient_input", _analyses_insufficient_input),
     Migration(8, "alerts_risk_level", _alerts_risk_level),
+    Migration(9, "evidence_transcripts", _evidence_transcripts),
 )
 LATEST = MIGRATIONS[-1].version
 
