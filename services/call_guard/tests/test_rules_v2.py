@@ -207,3 +207,25 @@ def test_awareness_texts_raise_no_new_class(text):
     new = {"UPI_PIN_TO_RECEIVE", "ADVANCE_FEE_DEMAND", "GUARANTEED_RETURNS", "SEXTORTION_THREAT",
            "ACCOUNT_BLOCK_THREAT", "REPORTED_SCAM_ENCOUNTER"}  # fmt: skip
     assert not (codes(text) & new), (text, codes(text))
+
+
+# ----------------------------------------------------------------------- batch 2 review probes
+# Found by adversarial probing during the batch 2 review (2026-10-18); each was a real mismatch.
+@pytest.mark.parametrize(("text", "absent"), [
+    ("PPF gives assured returns and interest is compounded daily.", "GUARANTEED_RETURNS"),
+    ("I applied for a job yesterday. Also, I need to pay the security deposit for my new flat "
+     "first.", "ADVANCE_FEE_DEMAND"),
+    ("Job fair on Sunday. Registration fee Rs 100 per candidate at the venue.", "ADVANCE_FEE_DEMAND"),
+    ("To start the course, pay the fee at the college office.", "ADVANCE_FEE_DEMAND"),
+    ("The private video of the wedding is ready. Pay the photographer Rs 5,000 or he won't send "
+     "it to the family.", "SEXTORTION_THREAT"),
+    ("I transferred money to my savings account, which is a secure account with high interest.",
+     "REPORTED_SCAM_ENCOUNTER"),
+])  # fmt: skip
+def test_review_hard_negatives(text, absent):
+    assert absent not in codes(text), text
+
+
+def test_exception_guard_sees_the_whole_sentence():
+    # the clause splitter cuts at "but", so "... anyone but me" must be judged on the sentence
+    assert "CREDENTIAL_ASK" in codes("Don't share the OTP with anyone but me.")

@@ -642,12 +642,14 @@ _JOB_CTX = _rx(
     r"घर बैठे",
     r"टास्क",
 )
+# fees that only exist to start work (a "registration" or "security" fee alone is too generic:
+# exams, job fairs and rentals have them), or any fee/deposit with a stated start/unlock purpose
 _FEE = _rx(
-    r"\b(?:registration|joining|security|activation|processing|training|onboarding|verification) (?:fee|fees|deposit|charges?|amount)\b",
-    r"\b(?:deposit|pay|bhej\w*|jama)\b.{0,40}\b(?:to (?:start|begin|join|activate|unlock)|first|pehle|upfront|before)\b",
-    r"\b(?:fee|fees|deposit)\b.{0,20}\b(?:pehle|first|upfront)\b",
-    r"पहले.{0,20}(?:फीस|जमा)",
-    r"(?:फीस|शुल्क).{0,20}पहले",
+    r"\b(?:joining|activation|onboarding|training|kit) (?:fee|fees|deposit|charges?|amount)\b",
+    r"\b(?:fee|fees|deposit|pay|bhej\w*|jama)\b.{0,50}\b(?:to (?:start|begin|join|activate|unlock)|shuru karne|start karne|activate karne)\b",
+    r"\b(?:to (?:start|begin|activate|unlock)|shuru karne|start karne|activate karne)\b.{0,50}\b(?:fee|fees|deposit|bhej\w*|jama)\b",
+    r"\b(?:registration|security|joining) (?:fee|fees|deposit)\b.{0,40}\b(?:pehle|upfront)\b",
+    r"(?:शुरू करने|एक्टिवेट).{0,30}(?:फीस|जमा)|(?:फीस|शुल्क).{0,30}(?:शुरू करने|एक्टिवेट)",
 )
 _WITHDRAW_FEE = _rx(
     r"\b(?:pay|deposit|bhar\w*|jama)\b.{0,40}\b(?:tax|fee|fees|charges?|commission|gst)\b.{0,40}\b(?:withdraw|release|unlock|nikal\w*)\b",
@@ -666,7 +668,9 @@ _UNREALISTIC = _rx(
     r"(?:[2-9]\d|\d{3,})\s*(?:%|प्रतिशत)",
     r"\b(?:double|triple|doguna|tiguna)\b",
     r"दोगुना|तिगुना",
-    r"\b(?:daily|per day|har din|roz)\b",
+    r"\b(?:returns?|profits?|income|munafa)\b.{0,20}\b(?:daily|per day|a day|har din|roz)\b",
+    r"\b(?:daily|per day|har din|roz)\b.{0,20}\b(?:returns?|profits?|income|munafa)\b",
+    r"\b\d+(?:\.\d+)?\s*(?:%|percent)\s*(?:daily|per day|a day|har din|roz)\b",
 )
 _DOUBLE_MONEY = _rx(
     r"\b(?:double|triple|doguna)\w*\b.{0,15}\b(?:your |apna |apne )?(?:money|investment|amount|paisa|paise|capital)\b.{0,20}\b(?:in|within|me|mein)\s+\d+\s*(?:days?|weeks?|months?|din|hafte|mahine)\b",
@@ -693,6 +697,7 @@ _LEAK = _rx(
     r"वायरल",
     r"\b(?:family|relatives|friends|contacts|everyone|parents|wife|husband|boss|colleagues)\b.{0,25}\b(?:will (?:see|get|receive|know|watch)|gets? (?:it|a copy))\b",
 )
+_LEAK_NEG = _rx(r"\b(?:won't|will not|wouldn't|would not|not|never|nahi|mat)\s*$")
 _CONDITION = _rx(
     r"\b(?:or else|otherwise|unless|or i will|or it|or we will|warna|nahi to|varna|if you (?:don't|do not|fail))\b",
     r"\b(?:pay|send|transfer|bhejo|bhejiye)\b.{0,25}\b(?:rs\.?|rupees|inr|₹|\d)",
@@ -735,7 +740,7 @@ _TACTIC = _rx(
     r"\bpolice uniform\b",
     r"\b(?:fake|so-called|supposed)\b.{0,15}\b(?:officer|cbi|police|inspector|rbi)\b",
     r"\bmoney laundering\b",
-    r"\b(?:safe|rbi|verification|secure)\s+account\b",
+    r"\b(?:safe|rbi|verification)\s+account\b",
     r"\bparcel\b.{0,40}\b(?:drugs|narcotics|mdma|contraband)\b",
     r"\bdrugs?\b.{0,40}\bparcel\b",
     r"\bparcel me drugs\b",
@@ -784,7 +789,13 @@ W_LEGAL_WEAK = 0.30
 
 
 def _effective_clauses(sentence: str) -> str:
-    kept = [c for c in _CLAUSE_SPLIT.split(sentence) if c.strip() and not _is_advisory(c)]
+    # the exception guard looks at the whole sentence: "... with anyone but me" is split at "but"
+    excepted = bool(_ADVISORY_EXCEPT.search(sentence))
+    kept = [
+        c
+        for c in _CLAUSE_SPLIT.split(sentence)
+        if c.strip() and not (_ADVISORY.search(c) and not excepted)
+    ]
     return " , ".join(kept)
 
 
@@ -836,13 +847,23 @@ def _message_cues(sentences: list[str]) -> dict[str, float]:
             out["UPI_PIN_TO_RECEIVE"] = _WEIGHT["UPI_PIN_TO_RECEIVE"]
         if _BLOCK_THREAT.search(s) and _KYC_ACTION.search(msg) and not _IN_PERSON.search(msg):
             out["ACCOUNT_BLOCK_THREAT"] = _WEIGHT["ACCOUNT_BLOCK_THREAT"]
-    if (_JOB_CTX.search(msg) and _FEE.search(msg)) or _WITHDRAW_FEE.search(msg):
+    job_fee = any(
+        _FEE.search(kept[i])
+        and any(_JOB_CTX.search(kept[j]) for j in (i - 1, i, i + 1) if 0 <= j < len(kept))
+        for i in range(len(kept))
+    )  # the job context must be in the same or an adjacent sentence
+    if job_fee or _WITHDRAW_FEE.search(msg):
         out["ADVANCE_FEE_DEMAND"] = _WEIGHT["ADVANCE_FEE_DEMAND"]
     if not _GUARANTEE_NEG.search(msg) and (
         (_GUARANTEE.search(msg) and _UNREALISTIC.search(msg)) or _DOUBLE_MONEY.search(msg)
     ):
         out["GUARANTEED_RETURNS"] = _WEIGHT["GUARANTEED_RETURNS"]
-    if _PRIVATE_MEDIA.search(msg) and _LEAK.search(msg) and _CONDITION.search(msg):
+    leak = [
+        m
+        for m in _LEAK.finditer(msg)
+        if not _LEAK_NEG.search(msg[max(0, m.start() - 15) : m.start()])
+    ]
+    if _PRIVATE_MEDIA.search(msg) and leak and _CONDITION.search(msg):
         out["SEXTORTION_THREAT"] = _WEIGHT["SEXTORTION_THREAT"]
     if _HARM.search(msg) and _TACTIC.search(msg):
         out["REPORTED_SCAM_ENCOUNTER"] = _WEIGHT["REPORTED_SCAM_ENCOUNTER"]
