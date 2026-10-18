@@ -294,6 +294,9 @@ def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
         "version": a["version"], "created_at": _iso(a["created_at"]), "status": a["status"],
         "risk_score": a["risk_score"], "risk_level": _effective_level(a),
         "score_semantics": SCORE_SEMANTICS,
+        # indicators_found | model_prediction_only | no_indicators_found | insufficient_evidence |
+        # not_assessed; None for analyses stored before 2026-10-18
+        "assessment": (a.get("detail") or {}).get("assessment"),
     }  # fmt: skip
 
 
@@ -342,6 +345,8 @@ def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) 
         parts = [{"text": row["explanation"], "source": "rule", "method": "explanation_template",
                   "derived_from_legacy": True}]  # fmt: skip
     return {
+        # None for analyses stored before the assessment existed (2026-10-18)
+        "assessment": d.get("assessment"),
         "explanation_source": d.get("explanation_source"),
         "explanation_parts": parts or [],
         "llm_explanation": d.get("llm_explanation"),

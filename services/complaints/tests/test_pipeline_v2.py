@@ -132,13 +132,18 @@ def test_bands_v2_and_stored_level_mapping():
     assert stored_level(None) is None
 
 
-async def test_score_is_max_of_text_and_prior_plus_url_adjustment():
+async def test_score_is_evidence_only_category_guess_not_added_plus_url_adjustment():
+    # accuracy audit 2026-10-17: the category guess used to raise the score (prior 70 -> HIGH)
     p = pipe(StubScorer(0.40), StubCategory("DIGITAL_ARREST", 0.6))
     out = await p.analyse(BARE)
-    assert out.risk_score == 70 and out.risk_level == "HIGH"  # max(40, prior 70), no URL
+    assert out.risk_score == 40 and out.risk_level == "MEDIUM"  # text only; no category prior
+    assert out.classification == "DIGITAL_ARREST"  # still reported, as a model guess
     c = out.extra["score_components"]
-    assert c["text_score"] == 40 and c["category_prior"] == 70 and c["url_adjustment"] == 0
+    assert c["text_score"] == 40 and c["category_prior"] is None
+    assert c["category_used_in_score"] is False and c["url_adjustment"] == 0
     assert out.extra["score_components"]["formula"].startswith("risk = ")
+    assert "category is a model guess and is NOT part of the score" in c["formula"]
+    assert any("not used in the risk score" in x for x in out.limitations)
     with_url = await p.analyse({**BARE, "suspicious_url": "http://sbi-kyc-login.example.top/x"})
     assert with_url.risk_score > out.risk_score
     assert with_url.extra["score_components"]["url_adjustment"] >= 1
@@ -156,7 +161,10 @@ async def test_abstention_gives_undetermined_with_confidence_and_no_prior():
     out = await pipe(StubScorer(0.1, ()), StubCategory("UPI_FRAUD", 0.10)).analyse(BARE)
     assert out.classification == "UNDETERMINED" and out.confidence == 0.1
     assert out.extra["score_components"]["category_prior"] is None
-    assert out.risk_score == 10 and out.risk_level == "LOW"
+    # the stub scores 0.1 with no reason: unexplained points are ignored and recorded (2026-10-18)
+    assert out.risk_score == 0 and out.risk_level == "LOW"
+    assert out.extra["score_components"]["unexplained_scores_ignored"] == {"text_score": 10}
+    assert out.extra["assessment"] == "no_indicators_found"
     assert out.capabilities["category_classifier"] == "available"
 
 
@@ -169,8 +177,10 @@ async def test_absent_fields_are_not_evidence_and_present_context_does_not_score
         "state": "Maharashtra", "upi_id": "ravi@okaxis", "payment_method": "UPI",
         "latitude": 18.5, "longitude": 73.8,
     })  # fmt: skip
-    assert bare.risk_score == full.risk_score == 20
+    # 0.2 from a stub with no reason is ignored; absent and present context change nothing
+    assert bare.risk_score == full.risk_score == 0
     assert bare.risk_level == full.risk_level == "LOW"
+    assert bare.extra["score_components"]["unexplained_scores_ignored"] == {"text_score": 20}
     assert bare.indicators == full.indicators
     assert bare.capabilities["url_heuristics"] == "skipped_no_input"
     assert bare.capabilities["entity_format_checks"] == "skipped_no_input"
@@ -214,9 +224,13 @@ async def test_scorer_unavailable_is_partial_and_never_low():
     assert out.classification == "OTHER"  # other stages continued
 
 
-async def test_scorer_unavailable_but_category_prior_reaches_medium_or_higher():
+async def test_scorer_unavailable_category_guess_alone_gives_no_level():
+    # before 2026-10-18 the category prior turned this into HIGH 70 with no evidence at all
     out = await broken_scorer_pipe(StubCategory("DIGITAL_ARREST", 0.7)).analyse(BARE)
-    assert out.status == "PARTIAL" and out.risk_level == "HIGH" and out.risk_score == 70
+    assert out.status == "PARTIAL"
+    assert out.risk_level is None and out.risk_score is None  # withheld, never LOW or HIGH
+    assert out.classification == "DIGITAL_ARREST"
+    assert out.extra["assessment"] == "not_assessed"
 
 
 async def test_scorer_raising_at_runtime_is_flagged_not_benign():

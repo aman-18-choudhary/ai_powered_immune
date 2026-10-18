@@ -160,9 +160,10 @@ async def test_analysis_authz(client, tok, inv):
 
 
 async def test_high_risk_alerts_owner_once_per_version(client, tok, inv, analysis):
+    rule = {"code": "DIGITAL_ARREST_PHRASE", "source": "rule", "weight": 0.69, "text": "x"}
     analysis.outcome = AnalysisOutcome(
         status="COMPLETED", pipeline_version="t", capabilities={}, risk_score=88, risk_level="HIGH",
-        indicators=[], recommended_actions=[], limitations=[],
+        indicators=[rule], recommended_actions=[], limitations=[],
     )  # fmt: skip
     c = await create(client, tok("a"))
     await client.post(f"/complaints/{c['id']}/analysis", headers=inv)  # run by investigator
@@ -175,6 +176,20 @@ async def test_high_risk_alerts_owner_once_per_version(client, tok, inv, analysi
     analysis.outcome = low
     await client.post(f"/complaints/{c['id']}/analysis", headers=tok("a"))
     assert len((await client.get("/alerts", headers=tok("a"))).json()["items"]) == 1
+
+
+async def test_no_alert_for_high_level_without_a_rule_based_indicator(client, tok, analysis):
+    # a level that rests on a model output alone must not alert the citizen (audit 2026-10-17)
+    ml_only = {"code": "SCRIPT_CLASSIFIER_MATCH", "source": "ml", "weight": 0.9, "text": "x"}
+    for inds in ([], [ml_only]):
+        analysis.outcome = AnalysisOutcome(
+            status="COMPLETED", pipeline_version="t", capabilities={}, risk_score=80,
+            risk_level="HIGH", indicators=inds, recommended_actions=[], limitations=[],
+        )  # fmt: skip
+        c = await create(client, tok("a"))
+        r = await client.post(f"/complaints/{c['id']}/analysis", headers=tok("a"))
+        assert r.status_code == 201
+    assert (await client.get("/alerts", headers=tok("a"))).json()["items"] == []
 
 
 async def test_unavailable_analysis_persists_without_level(client, tok, analysis):

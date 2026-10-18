@@ -1024,7 +1024,17 @@ class ComplaintStore:
             # and level: re-running the analysis does not repeat the alert (the complaint row is
             # locked above, so concurrent runs are serialised)
             level = rec.get("risk_level")
-            if level in ("HIGH", "CRITICAL") and rec.get("status") != "UNAVAILABLE":
+            # only for results backed by at least one rule-based indicator with its evidence:
+            # never for a level that rests on a model guess alone (accuracy audit, 2026-10-17)
+            rule_backed = any(
+                isinstance(i, dict) and i.get("source") == "rule"
+                for i in rec.get("indicators") or []
+            )
+            if (
+                level in ("HIGH", "CRITICAL")
+                and rec.get("status") not in ("UNAVAILABLE", "INSUFFICIENT_INPUT")
+                and rule_backed
+            ):
                 seen = conn.execute(
                     select(alerts.c.id).where(
                         alerts.c.user_id == cur["owner_user_id"],

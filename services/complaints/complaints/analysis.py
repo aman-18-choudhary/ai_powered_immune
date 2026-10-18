@@ -12,6 +12,7 @@ fails the status is UNAVAILABLE with no level (never LOW).
 """
 
 import asyncio
+import inspect
 import logging
 import re
 from collections.abc import Callable
@@ -116,6 +117,18 @@ def static_guidance(category: str | None, level: str | None) -> list[dict[str, s
     return [{"text": t, "source": "static_guidance"} for t in texts]
 
 
+def _has_reason(reasons: Any) -> bool:
+    return any(getattr(r, "code", None) not in (None, "NO_RISK_INDICATORS") for r in reasons)
+
+
+def _explained_score(scorer: Any, text: str) -> Any:
+    """call-guard score where every point has a listed reason (the classifier counts only when it
+    adds SCRIPT_CLASSIFIER_MATCH). Scorers without the option (test doubles) are called as is."""
+    if "require_explained" in inspect.signature(scorer.score_text).parameters:
+        return scorer.score_text(text, require_explained=True)
+    return scorer.score_text(text)
+
+
 def _humanise(code: str) -> str:
     return code.replace("_", " ").capitalize()
 
@@ -173,7 +186,7 @@ class CallGuardTextAnalysis:
             return self._unavailable(category)
         text = f"{complaint.get('title', '')}\n{complaint.get('description', '')}"[:MAX_TEXT_CHARS]
         try:
-            score, reasons, model_version = await asyncio.to_thread(scorer.score_text, text)
+            score, reasons, model_version = await asyncio.to_thread(_explained_score, scorer, text)
         except Exception as exc:
             log.warning("text scoring failed: %s", type(exc).__name__)
             return self._unavailable(category)
@@ -211,19 +224,16 @@ class CallGuardTextAnalysis:
 # =============================================================================================
 PIPELINE_V2 = "complaints-analysis-v2"
 RISK_FORMULA = (
-    "risk = min(100, max(text_score, transcript_score, category_prior) + round(25 * "
+    "risk = min(100, max(text_score, transcript_score) + round(25 * "
     "noisy_or(url_indicator_weights))); text_score = round(100 * call-guard score of the title "
-    "and description); transcript_score = round(100 * call-guard score of the audio evidence "
-    "transcripts) when audio evidence was transcribed; category_prior applies only when the "
-    "category model answered (not UNDETERMINED); terms of unavailable stages are left out; if the "
-    "text scorer did not run or an audio file could not be transcribed, a result that would be "
-    "LOW is withheld (risk_score and risk_level null)"
+    "and description, counting only scored parts with a listed reason); transcript_score = the "
+    "same for audio evidence transcripts when audio evidence was transcribed; the predicted "
+    "category is a model guess and is NOT part of the score; HIGH or CRITICAL needs at least one "
+    "rule-based indicator (a score from the ML classifier alone is capped at MEDIUM); terms of "
+    "unavailable stages are left out; if the text scorer did not run or an audio file could not be "
+    "transcribed, a result that would be LOW is withheld (risk_score and risk_level null)"
 )
 BANDS_V2 = {"LOW": "0-34", "MEDIUM": "35-69", "HIGH": "70-89", "CRITICAL": "90-100"}
-CATEGORY_PRIOR: dict[str, int] = {
-    "DIGITAL_ARREST": 70, "OTP_SCAM": 60, "UPI_FRAUD": 55, "PHISHING": 55,
-    "INVESTMENT_SCAM": 55, "BANK_FRAUD": 50, "JOB_SCAM": 50, "SOCIAL_MEDIA_FRAUD": 45, "OTHER": 0,
-}  # fmt: skip
 URL_ADJUSTMENT_MAX = 25
 UNAVAILABLE_STATES = ("unavailable", "timeout", "error", "rejected")
 _NOT_RUN = ("unavailable", "not_configured", "rejected", "timeout", "error")
@@ -422,6 +432,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                            "reason": reason, "version": version, **extra})  # fmt: skip
 
         # (a) text scam scoring (call-guard rules + clf-v1 script classifier)
+        unexplained: dict[str, int] = {}
         text_score: int | None = None
         text_version = "text-scorer-unavailable"
         scorer = None if insufficient else await self._get_scorer()
@@ -432,8 +443,11 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             reasons["text_risk_scorer"] = self._failed or "not_installed_or_not_loadable"
         else:
             try:
-                score, rs, text_version = await asyncio.to_thread(scorer.score_text, text)
+                score, rs, text_version = await asyncio.to_thread(_explained_score, scorer, text)
                 text_score = max(0, min(100, round(float(score) * 100)))
+                if text_score and not _has_reason(rs):
+                    # points without any listed reason do not count (defence in depth)
+                    unexplained["text_score"], text_score = text_score, 0
                 indicators += pv.tag_call_guard(list(rs), layout, text_version, _humanise)
                 caps["text_risk_scorer"] = "available"
             except Exception as exc:
@@ -486,8 +500,12 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                     "text_risk_scorer", "not_installed_or_not_loadable")
             else:
                 try:
-                    t_score, t_rs, t_ver = await asyncio.to_thread(scorer.score_text, tlayout.text)
+                    t_score, t_rs, t_ver = await asyncio.to_thread(
+                        _explained_score, scorer, tlayout.text
+                    )
                     transcript_score = max(0, min(100, round(float(t_score) * 100)))
+                    if transcript_score and not _has_reason(t_rs):
+                        unexplained["transcript_score"], transcript_score = transcript_score, 0
                     indicators += pv.tag_transcript(list(t_rs), tlayout, t_ver, _humanise)
                     transcript_scoring = "ran"
                 except Exception as exc:
@@ -621,18 +639,22 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         for w in weights:
             miss *= 1.0 - max(0.0, min(1.0, w))
         adj = round(URL_ADJUSTMENT_MAX * (1.0 - miss))
-        prior: int | None = None
-        if classification and classification != "UNDETERMINED":
-            prior = CATEGORY_PRIOR.get(classification)
-        bases = [b for b in (text_score, transcript_score, prior) if b is not None]
+        # the predicted category is shown separately as a model guess; it never adds to the score
+        # (accuracy audit 2026-10-17: a category guess alone produced HIGH for legitimate text)
+        bases = [b for b in (text_score, transcript_score) if b is not None]
         risk: int | None = None
         if bases or (url_analysis and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
         scored = (
-            text_score is not None or prior is not None or classification is not None
+            text_score is not None or classification is not None
             or bool(weights) or transcript_score is not None
         )  # fmt: skip
         level: str | None = band_v2(risk) if risk is not None else None
+        rule_backed = [i for i in indicators if i.get("source") == "rule"]
+        capped_model_only = False
+        if level in ("HIGH", "CRITICAL") and not rule_backed:
+            # a model score alone is a prediction, not evidence enough for HIGH/CRITICAL
+            risk, level, capped_model_only = min(risk or 0, 69), "MEDIUM", True
         withheld = False
         withheld_audio = False
         if insufficient:
@@ -736,7 +758,36 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         if status in ("UNAVAILABLE", "INSUFFICIENT_INPUT"):
             risk, level = None, None
 
+        # what the result can and cannot say (shown instead of a bare level)
+        evidence_ind = [i for i in indicators if i.get("source") in ("rule", "ml")]
+        if status == "INSUFFICIENT_INPUT":
+            assessment = "insufficient_evidence"
+        elif status == "UNAVAILABLE" or level is None:
+            assessment = "not_assessed"
+        elif not evidence_ind:
+            assessment = "no_indicators_found"
+        elif not rule_backed:
+            assessment = "model_prediction_only"
+        else:
+            assessment = "indicators_found"
+
         # limitations (exact, no overclaims)
+        if assessment == "no_indicators_found":
+            limitations.append(
+                "No scam indicators were found by the rules and models that ran. This is not a "
+                "finding that the message or event is safe: these checks cover a limited set of "
+                "scam patterns."
+            )
+        if assessment == "model_prediction_only" or capped_model_only:
+            limitations.append(
+                "The score comes from a machine-learning model only, with no rule-based indicator; "
+                "it is a prediction, not evidence, and is capped at MEDIUM."
+            )
+        if classification and classification not in ("UNDETERMINED", "OTHER"):
+            limitations.append(
+                "The predicted category is a model guess (trained on synthetic data); it is not "
+                "evidence and is not used in the risk score."
+            )
         limitations += [
             "The risk score is an uncalibrated heuristic ordering, not a likelihood. Formula: "
             + RISK_FORMULA
@@ -837,6 +888,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         }  # fmt: skip
         detail = {
             "analysis_schema": 2,
+            "assessment": assessment,
             "risk_level": level,
             "explanation_source": "rules",
             "explanation_parts": parts,
@@ -857,7 +909,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "context": ctx,
             "score_components": {
                 "text_score": text_score, "transcript_score": transcript_score,
-                "category_prior": prior, "url_adjustment": adj,
+                "category_prior": None, "category_used_in_score": False,
+                "unexplained_scores_ignored": unexplained,
+                "capped_model_only": capped_model_only, "url_adjustment": adj,
                 "formula": RISK_FORMULA, "bands": BANDS_V2, "withheld": withheld,
                 "source": "rule", "method": "risk_formula",
             },
