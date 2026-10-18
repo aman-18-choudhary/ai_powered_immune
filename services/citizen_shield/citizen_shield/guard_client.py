@@ -63,7 +63,10 @@ class CallGuardClient:
         return self._now() < self._open_until
 
     async def _post(self, text: str) -> bytes:
-        async with self._http.stream("POST", "/score", json={"message": text}) as r:
+        # every scored point must have a listed reason: a verdict without one is not shown
+        # (accuracy review 2026-10-18; the console checker does the same in process)
+        body = {"message": text, "require_explained": True}
+        async with self._http.stream("POST", "/score", json=body) as r:
             if r.status_code != 200:
                 raise GuardDown(f"status {r.status_code}")
             chunks: list[bytes] = []

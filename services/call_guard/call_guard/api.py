@@ -28,6 +28,9 @@ class ScoreRequest(BaseModel):
     # accepted for forward compatibility; currently ignored (rules and classifier are
     # script-agnostic)
     lang: str | None = Field(default=None, max_length=16)
+    # real-input callers (citizen-shield) ask that every scored point has a listed reason; the
+    # default keeps the simulator's behaviour (accuracy review 2026-10-18)
+    require_explained: bool = False
 
     @field_validator("message")
     @classmethod
@@ -113,7 +116,9 @@ def create_app(
 
     @app.post("/score", response_model=ScoreResponse)
     async def score(req: ScoreRequest) -> ScoreResponse:
-        s, reasons, version = scorer.score_text(req.message)
+        s, reasons, version = scorer.score_text(
+            req.message, require_explained=req.require_explained
+        )
         log.info("score=%.3f len=%d", s, len(req.message))
         return ScoreResponse(score=s, reasons=reasons, model_version=version)
 

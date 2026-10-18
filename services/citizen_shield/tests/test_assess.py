@@ -213,3 +213,33 @@ async def test_unknown_reason_code_uses_generic_text(make_app):
     from citizen_shield.texts import GENERIC_REASON
 
     assert r["reasons"] == [{"code": "FUTURE_CODE", "text": GENERIC_REASON["ta"], "weight": 0.5}]
+
+
+SEXTORTION = ("I have recorded your private video call. Pay 20000 rupees in 2 hours or I will "
+              "send it to all your contacts and family.")  # fmt: skip
+
+
+async def test_no_verdict_above_no_indicators_without_a_listed_reason(make_app):
+    # review 2026-10-18: through HTTP call-guard this text was 'suspicious' (0.40) with no reason
+    # at all; the console checker said 'no_indicators_found'. Both now score explained points only.
+    async with client(make_app()) as c:
+        r = await post(c, message=SEXTORTION)
+    assert r["label"] == "no_indicators_found" and r["score"] == 0.0
+    for text in (SCAM, BENIGN, SEXTORTION):
+        async with client(make_app()) as c:
+            v = await post(c, message=text)
+        if v["label"] in ("suspicious", "likely_scam"):
+            assert [x for x in v["reasons"] if x["code"] != "NO_RISK_INDICATORS"], (text, v)
+
+
+async def test_the_client_asks_call_guard_for_explained_scores_only():
+    seen = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"score": 0.0, "reasons": [], "model_version": "t"})
+
+    guard = CallGuardClient("http://cg", transport=httpx.MockTransport(handler))
+    await guard.score("hello there friend")
+    await guard.aclose()
+    assert seen == [{"message": "hello there friend", "require_explained": True}]

@@ -71,3 +71,14 @@ async def test_metrics_fallback_gauge():
         assert "call_guard_fallback_mode 1" in text
         body = (await c.get("/readyz")).json()
         assert body["model_version"] == "rules-v1" and body["fallback_mode"] == "true"
+
+
+async def test_score_require_explained_drops_unexplained_classifier_points(client):
+    # review 2026-10-18: the HTTP API now offers the explained-only scoring used in process
+    msg = ("I have recorded your private video call. Pay 20000 rupees in 2 hours or I will send "
+           "it to all your contacts and family.")  # fmt: skip
+    default = (await client.post("/score", json={"message": msg})).json()
+    explained = (await client.post("/score", json={"message": msg, "require_explained": True})).json()
+    assert default["score"] == 0.4  # unchanged default (simulator callers)
+    assert explained["score"] == 0.0
+    assert [r["code"] for r in explained["reasons"]] == ["NO_RISK_INDICATORS"]
