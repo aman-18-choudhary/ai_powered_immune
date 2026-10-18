@@ -41,7 +41,19 @@ async def test_runs_list_marks_superseded_and_final_status(tmp_path):
 
 
 # ---- 7: rate limit keyed by client ip for citizens
-def test_relogin_does_not_reset_citizen_bucket(app_factory):
+def test_relogin_does_not_reset_citizen_bucket(app_factory, monkeypatch):
+    # The limiter's windows are aligned to the wall clock (60 s); on the real clock these 35
+    # requests can straddle a minute boundary, the count restarts and no 429 comes. Pin the clock
+    # inside one window so the test checks the bucket, not the time of day.
+    import demo_server.api as api
+    from demo_server.security import RateLimiter
+
+    mid_window = 6_000_000 * 60 + 10.0
+    monkeypatch.setattr(
+        api,
+        "RateLimiter",
+        lambda limits, window: RateLimiter(limits, window, clock=lambda: mid_window),
+    )
     with TestClient(app_factory()) as c:
         codes = []
         h: dict[str, str] = {}
