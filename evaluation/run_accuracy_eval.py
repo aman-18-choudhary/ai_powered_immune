@@ -110,18 +110,33 @@ async def run_pipeline(cases: list[dict]) -> list[dict]:
 
 
 async def run_citizen(cases: list[dict]) -> list[dict]:
+    """Both citizen checkers through their real code paths: the console's (demo_server.citizen,
+    in-process scorer) and the Docker stack's (citizen_shield.assess -> CallGuardClient -> HTTP
+    POST /score of the real call-guard app, served in-process through httpx's ASGI transport).
+    Until 2026-10-18 the stack column was approximated with policy.label_for on the score; that
+    approximation skipped the service's own logic and is no longer used."""
+    import httpx
+    from call_guard.api import create_app
     from call_guard.model import Scorer, load_classifier
-    from citizen_shield.policy import label_for
+    from citizen_shield.assess import assess as stack_assess
+    from citizen_shield.guard_client import CallGuardClient
     from demo_server.citizen import assess
 
     scorer = Scorer(load_classifier())
+    guard = CallGuardClient("http://call-guard", timeout_s=30.0,
+                            transport=httpx.ASGITransport(app=create_app(scorer)))
     out = []
-    for c in cases:
-        a = await assess(scorer, c["text"], "en")
-        stack_score = scorer.score_text(c["text"])[0] if c["text"].strip() else 0.0
-        out.append({"id": c["id"], "expected_label": c["expected_label"],
-                    "console_label": a.label, "console_score": round(float(a.score), 4),
-                    "stack_label": label_for(stack_score) if c["text"].strip() else "blank"})
+    try:
+        for c in cases:
+            a = await assess(scorer, c["text"], "en")
+            s = await stack_assess(guard, c["text"], "en")
+            out.append({"id": c["id"], "expected_label": c["expected_label"],
+                        "console_label": a.label, "console_score": round(float(a.score), 4),
+                        "console_reasons": [r["code"] for r in a.reasons],
+                        "stack_label": s.label, "stack_score": round(float(s.score), 4),
+                        "stack_reasons": [r["code"] for r in s.reasons]})
+    finally:
+        await guard.aclose()
     return out
 
 
@@ -160,6 +175,13 @@ def summarise(pipe_rows: list[dict], cit_rows: list[dict]) -> dict:
                                           if c["expected_label"] == "legit" and c["console_label"] == "likely_scam"],
         "citizen_stack_safe_on_scam": [c["id"] for c in cit_rows
                                        if c["expected_label"] == "scam" and c["stack_label"] in safe_words],
+        # added 2026-10-18 (review): a warning verdict must list at least one real reason
+        "citizen_verdicts_without_reason": [
+            f"{c['id']}:{side}" for c in cit_rows for side in ("console", "stack")
+            if c[f"{side}_label"] in ("suspicious", "likely_scam")
+            and not [x for x in c.get(f"{side}_reasons", []) if x != "NO_RISK_INDICATORS"]],
+        "citizen_checkers_disagree": [c["id"] for c in cit_rows
+                                      if c["console_label"] != c["stack_label"]],
     }
 
 
