@@ -112,11 +112,11 @@ export default function Profile() {
                   Allow my complaints to be used for case matching
                 </label>
                 <p id="allow-matching-hint" className="text-muted">
-                  When on, details of your complaints may later be compared with other complaints to find the same scammers (for example a shared
-                  phone number or UPI ID). When off, your complaints are to be left out of matching shown to others. Investigators can still read your
-                  complaints either way.
+                  When on, investigators can see that one of your complaints shares an exact detail with another complaint (for example the same phone
+                  number or UPI ID). When off, your complaints are left out of all links, network views, clusters and identifier searches, and are not
+                  counted in them. Investigators can still read your complaints either way.
                 </p>
-                <p className="text-xs text-subtle">The setting is saved now; matching itself is not built yet and will honour it when it is.</p>
+                <p className="text-xs text-subtle">The change takes effect immediately, including for your existing complaints.</p>
               </div>
               <div className="flex items-center gap-2 pt-1">
                 {saving === "privacy" && <Spinner />}
