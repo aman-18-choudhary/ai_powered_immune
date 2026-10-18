@@ -26,6 +26,12 @@ Definitions (stable across versions so before/after runs are comparable):
 * prior-only flag = a flagged result whose score equals a category prior and exceeds every
   evidence-derived score component (only meaningful while the category prior exists).
 * citizen "safe" on scam = the citizen checker labelled a scam case "safe".
+* dataset v2 adds: expected_label "ambiguous" (scored only by "never HIGH/CRITICAL"), per-category
+  scam recall, per-language and per-kind binary metrics (scam vs legitimate cases only), a
+  confusion matrix of expected label vs result bucket (high_or_critical, medium,
+  low_with_indicators, no_indicators, insufficient, not_assessed), and URL findings for cases
+  whose text contains a link. Denominators: binary metrics use scam + legitimate cases only;
+  insufficient and ambiguous cases are reported separately.
 """
 
 from __future__ import annotations
@@ -74,6 +80,19 @@ def binary_metrics(rows: list[dict], flag_key: str) -> dict:
             "false_negative_ids": [r["id"] for r in rows if r["expected_label"] == "scam" and not r[flag_key]]}
 
 
+def _bucket(status: str, level: str | None, ind: list[dict]) -> str:
+    """One label per result for confusion matrices (added for dataset v2, 2026-10-18)."""
+    if status == "INSUFFICIENT_INPUT":
+        return "insufficient"
+    if level is None:
+        return "not_assessed"
+    if level in STRONG:
+        return "high_or_critical"
+    if level == "MEDIUM":
+        return "medium"
+    return "low_with_indicators" if ind else "no_indicators"
+
+
 async def run_pipeline(cases: list[dict]) -> list[dict]:
     from complaints.analysis import ComplaintAnalysisPipeline
 
@@ -100,6 +119,9 @@ async def run_pipeline(cases: list[dict]) -> list[dict]:
             "assessment": r.extra.get("assessment"), "indicators": ind,
             "rule_backed_indicators": rule_backed, "ml_indicators": ml,
             "flagged": flagged, "strong_flag": level in STRONG,
+            "kind": c.get("kind"), "has_url": c.get("has_url", False),
+            "url_indicators": sum(1 for i in r.indicators if i.get("stage") == "url_heuristics"),
+            "result_bucket": _bucket(r.status, level, ind),
             "unsupported_flag": bool(flagged and rule_backed == 0 and ml == 0),
             "prior_only_flag": prior_only,
             "score_components": {k: comp.get(k) for k in
@@ -149,6 +171,22 @@ def summarise(pipe_rows: list[dict], cit_rows: list[dict]) -> dict:
         by_lang[lang] = {"n": len(sub), **{k: v for k, v in binary_metrics(sub, "flagged").items()
                                            if not k.endswith("_ids")}}
     scams = [r for r in labelled if r["expected_label"] == "scam"]
+    buckets = ("high_or_critical", "medium", "low_with_indicators", "no_indicators", "insufficient",
+               "not_assessed")
+    confusion = {lab: {b: sum(1 for r in pipe_rows if r["expected_label"] == lab and r["result_bucket"] == b)
+                       for b in buckets}
+                 for lab in sorted({r["expected_label"] for r in pipe_rows})}
+    per_category = {}
+    for cat in sorted({r["expected_category"] for r in scams if r["expected_category"]}):
+        sub = [r for r in scams if r["expected_category"] == cat]
+        per_category[cat] = {"n": len(sub), "flagged_medium_plus": sum(r["flagged"] for r in sub),
+                             "missed_ids": [r["id"] for r in sub if not r["flagged"]]}
+    per_kind = {}
+    for kind in sorted({r.get("kind") or "unspecified" for r in labelled}):
+        sub = [r for r in labelled if (r.get("kind") or "unspecified") == kind]
+        per_kind[kind] = {"n": len(sub), **{k: v for k, v in binary_metrics(sub, "flagged").items()
+                                            if not k.endswith("_ids")}}
+    ambiguous = [r for r in pipe_rows if r["expected_label"] == "ambiguous"]
     safe_words = {"safe"}
     return {
         "n_cases": len(pipe_rows), "n_scam": len(scams),
@@ -157,6 +195,11 @@ def summarise(pipe_rows: list[dict], cit_rows: list[dict]) -> dict:
         "pipeline_flagged_medium_plus": binary_metrics(labelled, "flagged"),
         "pipeline_strong_flag_high_plus": binary_metrics(labelled, "strong_flag"),
         "pipeline_by_language_medium_plus": by_lang,
+        "pipeline_by_kind_medium_plus": per_kind,
+        "pipeline_scam_recall_by_category_medium_plus": per_category,
+        "confusion_expected_label_vs_result": confusion,
+        "ambiguous_with_high_or_critical": [r["id"] for r in ambiguous if r["strong_flag"]],
+        "url_cases_with_url_findings": {r["id"]: r["url_indicators"] for r in pipe_rows if r.get("has_url")},
         "unsupported_flags": [r["id"] for r in pipe_rows if r["unsupported_flag"]],
         "prior_only_flags": [r["id"] for r in pipe_rows if r["prior_only_flag"]],
         "flags_without_rule_backed_indicator": [r["id"] for r in pipe_rows
@@ -191,7 +234,7 @@ async def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--label", default="run")
     args = ap.parse_args()
-    path = Path(args.dataset)
+    path = Path(args.dataset).resolve()
     raw = path.read_bytes()
     cases = [json.loads(line) for line in raw.decode().splitlines() if line.strip()]
     assert all(c.get("synthetic") is True for c in cases), "every case must be marked synthetic"
