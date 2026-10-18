@@ -80,7 +80,7 @@ def test_neutral_text_has_no_reasons_and_zero_score():
 def test_score_in_unit_interval_and_version():
     s, _ = score_text(ARREST_EN + " " + SAFE_ACCT + " " + ARREST_HI)
     assert 0 <= s <= 1
-    assert RULES_VERSION == "rules-v1"
+    assert RULES_VERSION == "rules-v2"  # message-level rules added (accuracy batch 2)
 
 
 # ----------------------------------------------------------------- fix round 1

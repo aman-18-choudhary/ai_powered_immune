@@ -42,7 +42,7 @@ from functools import reduce
 
 from scam_contracts.models import CallEvent, Reason
 
-RULES_VERSION = "rules-v1"
+RULES_VERSION = "rules-v2"
 CALL_RISK_THRESHOLD = 0.7
 
 _ZERO_WIDTH = dict.fromkeys([0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x180E], None)
@@ -68,6 +68,9 @@ _ADVISORY = _rx(
     r"\bnever (?:ask|asks|asked|request|requests|demand|demands|require|want|call you|share|give)\b",
     r"\b(?:will not|won't|would not|do not|don't|never) (?:ask|request|demand) (?:for )?(?:your )?",
     r"\b(?:do not|don't|never|should not|must not) (?:share|give|reveal|disclose) (?:your |the )?(?:otp|pin|cvv|password|net ?banking)",
+    # protective warnings in genuine bank SMS: "Do not share this OTP with anyone" (accuracy batch 2)
+    r"\b(?:do not|don't|never|should not|must not|please do not)\s+(?:share|give|reveal|disclose|tell)\b.{0,25}\b(?:otp|one[ -]time password|pin|cvv|password)\b",
+    r"\b(?:otp|pin|cvv)\b.{0,40}\b(?:do not|don't|never)\s+(?:share|give|reveal|disclose)\b",
     r"\bignore (?:such|these|those|any|all|calls|messages|the calls)\b",
     r"\bbeware\b",
     r"\bbe (?:careful|alert|aware|vigilant)\b",
@@ -142,6 +145,21 @@ _ADVISORY = _rx(
     r"\b(?:delivery|courier|package|parcel)\b.{0,80}\botp\b",
     r"\botp\b.{0,80}\b(?:delivery|courier|package|darwaze|door)\b",
 )
+
+# A clause that would be advisory stops being advisory when it carves out an exception for the
+# speaker ("do not share this OTP with anyone except me"): that is how OTP theft is phrased.
+_ADVISORY_EXCEPT = _rx(
+    r"\b(?:except|other than|apart from|besides|but)\s+(?:to\s+|with\s+)?(?:me|us|our (?:officer|executive|agent|team|bank officer))\b",
+    r"\b(?:only|sirf)\s+(?:to\s+|with\s+)?(?:me|us|mujhe|hame|humein|hamein)\b",
+    r"\b(?:mere|hamare) (?:siwa|siva|alawa|alava)\b",
+    r"(?:मेरे|हमारे) (?:सिवा|अलावा)",
+    r"सिर्फ (?:मुझे|हमें)",
+)
+
+
+def _is_advisory(clause: str) -> bool:
+    return bool(_ADVISORY.search(clause)) and not _ADVISORY_EXCEPT.search(clause)
+
 
 # Sentence-level benign context (a police-station visit / complaint is about the speaker's own matter).
 _BENIGN_SENT = _rx(
@@ -529,6 +547,7 @@ _CRED_ASK = _rx(
     r"(?:बताइए|बताओ|भेजिए|शेयर).{0,20}(?:OTP|PIN|CVV|पासवर्ड|ओटीपी|पिन)",
     r"(?:OTP|ओटीपी|PIN|CVV).{0,15}(?:बताइए|बताओ|भेजिए|शेयर)",
     r"\b(?:otp|pin|cvv)\b.{0,12}\b(?:bataiye|batayiye|batao|bhejiye)\b",
+    r"\b(?:otp|pin|cvv)\b.{0,30}\b(?:bata (?:dijiye|dijie|do|dena|dein|den)|bhej (?:dijiye|do|dena)|share kar(?:o|iye|en|ein| dijiye| do)|de (?:dijiye|do))\b",
 )
 _URGENCY = _rx(
     r"\bonly (?:\w+ )?(?:minutes?|hours?)\b",
@@ -554,6 +573,177 @@ _URGENCY = _rx(
     r"दो घंटे",
 )
 
+
+# ---------------------------------------------------------------------------------------------
+# Message-level rules (rules-v2, accuracy batch 2, 2026-10-18): scam types other than digital
+# arrest. They look at the whole message (some cues span sentences), after advisory clauses are
+# removed and with news / fiction / awareness sentences skipped (_MEDIA_SENT). Unlike the call
+# cues above they do NOT skip relayed speech, so a victim's own account ("he told me ...") counts.
+# Each class needs a specific combination, not a single keyword, and has hard-negative tests.
+# ---------------------------------------------------------------------------------------------
+_MEDIA_SENT = _rx(
+    r"\bnews\b",
+    r"\bkhabar\b",
+    r"खबर",
+    r"\bfilm\b",
+    r"\bmovie\b",
+    r"\bserial\b",
+    r"\bweb series\b",
+    r"\b(?:tv|crime|reality) show\b",
+    r"\bdocumentary\b",
+    r"\bepisode\b",
+    r"\barticle\b",
+    r"\bnewsletter\b",
+    r"\bawareness\b",
+    r"\bseminar\b",
+    r"\bworkshop\b",
+    r"\bwarn(?:s|ed|ing)?\b",
+    r"\bfraudsters?\b",
+    r"\bscammers?\b",
+    r"\bscams?\b",
+    r"फिल्म",
+    r"सीरियल",
+    r"स्कैम",
+    r"धोखाधड़ी",
+    r"जागरूक",
+)
+_NEGATED = _rx(
+    r"\b(?:never|do not|don't|dont|no need|not (?:needed|required|necessary)|without)\b",
+    r"\b(?:nahi|nahin|mat|kabhi nahi)\b",
+    r"कभी नहीं",
+    r"ज़रूरत नहीं",
+    r"जरूरत नहीं",
+    r"नहीं",
+)
+# UPI: a PIN or collect approval is presented as the way to RECEIVE money (receiving never needs it)
+_PIN_ACTION = _rx(
+    r"\b(?:enter\w*|type|put|input|daal\w*|dal(?:iye|o|ein|en|na)|dalke)\b.{0,25}\b(?:upi )?(?:pin|mpin)\b",
+    r"\b(?:upi )?pin\b.{0,15}\b(?:daal\w*|dal(?:iye|o|kar|ke|na)|enter\w*)\b",
+    r"\b(?:approve|accept|swikar)\w*\b.{0,30}\b(?:collect )?(?:request|req)\b",
+    r"(?:पिन|यूपीआई पिन).{0,15}(?:डाल|दर्ज)",
+    r"(?:अनुरोध|रिक्वेस्ट).{0,15}स्वीकार",
+)
+_RECEIVE = _rx(
+    r"\b(?:to |and )?(?:receive|get|claim|credit\w*|refund|cashback|reward|prize|money back)\b",
+    r"\b(?:milega|milenge|milegi|paane|pane|prapt)\b",
+    r"मिलेगा|मिलेंगे|पाने|प्राप्त|रिफंड|कैशबैक",
+)
+# advance fee: a job / task with a fee to start, or a payment demanded to release earnings
+_JOB_CTX = _rx(
+    r"\bpart[- ]time\b",
+    r"\bwork from home\b",
+    r"\bwfh\b",
+    r"\bghar baithe\b",
+    r"\b(?:job|jobs|naukri)\b",
+    r"\btasks?\b",
+    r"\b(?:rating|rate|liking|like|subscribe|review)\w*\b.{0,30}\b(?:hotels?|videos?|youtube|instagram|posts?|products?|pages?)\b",
+    r"\b(?:earn|kamai\w*|kamaye|kamaiye)\b.{0,30}\b(?:daily|per day|a day|/day|roz|har din|weekly|from home)\b",
+    r"नौकरी",
+    r"घर बैठे",
+    r"टास्क",
+)
+_FEE = _rx(
+    r"\b(?:registration|joining|security|activation|processing|training|onboarding|verification) (?:fee|fees|deposit|charges?|amount)\b",
+    r"\b(?:deposit|pay|bhej\w*|jama)\b.{0,40}\b(?:to (?:start|begin|join|activate|unlock)|first|pehle|upfront|before)\b",
+    r"\b(?:fee|fees|deposit)\b.{0,20}\b(?:pehle|first|upfront)\b",
+    r"पहले.{0,20}(?:फीस|जमा)",
+    r"(?:फीस|शुल्क).{0,20}पहले",
+)
+_WITHDRAW_FEE = _rx(
+    r"\b(?:pay|deposit|bhar\w*|jama)\b.{0,40}\b(?:tax|fee|fees|charges?|commission|gst)\b.{0,40}\b(?:withdraw|release|unlock|nikal\w*)\b",
+    r"\b(?:unlock|withdraw|release)\w*\b.{0,60}\b(?:commission|earnings?|profits?|winnings?|bonus|returns?)\b.{0,60}\b(?:deposit|pay)\b",
+    r"\b(?:deposit|pay)\b.{0,40}\bto (?:unlock|withdraw|release)\b.{0,30}\b(?:commission|earnings?|profits?|winnings?|bonus|money|amount)\b",
+    r"(?:टैक्स|फीस|शुल्क).{0,30}(?:निकाल|विड्रॉ)",
+)
+# unrealistic guaranteed returns (a fixed deposit's "7% p.a." does not qualify)
+_GUARANTEE = _rx(
+    r"\b(?:guaranteed|guarantee|assured|pakka|fixed)\b.{0,30}\b(?:returns?|profits?|income|munafa)\b",
+    r"\b(?:returns?|profits?|munafa)\b.{0,20}\b(?:guaranteed|assured|pakka)\b",
+    r"(?:गारंटीड|गारंटी|पक्का).{0,20}(?:रिटर्न|मुनाफा|लाभ)",
+)
+_UNREALISTIC = _rx(
+    r"\b(?:[2-9]\d|\d{3,})\s*(?:%|percent|pratishat)",
+    r"(?:[2-9]\d|\d{3,})\s*(?:%|प्रतिशत)",
+    r"\b(?:double|triple|doguna|tiguna)\b",
+    r"दोगुना|तिगुना",
+    r"\b(?:daily|per day|har din|roz)\b",
+)
+_DOUBLE_MONEY = _rx(
+    r"\b(?:double|triple|doguna)\w*\b.{0,15}\b(?:your |apna |apne )?(?:money|investment|amount|paisa|paise|capital)\b.{0,20}\b(?:in|within|me|mein)\s+\d+\s*(?:days?|weeks?|months?|din|hafte|mahine)\b",
+    r"(?:पैसा|पैसे|निवेश).{0,15}दोगुना",
+)
+_GUARANTEE_NEG = _rx(
+    r"\b(?:no|not|never|cannot|can't|don't|koi)\b.{0,15}\b(?:guarantee|guaranteed|assured)\b"
+)
+# sextortion: private media + a threat to spread it + a condition or a payment demand
+_PRIVATE_MEDIA = _rx(
+    r"\b(?:private|intimate|nude|naked|obscene|objectionable|personal|explicit)\b.{0,25}\b(?:video|photos?|pictures?|pics|clips?|recording|call)\b",
+    r"\bscreen ?recording\b",
+    r"\bvideo call (?:ki |ka )?recording\b",
+    r"\brecording of (?:your|the) video call\b",
+    r"\brecorded your\b.{0,25}\b(?:video|call)\b",
+    r"\bnangi\b",
+    r"(?:अश्लील|न्यूड|निजी).{0,20}(?:वीडियो|फोटो)",
+    r"वीडियो कॉल की रिकॉर्डिंग",
+)
+_LEAK = _rx(
+    r"\b(?:send|share|leak|upload|post|forward|bhej\w*|daal\w*)\b.{0,50}\b(?:contacts|family|friends|relatives|everyone|sabko|sab ko|social media|instagram|facebook|youtube|whatsapp groups?|internet|parivar|ghar wal\w*)\b",
+    r"\b(?:go(?:es)?|make it|kar dunga|kar denge|ho jayega)\b.{0,10}\bviral\b|\bviral\b.{0,15}\b(?:kar|ho|on)\b",
+    r"(?:परिवार|सबको|रिश्तेदार).{0,30}(?:भेज|वायरल)",
+    r"वायरल",
+    r"\b(?:family|relatives|friends|contacts|everyone|parents|wife|husband|boss|colleagues)\b.{0,25}\b(?:will (?:see|get|receive|know|watch)|gets? (?:it|a copy))\b",
+)
+_CONDITION = _rx(
+    r"\b(?:or else|otherwise|unless|or i will|or it|or we will|warna|nahi to|varna|if you (?:don't|do not|fail))\b",
+    r"\b(?:pay|send|transfer|bhejo|bhejiye)\b.{0,25}\b(?:rs\.?|rupees|inr|₹|\d)",
+    r"वरना|नहीं तो",
+)
+# KYC / account block threats paired with an update / verify / link demand
+_BLOCK_THREAT = _rx(
+    r"\b(?:account|a/c|card|wallet|sim|khata|khaata|connection|number|net ?banking|internet banking|mobile banking|upi id)\b.{0,40}\b(?:blocked|suspended|deactivated|frozen|closed|disabled|terminated|block ho\w*|band ho\w*|band kar\w*)\b",
+    r"\b(?:avoid|prevent)\b.{0,20}\b(?:account |card |wallet )?(?:suspension|blocking|deactivation|closure)\b",
+    r"\bunblock (?:your )?(?:account|card|wallet|sim)\b",
+    r"(?:खाता|अकाउंट|कार्ड|सिम).{0,40}(?:बंद|ब्लॉक|निलंबित)",
+)
+# genuine KYC notices send people to a branch / store in person; phishing sends them to a link
+_IN_PERSON = _rx(
+    r"\b(?:visit|go to|come to|at|reach)\b.{0,35}\b(?:branch|store|office|outlet|centre|center)\b",
+    r"\bhome branch\b",
+    r"शाखा",
+    r"स्टोर",
+)
+_KYC_ACTION = _rx(
+    r"\b(?:kyc|pan|aadhaa?r|re-?kyc|update|verify|verification|link|click)\b",
+    r"केवाईसी|पैन|आधार|अपडेट|लिंक",
+)
+# a first-person account of a completed scam encounter, with a known tactic
+_HARM = _rx(
+    r"\bi (?:have |had )?(?:transferred|paid|sent|deposited|lost|entered my (?:upi )?pin|shared (?:the|my) otp)\b",
+    r"\b(?:was|were|got|has been|have been) debited\b",
+    r"\bkept me on (?:the |a )?(?:video )?call\b",
+    r"\bmade me (?:transfer|pay|send)\b",
+    r"\btransfer karwa\w*\b",
+    r"\bpaise (?:bhejwa|transfer karwa)\w*\b",
+    r"\b(?:video )?call par rakh\w*\b",
+    r"\bmaine\b.{0,30}\b(?:transfer|bheje|diye|daale)\b",
+    r"मैंने.{0,30}(?:ट्रांसफर|भेजे|दिए)",
+    r"कॉल पर रख",
+)
+_TACTIC = _rx(
+    r"digital(?:ly)?[\s_-]*arrest",
+    r"डिजिटल[\s_-]*अरेस्ट",
+    r"\bpolice uniform\b",
+    r"\b(?:fake|so-called|supposed)\b.{0,15}\b(?:officer|cbi|police|inspector|rbi)\b",
+    r"\bmoney laundering\b",
+    r"\b(?:safe|rbi|verification|secure)\s+account\b",
+    r"\bparcel\b.{0,40}\b(?:drugs|narcotics|mdma|contraband)\b",
+    r"\bdrugs?\b.{0,40}\bparcel\b",
+    r"\bparcel me drugs\b",
+    r"\bscreen ?recording\b",
+    r"\b(?:unlock|withdraw)\w*\b.{0,20}\b(?:earnings?|commission|profits?)\b",
+    r"\b(?:upi )?pin\b.{0,40}\b(?:refund|receive|cashback|reward)\b|\b(?:refund|receive|cashback|reward)\b.{0,60}\b(?:upi )?pin\b",
+)
+
 _SPECS = {
     "DIGITAL_ARREST_PHRASE": "caller says the victim is under 'digital arrest'",
     "SAFE_ACCOUNT_TRANSFER": "caller demands moving funds to a 'safe'/RBI/verification account",
@@ -564,6 +754,12 @@ _SPECS = {
     "ACCOUNT_VERIFICATION_ASK": "caller asks to 'verify' the victim's account, balance or ID",
     "CREDENTIAL_ASK": "caller asks for an OTP, PIN or password",
     "URGENCY": "caller applies time pressure",
+    "UPI_PIN_TO_RECEIVE": "asks to enter a UPI PIN or approve a request in order to receive money",
+    "ADVANCE_FEE_DEMAND": "asks for a fee or deposit to start a job/task or to release earnings",
+    "GUARANTEED_RETURNS": "promises unrealistic guaranteed returns or doubling of money",
+    "SEXTORTION_THREAT": "threatens to spread private images or recordings unless paid",
+    "ACCOUNT_BLOCK_THREAT": "threatens to block an account/card/SIM unless KYC is updated or a link is used",
+    "REPORTED_SCAM_ENCOUNTER": "describes money or credentials taken through a known scam tactic",
 }
 _ORDER = tuple(_SPECS)
 _WEIGHT = {
@@ -576,13 +772,19 @@ _WEIGHT = {
     "ACCOUNT_VERIFICATION_ASK": 0.45,
     "CREDENTIAL_ASK": 0.35,
     "URGENCY": 0.15,
+    "UPI_PIN_TO_RECEIVE": 0.65,
+    "ADVANCE_FEE_DEMAND": 0.60,
+    "GUARANTEED_RETURNS": 0.60,
+    "SEXTORTION_THREAT": 0.65,
+    "ACCOUNT_BLOCK_THREAT": 0.45,
+    "REPORTED_SCAM_ENCOUNTER": 0.60,
 }
 W_ISOLATION_MULTI = 0.75
 W_LEGAL_WEAK = 0.30
 
 
 def _effective_clauses(sentence: str) -> str:
-    kept = [c for c in _CLAUSE_SPLIT.split(sentence) if c.strip() and not _ADVISORY.search(c)]
+    kept = [c for c in _CLAUSE_SPLIT.split(sentence) if c.strip() and not _is_advisory(c)]
     return " , ".join(kept)
 
 
@@ -615,6 +817,38 @@ def _cues(s: str) -> dict[str, float]:
     return out
 
 
+def _message_cues(sentences: list[str]) -> dict[str, float]:
+    """Rules-v2 classes over the whole message (advisory clauses removed, media sentences
+    skipped). See the comment above _MEDIA_SENT."""
+    kept: list[str] = []
+    for sent in sentences:
+        if not sent.strip() or _MEDIA_SENT.search(sent):
+            continue
+        eff = _effective_clauses(sent)
+        if eff:
+            kept.append(eff)
+    out: dict[str, float] = {}
+    if not kept:
+        return out
+    msg = " . ".join(kept)
+    for s in kept:  # PIN-to-receive and block threats are judged within one sentence
+        if _PIN_ACTION.search(s) and _RECEIVE.search(s) and not _NEGATED.search(s):
+            out["UPI_PIN_TO_RECEIVE"] = _WEIGHT["UPI_PIN_TO_RECEIVE"]
+        if _BLOCK_THREAT.search(s) and _KYC_ACTION.search(msg) and not _IN_PERSON.search(msg):
+            out["ACCOUNT_BLOCK_THREAT"] = _WEIGHT["ACCOUNT_BLOCK_THREAT"]
+    if (_JOB_CTX.search(msg) and _FEE.search(msg)) or _WITHDRAW_FEE.search(msg):
+        out["ADVANCE_FEE_DEMAND"] = _WEIGHT["ADVANCE_FEE_DEMAND"]
+    if not _GUARANTEE_NEG.search(msg) and (
+        (_GUARANTEE.search(msg) and _UNREALISTIC.search(msg)) or _DOUBLE_MONEY.search(msg)
+    ):
+        out["GUARANTEED_RETURNS"] = _WEIGHT["GUARANTEED_RETURNS"]
+    if _PRIVATE_MEDIA.search(msg) and _LEAK.search(msg) and _CONDITION.search(msg):
+        out["SEXTORTION_THREAT"] = _WEIGHT["SEXTORTION_THREAT"]
+    if _HARM.search(msg) and _TACTIC.search(msg):
+        out["REPORTED_SCAM_ENCOUNTER"] = _WEIGHT["REPORTED_SCAM_ENCOUNTER"]
+    return out
+
+
 def noisy_or(weights: list[float]) -> float:
     return 1.0 - reduce(lambda acc, w: acc * (1.0 - w), weights, 1.0)
 
@@ -623,18 +857,21 @@ def analyse(text: str) -> tuple[float, list[Reason], bool]:
     """Rules score, reasons, and whether any clause was dropped as advisory."""
     found: dict[str, float] = {}
     advisory = False
-    for sent in _SENT_SPLIT.split(_norm(text)):
+    sentences = _SENT_SPLIT.split(_norm(text))
+    for sent in sentences:
         if not sent.strip():
             continue
         if _BENIGN_SENT.search(sent):
             advisory = True
             continue
         eff = _effective_clauses(sent)
-        advisory = advisory or _ADVISORY.search(sent) is not None
+        advisory = advisory or any(_is_advisory(c) for c in _CLAUSE_SPLIT.split(sent) if c.strip())
         if not eff:
             continue
         for code, w in _cues(eff).items():
             found[code] = max(found.get(code, 0.0), w)
+    for code, w in _message_cues(sentences).items():
+        found[code] = max(found.get(code, 0.0), w)
     reasons = [Reason(code=c, weight=found[c], detail=_SPECS[c]) for c in _ORDER if c in found]
     return round(min(1.0, noisy_or([r.weight for r in reasons])), 4), reasons, advisory
 

@@ -22,7 +22,7 @@ async def test_score_scam(client):
     )
     assert r.status_code == 200
     b = r.json()
-    assert b["score"] >= 0.7 and b["reasons"] and b["model_version"] in ("clf-v1", "rules-v1")
+    assert b["score"] >= 0.7 and b["reasons"] and b["model_version"] in ("clf-v1", "rules-v2")
     assert {"code", "weight", "detail"} <= set(b["reasons"][0])
 
 
@@ -61,7 +61,7 @@ async def test_whitespace_only_message_rejected(client):
 
 async def test_readyz_reports_model_version(client):
     body = (await client.get("/readyz")).json()
-    assert body["status"] == "ready" and body["model_version"] in ("clf-v1", "rules-v1")
+    assert body["status"] == "ready" and body["model_version"] in ("clf-v1", "rules-v2")
 
 
 async def test_metrics_fallback_gauge():
@@ -70,15 +70,22 @@ async def test_metrics_fallback_gauge():
         text = (await c.get("/metrics")).text
         assert "call_guard_fallback_mode 1" in text
         body = (await c.get("/readyz")).json()
-        assert body["model_version"] == "rules-v1" and body["fallback_mode"] == "true"
+        assert body["model_version"] == "rules-v2" and body["fallback_mode"] == "true"
 
 
-async def test_score_require_explained_drops_unexplained_classifier_points(client):
-    # review 2026-10-18: the HTTP API now offers the explained-only scoring used in process
-    msg = ("I have recorded your private video call. Pay 20000 rupees in 2 hours or I will send "
-           "it to all your contacts and family.")  # fmt: skip
-    default = (await client.post("/score", json={"message": msg})).json()
-    explained = (await client.post("/score", json={"message": msg, "require_explained": True})).json()
-    assert default["score"] == 0.4  # unchanged default (simulator callers)
+async def test_score_require_explained_drops_unexplained_classifier_points():
+    # review 2026-10-18: the HTTP API offers the explained-only scoring used in process
+    class Fixed:
+        version = "clf-v1"
+
+        def predict_proba(self, text):
+            return 0.42  # below the 0.5 reason threshold
+
+    app = create_app(scorer=Scorer(Fixed()))  # type: ignore[arg-type]
+    msg = "Hello, I hope you are doing well and the weather is nice today."
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        default = (await c.post("/score", json={"message": msg})).json()
+        explained = (await c.post("/score", json={"message": msg, "require_explained": True})).json()
+    assert default["score"] == 0.42  # unchanged default (simulator callers)
     assert explained["score"] == 0.0
     assert [r["code"] for r in explained["reasons"]] == ["NO_RISK_INDICATORS"]

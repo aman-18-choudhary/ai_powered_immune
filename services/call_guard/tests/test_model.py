@@ -6,7 +6,7 @@ import pytest
 from sim_engine.calls import BENIGN_KINDS, BENIGN_P, LANGS, benign_call_chunks, scam_call_chunks
 
 from call_guard.model import ARTIFACT_PATH, CLF_VERSION, Scorer, load_classifier
-from call_guard.rules import CALL_RISK_THRESHOLD
+from call_guard.rules import CALL_RISK_THRESHOLD, RULES_VERSION
 
 HELD_OUT_SEEDS = (9001, 9002, 9003)  # training uses train.TRAIN_SEED, disjoint from these
 
@@ -35,7 +35,7 @@ def test_fallback_to_rules_when_artifact_missing(tmp_path):
     score, reasons, version = s.score_text(
         "You are under digital arrest. Do not tell anyone about this."
     )
-    assert version == "rules-v1" and score >= 0.7 and reasons
+    assert version == RULES_VERSION and score >= 0.7 and reasons
 
 
 def test_scorer_uses_classifier_version():
@@ -153,7 +153,7 @@ def test_predict_proba_failure_falls_back_to_rules():
 
     s = Scorer(Boom())  # type: ignore[arg-type]
     score, reasons, version = s.score_text("You are under digital arrest. Do not tell anyone.")
-    assert version == "rules-v1" and score >= 0.7 and reasons and s.clf_errors == 1
+    assert version == RULES_VERSION and score >= 0.7 and reasons and s.clf_errors == 1
 
 
 def test_fallback_mode_is_loud(caplog):
@@ -263,16 +263,26 @@ def test_review2_set_gates():
     asyncio.run(main())
 
 
+class _FixedClf:
+    version = "clf-v1"
+
+    def __init__(self, p: float) -> None:
+        self.p = p
+
+    def predict_proba(self, text: str) -> float:
+        return self.p
+
+
 def test_require_explained_counts_the_classifier_only_with_its_reason():
     # accuracy audit 2026-10-17: a classifier score below its reason threshold raised the score
-    # (0.40) while the only reason was NO_RISK_INDICATORS. Real-input paths opt out of that.
-    s = Scorer(load_classifier())
-    text = ("I have recorded your private video call. Pay 20000 rupees in 2 hours or I will "
-            "send it to all your contacts and family.")  # fmt: skip
+    # while the only reason was NO_RISK_INDICATORS. Real-input paths opt out of that. A fixed
+    # classifier (0.42, below the 0.5 reason threshold) on a text with no rule cue:
+    s = Scorer(_FixedClf(0.42))  # type: ignore[arg-type]
+    text = "Hello, I hope you are doing well and the weather is nice today."
     default, reasons_d, _ = s.score_text(text)
     explained, reasons_e, _ = s.score_text(text, require_explained=True)
     assert [r.code for r in reasons_d] == [r.code for r in reasons_e] == ["NO_RISK_INDICATORS"]
-    assert default == 0.4  # the simulator default is unchanged
+    assert default == 0.42  # the simulator default is unchanged
     assert explained == 0.0  # no listed reason, no points
 
 
