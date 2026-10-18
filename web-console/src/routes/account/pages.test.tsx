@@ -237,4 +237,19 @@ describe("admin", () => {
       expect.stringContaining("Unavailable (unreachable)"),
     ]);
   });
+
+  it("audit log names link reviews plainly; a confirmed link is not a finding of crime", async () => {
+    const row = (id: string, action: string, decision: string) => ({ id, actor_user_id: "u-investigator", action, target_user_id: null, before: { previous_decision: null }, after: { complaint_low: "c-1", complaint_high: "c-2", decision, basis: "observed", note_given: false }, created_at: null });
+    mockFetch({
+      "GET /admin/users*": json(200, { items: [], total: 0, limit: 20, offset: 0 }),
+      "GET /admin/audit*": json(200, { items: [row("a1", "link_confirm", "confirmed"), row("a2", "link_reject", "rejected")], total: 2, limit: 20, offset: 0 }),
+    });
+    const user = userEvent.setup();
+    renderApp(<Admin />);
+    await user.click(screen.getByRole("tab", { name: "Audit log" }));
+    const rows = await screen.findAllByTestId("audit-row");
+    expect(rows[0]).toHaveTextContent("Complaint link confirmed (same case; not a finding of crime)");
+    expect(rows[0]).toHaveTextContent('"complaint_low":"c-1"');
+    expect(rows[1]).toHaveTextContent("Complaint link rejected");
+  });
 });
