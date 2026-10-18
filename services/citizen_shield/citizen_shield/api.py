@@ -204,7 +204,8 @@ def create_app(
         "assess": 0, "assess_degraded": 0, "reports": 0, "report_duplicates": 0,
         "report_emitted": 0, "report_unlocated": 0, "emit_failures": 0, "rate_limited": 0,
     }  # fmt: skip
-    by_label = {"safe": 0, "suspicious": 0, "likely_scam": 0}
+    by_label = {"no_indicators_found": 0, "insufficient_input": 0, "suspicious": 0,
+                "likely_scam": 0}  # fmt: skip
     tasks: list[asyncio.Task[None]] = []
 
     async def prune_loop() -> None:

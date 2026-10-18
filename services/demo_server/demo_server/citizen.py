@@ -1,12 +1,14 @@
 """Citizen assistant: verdict for a pasted message using the real call-guard scorer.
 
 Thresholds (documented, applied to the call-guard score in [0, 1]): ``likely_scam`` at >= 0.7
-(the call-guard alert threshold), ``suspicious`` at >= 0.35, otherwise ``safe``. ``safe`` means
-"no clear scam cues found", not "verified safe". The text is scored in memory and not stored or
-logged (only its length is). Reason and advice texts come from the static dictionary below; the
-scorer's own free-text ``detail`` strings are not used.
+(the call-guard alert threshold), ``suspicious`` at >= 0.35, otherwise ``no_indicators_found`` (no
+scam cue found by this check; NOT a finding that the message is safe; the label was ``safe``
+until 2026-10-18). Only scored points with a listed reason count (``require_explained``).
+The text is scored in memory and not stored or logged (only its length is). Reason and advice
+texts come from the static dictionary below; the scorer's own free-text ``detail`` strings are
+not used.
 
-Handling that never errors: empty or blank text (label ``safe``, ``uncertain``, advice
+Handling that never errors: empty or blank text (label ``insufficient_input``, ``uncertain``, advice
 ``no_input``), text over 4,000 characters (the first 4,000 are scored, ``uncertain``), an
 unsupported or missing language (script detection, else English; ``uncertain`` only when a
 language was given and is unsupported).
@@ -22,12 +24,15 @@ from typing import Any
 from call_guard.model import Scorer
 from citizen_shield.policy import (
     BORDER,
+    INSUFFICIENT,
     LIKELY_SCAM,
     MAX_CHARS,
     MIN_WORDS,
+    NO_INDICATORS,
     SUSPICIOUS,
     detect_lang,
     label_for,
+    refine_label,
 )
 from citizen_shield.texts import (
     ADVICE,
@@ -79,11 +84,14 @@ async def assess(scorer: Scorer, message: str, lang: str | None = None) -> Asses
     version = scorer.model_version
     text = message.strip()
     if not any(not ch.isspace() and unicodedata.category(ch) != "Cf" for ch in text):
-        return Assessment("safe", 0.0, [], _advice("no_input", chosen), chosen, True, version)
+        return Assessment(INSUFFICIENT, 0.0, [], _advice("no_input", chosen), chosen, True, version)
     truncated = len(text) > MAX_CHARS
     if truncated:
         text = text[:MAX_CHARS]
-    score, reasons, version = await asyncio.to_thread(scorer.score_text, text)
+    # every point of the score has a listed reason (accuracy audit 2026-10-17)
+    score, reasons, version = await asyncio.to_thread(
+        lambda: scorer.score_text(text, require_explained=True)
+    )
     label = label_for(score)
     shown = []
     for r in reasons:
@@ -97,7 +105,8 @@ async def assess(scorer: Scorer, message: str, lang: str | None = None) -> Asses
                 "weight": round(float(r.weight), 3),
             }
         )
-    if label != "safe":
+    label = refine_label(label, [r.code for r in reasons if r.weight > 0])
+    if label != NO_INDICATORS:
         shown = [x for x in shown if x["code"] != "NO_RISK_INDICATORS"]
     near = any(abs(score - th) < BORDER for th in (SUSPICIOUS, LIKELY_SCAM))
     uncertain = (

@@ -2,8 +2,9 @@
 
 The message is held in memory for the duration of the call only: it is not logged, stored,
 echoed or sent anywhere except to the scorer. A scorer failure yields a degraded verdict
-(``label: suspicious``, ``uncertain: true``, ``degraded: true``): a ``safe`` answer that really
-means "could not check" would be dangerous, so it is never produced.
+(``label: suspicious``, ``uncertain: true``, ``degraded: true``): a "no indicators" answer that
+really means "could not check" would be dangerous, so it is never produced. Blank input is
+``insufficient_input``; no cue found is ``no_indicators_found`` (never "safe").
 """
 
 from __future__ import annotations
@@ -14,13 +15,17 @@ from typing import Any
 from .guard_client import CallGuardClient, GuardDown
 from .policy import (
     BORDER,
+    INSUFFICIENT,
     LIKELY_SCAM,
     MIN_WORDS,
+    NO_INDICATORS,
     SUSPICIOUS,
+    WEAK,
     choose_lang,
     is_blank,
     label_for,
     normalise_for_scoring,
+    refine_label,
     script_coverage,
 )
 from .texts import ADVICE, GENERIC_REASON, PARTIAL_NOTICE, REASON_TEXT, TOO_LONG_NOTICE
@@ -67,7 +72,7 @@ async def assess(guard: CallGuardClient, message: str, requested_lang: str | Non
     # lone surrogates cannot be encoded as UTF-8 JSON: replace them before anything else
     text, truncated = normalise_for_scoring(message.encode("utf-8", "replace").decode("utf-8"))
     if is_blank(text):
-        return Verdict("safe", 0.0, [], _advice("no_input", lang), lang, True, "none")
+        return Verdict(INSUFFICIENT, 0.0, [], _advice("no_input", lang), lang, True, "none")
     coverage = script_coverage(text)
     partial = coverage == "partial"
     try:
@@ -86,14 +91,15 @@ async def assess(guard: CallGuardClient, message: str, requested_lang: str | Non
         shown.append(
             {"code": code, "text": (row or GENERIC_REASON)[lang], "weight": round(float(weight), 3)}
         )
-    if label != "safe" or partial:
+    label = refine_label(label, [code for code, weight in got.reasons if weight > 0])
+    if label != NO_INDICATORS or partial:
         shown = [x for x in shown if x["code"] != "NO_RISK_INDICATORS"]
     score, placeholder = round(got.score, 4), False
     if partial:
         # no rules exist for this script: "no cues found" means nothing, so never report safe
         shown.append({"code": "COVERAGE_PARTIAL", "text": REASON_TEXT["COVERAGE_PARTIAL"][lang],
                       "weight": 0.0})  # fmt: skip
-        if label == "safe":
+        if label in (NO_INDICATORS, WEAK):
             label, score, placeholder = "suspicious", max(score, SUSPICIOUS), True
             advice = _advice("partial_coverage", lang, truncated)
         else:

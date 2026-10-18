@@ -142,7 +142,7 @@ ADVICE: dict[str, dict[str, list[str]]] = {
             "টাকা পাঠিয়ে ফেললে এখনই 1930-এ কল করুন।",
         ],
     },
-    "safe": {
+    "no_indicators_found": {
         "en": [
             "No clear scam cues were found, but no check is perfect.",
             "Do not share an OTP, PIN or password with anyone.",
@@ -216,6 +216,9 @@ ADVICE["degraded"] = {
         "টাকা পাঠিয়ে ফেললে এখনই 1930-এ কল করুন।",
     ],
 }
+
+# "weak_indicators" (a cue below the suspicious threshold) uses the same honest advice
+ADVICE["weak_indicators"] = ADVICE["no_indicators_found"]
 
 # Shown when the message is mostly in a script call-guard has no rules for (see policy.coverage):
 # the check is partial, so it is never reported as safe.

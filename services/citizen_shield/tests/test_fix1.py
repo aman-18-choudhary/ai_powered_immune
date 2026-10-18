@@ -49,7 +49,8 @@ async def test_uncovered_script_is_never_safe_and_never_says_no_scam_signs(make_
             loc = await post(c, message=text, lang=lang)
             assert loc["lang"] == lang
             assert "NO_RISK_INDICATORS" not in {x["code"] for x in loc["reasons"]}
-    assert r["label"] != "safe" and r["uncertain"] is True and r["coverage"] == "partial"
+    assert r["label"] not in ("safe", "no_indicators_found") and r["uncertain"] is True
+    assert r["coverage"] == "partial"
     codes = {x["code"] for x in r["reasons"]}
     assert "COVERAGE_PARTIAL" in codes and "NO_RISK_INDICATORS" not in codes
     assert any("1930" in s for s in r["advice"]["steps"])
@@ -74,8 +75,8 @@ async def test_covered_scripts_and_symbols_are_unchanged(make_app):
         num = await post(c, message="12345 6789 \U0001f600 \U0001f4b8 \U0001f4b8 \U0001f4b8")
         ok = await post(c, message=BENIGN)
     assert en["coverage"] == hi["coverage"] == num["coverage"] == ok["coverage"] == "full"
-    assert en["label"] == "likely_scam" and ok["label"] == "safe"
-    assert hi["label"] != "safe"
+    assert en["label"] == "likely_scam" and ok["label"] == "no_indicators_found"
+    assert hi["label"] not in ("safe", "no_indicators_found")
 
 
 async def test_mixed_script_is_partial_only_above_twenty_percent(make_app):
@@ -86,7 +87,7 @@ async def test_mixed_script_is_partial_only_above_twenty_percent(make_app):
     async with client(make_app()) as c:
         a = await post(c, message=mostly_latin)
         b = await post(c, message=mostly_tamil)
-    assert a["coverage"] == "full" and a["label"] == "safe"
+    assert a["coverage"] == "full" and a["label"] == "no_indicators_found"
     assert b["coverage"] == "partial" and b["label"] == "suspicious"
 
 

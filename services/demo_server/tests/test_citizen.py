@@ -42,16 +42,16 @@ def test_scam_text_is_likely_scam_with_localised_reasons(client):
         assert loc["advice"]["steps"] != r["advice"]["steps"]
 
 
-def test_benign_text_is_safe(client):
+def test_benign_text_has_no_indicators_and_is_never_called_safe(client):
     r = post(client, message="Hi, are we still meeting at 5 pm for tea tomorrow with the family?")
-    assert r["label"] == "safe" and r["score"] < 0.35
-    assert r["advice"]["key"] == "safe"
+    assert r["label"] == "no_indicators_found" and r["score"] < 0.35
+    assert r["advice"]["key"] == "no_indicators_found"
 
 
 @pytest.mark.parametrize("msg", ["", "   ", "\n\t ​"])
-def test_empty_or_blank_is_safe_handling(client, msg):
+def test_empty_or_blank_is_insufficient_input(client, msg):
     r = post(client, message=msg)
-    assert r["label"] == "safe" and r["uncertain"] is True
+    assert r["label"] == "insufficient_input" and r["uncertain"] is True
     assert r["advice"]["key"] == "no_input" and r["reasons"] == [] and r["score"] == 0.0
 
 
@@ -97,7 +97,10 @@ def test_injection_looking_and_weird_text_never_errors_or_echoes(client, msg):
     assert r.status_code == 200
     body = r.text
     assert msg[:20] not in body or len(msg[:20].strip()) == 0
-    assert json.loads(body)["label"] in ("safe", "suspicious", "likely_scam")
+    assert json.loads(body)["label"] in (
+        "no_indicators_found", "weak_indicators", "insufficient_input", "suspicious",
+        "likely_scam",
+    )  # fmt: skip
 
 
 def test_message_is_not_logged(client, caplog):
@@ -122,4 +125,16 @@ def test_reason_dictionary_covers_every_call_guard_code():
 
 def test_thresholds():
     assert citizen.label_for(0.7) == "likely_scam" and citizen.label_for(0.6999) == "suspicious"
-    assert citizen.label_for(0.35) == "suspicious" and citizen.label_for(0.3499) == "safe"
+    assert citizen.label_for(0.35) == "suspicious" and citizen.label_for(0.3499) == "no_indicators_found"
+
+
+def test_a_listed_cue_is_never_under_a_no_indicators_heading(client):
+    # accuracy batch 2026-10-18: "no scam indicators found" with an URGENCY cue listed contradicted
+    # itself; a cue below the suspicious threshold is "weak_indicators"
+    r = post(client, message=(
+        "Your parcel is on hold because the address is incomplete. Pay a Rs 25 redelivery fee at "
+        "the link within 2 hours or the package will be returned."))  # fmt: skip
+    codes = [x["code"] for x in r["reasons"]]
+    assert r["label"] == "weak_indicators" and "URGENCY" in codes
+    for label in ("safe", "no_indicators_found"):
+        assert r["label"] != label

@@ -1,9 +1,11 @@
 """Verdict policy shared by citizen-shield and the demo-server (pure functions, no I/O).
 
 Thresholds apply to the call-guard score in [0, 1]: ``likely_scam`` at >= 0.7 (call-guard's own
-alert threshold), ``suspicious`` at >= 0.35, otherwise ``safe``. ``safe`` means "no clear scam
-cues found", not "verified safe". Scores within ``BORDER`` of a threshold, very short texts and
-rules-only scoring are reported as ``uncertain``.
+alert threshold), ``suspicious`` at >= 0.35, otherwise ``no_indicators_found``: no scam cue was
+found by this check, which is NOT a finding that the message is safe (the label was ``safe``
+until 2026-10-18; renamed after the accuracy audit). Blank input is ``insufficient_input``.
+Scores within ``BORDER`` of a threshold, very short texts and rules-only scoring are reported
+as ``uncertain``.
 """
 
 from __future__ import annotations
@@ -36,12 +38,26 @@ def detect_lang(text: str) -> str:
     return best if counts[best] >= 3 else "en"
 
 
+NO_INDICATORS = "no_indicators_found"
+WEAK = "weak_indicators"
+INSUFFICIENT = "insufficient_input"
+
+
 def label_for(score: float) -> str:
     if score >= LIKELY_SCAM:
         return "likely_scam"
     if score >= SUSPICIOUS:
         return "suspicious"
-    return "safe"
+    return NO_INDICATORS
+
+
+def refine_label(label: str, reason_codes: list[str]) -> str:
+    """Below the suspicious threshold, say "weak indicators" when a cue was found and "no
+    indicators" only when none was: a listed cue under a "nothing found" heading would contradict
+    itself (accuracy batch, 2026-10-18)."""
+    if label == NO_INDICATORS and any(c != "NO_RISK_INDICATORS" for c in reason_codes):
+        return WEAK
+    return label
 
 
 def is_blank(text: str) -> bool:
