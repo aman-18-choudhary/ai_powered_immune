@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { AxeBuilder } from "@axe-core/playwright";
 import { test as base, expect, type Page } from "@playwright/test";
 
 /**
@@ -180,3 +181,40 @@ test("admin: the link review is in the audit log", async ({ page }) => {
   await expect(row.first()).toContainText("not a finding of crime");
   await expect(row.first()).not.toContainText(SHARED);
 });
+
+for (const theme of ["dark", "light"] as const) {
+  test(`network pages: axe has no serious/critical violations and nothing overflows at 360 px (${theme})`, async ({ page }) => {
+    await page.addInitScript((t) => {
+      try {
+        localStorage.setItem("ssi.theme", t);
+      } catch {
+        /* ignore */
+      }
+    }, theme);
+    await page.setViewportSize({ width: 360, height: 780 });
+    const found: unknown[] = [];
+    const scan = async (where: string) => {
+      await page.waitForTimeout(700);
+      const r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+      for (const v of r.violations.filter((x) => x.impact === "serious" || x.impact === "critical"))
+        found.push({ where, id: v.id, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(" ")) });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, `horizontal overflow on ${where}`).toBeLessThanOrEqual(0);
+    };
+    await signIn(page, INVESTIGATOR, "investigator");
+    await expect(page).toHaveURL(/\/investigator$/);
+    await page.goto(`/investigator/complaints/${ids.a}`);
+    await expect(page.getByTestId("related-item")).toHaveCount(1);
+    await scan("/investigator/complaints/:id (related panel)");
+    await page.goto("/investigator/network");
+    await expect(page.getByTestId("cluster").first()).toBeVisible();
+    await scan("/investigator/network (no complaint)");
+    await page.goto(`/investigator/network?complaint=${ids.a}`);
+    await expect(page.getByTestId("network-graph")).toBeVisible();
+    await page.getByTestId("graph-entity").first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("graph-detail").getByTestId("edge-evidence").first()).toBeVisible();
+    await scan("/investigator/network?complaint (selected)");
+    expect(found, `${theme} mode violations`).toEqual([]);
+  });
+}
