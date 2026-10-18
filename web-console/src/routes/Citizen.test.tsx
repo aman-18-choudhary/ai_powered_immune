@@ -90,7 +90,7 @@ describe("Citizen Shield", () => {
     await user.click(screen.getByTestId("sample-sample3"));
     await user.click(screen.getByTestId("check"));
     await waitFor(() => expect(screen.getByTestId("error")).toHaveTextContent(STRINGS.en.errorBusy));
-    vi.mocked(endpoints.assess).mockResolvedValue({ ...scam, label: "safe", score: 0.15, uncertain: true });
+    vi.mocked(endpoints.assess).mockResolvedValue({ ...scam, label: "no_indicators_found", score: 0.15, uncertain: true });
     await user.click(screen.getByTestId("check"));
     expect(await screen.findByTestId("uncertain", {}, { timeout: 4000 })).toHaveTextContent(STRINGS.en.uncertainTitle);
   });

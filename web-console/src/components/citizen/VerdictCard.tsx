@@ -1,13 +1,18 @@
 import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { AlertOctagon, AlertTriangle, CheckCircle2, Flag, HelpCircle, ListChecks, type LucideIcon } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Flag, HelpCircle, ListChecks, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t, type Lang } from "@/lib/i18n/citizen";
 import type { Label, Verdict } from "@/lib/citizen/verdict";
 import { cn } from "@/lib/utils/cn";
 
-const LOOK: Record<Label, { Icon: LucideIcon; tone: string; ring: string; head: "verdictSafe" | "verdictSuspicious" | "verdictScam"; sub: "safeSub" | "suspiciousSub" | "scamSub" }> = {
-  safe: { Icon: CheckCircle2, tone: "text-safe border-safe/40 bg-safe-soft", ring: "var(--safe)", head: "verdictSafe", sub: "safeSub" },
+type Head = "verdictNone" | "verdictWeak" | "verdictInsufficient" | "verdictSuspicious" | "verdictScam";
+type Sub = "noneSub" | "weakSub" | "insufficientSub" | "suspiciousSub" | "scamSub";
+// No green tick for "nothing found": finding no cue is not a finding of safety (audit 2026-10-18).
+const LOOK: Record<Label, { Icon: LucideIcon; tone: string; ring: string; head: Head; sub: Sub }> = {
+  no_indicators_found: { Icon: HelpCircle, tone: "text-ink border-line bg-chip", ring: "var(--border-strong)", head: "verdictNone", sub: "noneSub" },
+  weak_indicators: { Icon: AlertTriangle, tone: "text-ink border-warn/40 bg-chip", ring: "var(--warn)", head: "verdictWeak", sub: "weakSub" },
+  insufficient_input: { Icon: HelpCircle, tone: "text-muted border-line bg-chip", ring: "var(--border-strong)", head: "verdictInsufficient", sub: "insufficientSub" },
   suspicious: { Icon: AlertTriangle, tone: "text-warn border-warn/40 bg-warn-soft", ring: "var(--warn)", head: "verdictSuspicious", sub: "suspiciousSub" },
   likely_scam: { Icon: AlertOctagon, tone: "text-danger-text border-danger/40 bg-danger-soft", ring: "var(--danger)", head: "verdictScam", sub: "scamSub" },
 };

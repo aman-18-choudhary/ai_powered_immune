@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorBlock, LoadingBlock, Pager, RiskBadge, Spinner } from "./ui";
 import { AnalysisResultView } from "./AnalysisResultView";
 import { ComplaintsApiError, complaintsApi, messageFor } from "@/lib/complaints/api";
-import { formatDateTime, humanise } from "@/lib/complaints/format";
+import { formatDateTime, humanise, resultText } from "@/lib/complaints/format";
 import { useResource } from "@/lib/complaints/useResource";
 
 function VersionHistory({ complaintId, nonce }: { complaintId: string; nonce: number }) {
@@ -31,7 +31,7 @@ function VersionHistory({ complaintId, nonce }: { complaintId: string; nonce: nu
             {res.data.items.map((v) => (
               <li key={v.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-xs" data-testid="analysis-version">
                 <span className="font-medium">v{v.version}</span>
-                <RiskBadge level={v.risk_level} score={v.risk_score} />
+                <RiskBadge level={v.risk_level} score={v.risk_score} assessment={v.assessment} />
                 <span className="text-muted">{humanise(v.status)}</span>
                 <span className="text-subtle">{formatDateTime(v.created_at)}</span>
                 <span className="mono text-subtle">{v.pipeline_version}</span>
@@ -73,7 +73,7 @@ export function AnalysisPanel({ complaintId, hasAnalysis, onRan }: { complaintId
       const a = await complaintsApi.runAnalysis(complaintId);
       res.setData(a);
       setNonce((n) => n + 1);
-      setAnnounce(`Analysis finished: ${a.risk_level ? `${a.risk_level.toLowerCase()} risk` : "risk not scored"}.`);
+      setAnnounce(`Analysis finished: ${resultText(a.risk_level, a.risk_score, a.assessment)}.`);
       onRan?.();
     } catch (e) {
       setRunError(`The analysis could not be run. ${messageFor(e)}`);

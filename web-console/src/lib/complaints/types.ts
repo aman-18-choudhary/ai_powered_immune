@@ -29,6 +29,14 @@ export type AccountRole = (typeof ACCOUNT_ROLES)[number];
 export const RISK_FILTERS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+/** What a result can say (since 2026-10-18; absent on older analyses). */
+export type Assessment =
+  | "indicators_found"
+  | "model_prediction_only"
+  | "no_indicators_found"
+  | "insufficient_evidence"
+  | "not_assessed";
+
 export interface AuthConfig {
   auth_mode: "clerk" | "demo" | "local";
   clerk: { enabled: boolean; publishable_key: string | null };
@@ -95,6 +103,7 @@ export interface AnalysisSummary {
   risk_score: number | null;
   risk_level: RiskLevel | null;
   score_semantics: string;
+  assessment?: Assessment | null;
 }
 
 /**
@@ -339,6 +348,7 @@ export interface AnalysisResult {
   capabilities: Record<string, string>;
   risk_score: number | null;
   risk_level: RiskLevel | null;
+  assessment?: Assessment | null;
   score_semantics: string;
   classification: string | null;
   confidence: number | null;
@@ -449,6 +459,7 @@ export interface Analysis {
   capabilities: Record<string, string>;
   risk_score: number | null;
   risk_level: RiskLevel | null;
+  assessment?: Assessment | null;
   score_semantics: string;
   classification: string | null;
   confidence: number | null;

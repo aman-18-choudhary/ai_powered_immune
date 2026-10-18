@@ -19,7 +19,7 @@ export function ComplaintRows({ items, base, staff }: { items: ComplaintListItem
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-semibold">{c.title}</span>
                 <StatusChip status={c.status} />
-                {c.latest_analysis && <RiskBadge level={c.latest_analysis.risk_level} score={c.latest_analysis.risk_score} />}
+                {c.latest_analysis && <RiskBadge level={c.latest_analysis.risk_level} score={c.latest_analysis.risk_score} assessment={c.latest_analysis.assessment} />}
               </div>
               <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
                 <span>{CATEGORY_LABEL[c.category] ?? c.category}</span>

@@ -1,4 +1,4 @@
-import type { AccountRole, Category, ComplaintStatus, PaymentMethod, RiskLevel } from "./types";
+import type { AccountRole, Assessment, Category, ComplaintStatus, PaymentMethod, RiskLevel } from "./types";
 
 export const CATEGORY_LABEL: Record<Category, string> = {
   DIGITAL_ARREST: "Digital arrest",
@@ -33,6 +33,23 @@ export const PAYMENT_LABEL: Record<PaymentMethod, string> = {
 export const ROLE_LABEL: Record<AccountRole, string> = { CITIZEN: "Citizen", INVESTIGATOR: "Investigator", ADMIN: "Administrator" };
 
 export const RISK_LABEL: Record<RiskLevel, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Critical" };
+
+/** Strength of the scam indicators behind a level (the level is not a verdict). */
+export const INDICATOR_STRENGTH: Record<RiskLevel, string> = { LOW: "Weak", MEDIUM: "Moderate", HIGH: "Strong", CRITICAL: "Very strong" };
+
+/**
+ * The words shown for an analysis result. Evidence wording, never a verdict: "no indicators found"
+ * is not "safe" (accuracy audit 2026-10-17/18). Older analyses have no assessment.
+ */
+export function resultText(level: RiskLevel | null, score: number | null | undefined, assessment?: Assessment | null): string {
+  const pts = typeof score === "number" ? ` · ${score}/100` : "";
+  if (assessment === "insufficient_evidence") return "Insufficient evidence";
+  if (assessment === "not_assessed" || !level) return "Not assessed";
+  if (assessment === "no_indicators_found") return "No scam indicators found";
+  if (assessment === "model_prediction_only") return `${INDICATOR_STRENGTH[level]} · model prediction only${pts}`;
+  if (!assessment && level === "LOW") return `Weak or no indicators${pts}`;
+  return `${INDICATOR_STRENGTH[level]} scam indicators${pts}`;
+}
 
 /**
  * Status changes the service accepts (services/complaints/complaints/store.py TRANSITIONS). Used to

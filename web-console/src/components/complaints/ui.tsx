@@ -2,8 +2,8 @@ import { useId, type ReactNode } from "react";
 import { AlertOctagon, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, Clock, FileSearch, Gauge, Loader2, RefreshCw, Search, ServerOff, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/common/Panel";
-import { RISK_LABEL, STATUS_LABEL } from "@/lib/complaints/format";
-import type { ComplaintStatus, RiskLevel } from "@/lib/complaints/types";
+import { resultText, STATUS_LABEL } from "@/lib/complaints/format";
+import type { Assessment, ComplaintStatus, RiskLevel } from "@/lib/complaints/types";
 import { cn } from "@/lib/utils/cn";
 
 const STATUS_STYLE: Record<ComplaintStatus, { Icon: typeof Clock; cls: string }> = {
@@ -33,12 +33,28 @@ const RISK_STYLE: Record<RiskLevel, { Icon: typeof Clock; cls: string }> = {
   CRITICAL: { Icon: AlertOctagon, cls: "text-danger-text bg-danger-soft border-danger/60" },
 };
 
-/** Risk level as icon + words + score; the score is an uncalibrated heuristic, not a probability. */
-export function RiskBadge({ level, score, className }: { level: RiskLevel | null; score?: number | null; className?: string }) {
-  if (!level) {
+/**
+ * Analysis result as icon + words (+ score). Evidence wording, never a verdict: LOW and "no
+ * indicators found" are neutral (no green tick), because finding no cue is not a finding of safety.
+ * The score is an uncalibrated heuristic of indicator strength, not a probability.
+ */
+export function RiskBadge({
+  level,
+  score,
+  assessment,
+  className,
+}: {
+  level: RiskLevel | null;
+  score?: number | null;
+  assessment?: Assessment | null;
+  className?: string;
+}) {
+  const neutral = !level || level === "LOW" || assessment === "no_indicators_found" || assessment === "insufficient_evidence" || assessment === "not_assessed";
+  const text = resultText(level, assessment === "no_indicators_found" ? null : score, assessment);
+  if (neutral) {
     return (
-      <span className={cn("inline-flex items-center gap-1 rounded-md border border-line bg-chip px-1.5 py-0.5 text-[11px] font-medium text-muted", className)}>
-        <Gauge className="h-3 w-3" aria-hidden /> Risk not scored
+      <span className={cn("inline-flex items-center gap-1 rounded-md border border-line bg-chip px-1.5 py-0.5 text-[11px] font-medium text-muted", className)} data-testid="risk-badge">
+        <Gauge className="h-3 w-3" aria-hidden /> {level ? text : assessment === "insufficient_evidence" ? text : "Risk not scored"}
       </span>
     );
   }
@@ -46,7 +62,7 @@ export function RiskBadge({ level, score, className }: { level: RiskLevel | null
   return (
     <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium", cls, className)} data-testid="risk-badge">
       <Icon className="h-3 w-3" aria-hidden />
-      {RISK_LABEL[level]} risk{typeof score === "number" ? ` · ${score}/100` : ""}
+      {text}
     </span>
   );
 }

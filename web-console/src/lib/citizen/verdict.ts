@@ -4,7 +4,8 @@ import type { Lang } from "@/lib/i18n/citizen";
 export const MAX_CHARS = 4000;
 export const INPUT_CAP = 20000;
 
-export type Label = "safe" | "suspicious" | "likely_scam";
+/** "safe" was renamed (accuracy audit 2026-10-18): finding no cue is not a finding of safety. */
+export type Label = "no_indicators_found" | "weak_indicators" | "insufficient_input" | "suspicious" | "likely_scam";
 
 export interface Verdict {
   label: Label;
@@ -24,7 +25,7 @@ export function parseVerdict(raw: unknown): Verdict | null {
   if (!isRecord(raw) || !num(raw.score)) return null;
   let label: Label;
   let uncertain = raw.uncertain === true;
-  if (raw.label === "safe" || raw.label === "suspicious" || raw.label === "likely_scam") label = raw.label;
+  if (raw.label === "no_indicators_found" || raw.label === "weak_indicators" || raw.label === "insufficient_input" || raw.label === "suspicious" || raw.label === "likely_scam") label = raw.label;
   else {
     label = "suspicious";
     uncertain = true;

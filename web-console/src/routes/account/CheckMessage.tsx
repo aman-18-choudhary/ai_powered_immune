@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorBlock, Field, PageHeader, Spinner, inputCls } from "@/components/complaints/ui";
 import { AnalysisResultView } from "@/components/complaints/AnalysisResultView";
 import { ComplaintsApiError, complaintsApi, messageFor } from "@/lib/complaints/api";
-import { PAYMENT_LABEL, formatDateTime, humanise } from "@/lib/complaints/format";
+import { PAYMENT_LABEL, formatDateTime, humanise, resultText } from "@/lib/complaints/format";
 import { PAYMENT_METHODS, type CheckResult, type PaymentMethod } from "@/lib/complaints/types";
 import { EMPTY_CHECK, MAX_TEXT, MIN_TEXT, buildCheck, validateCheck, type CheckValues } from "@/lib/complaints/check";
 import { usePageTitle } from "@/lib/hooks/usePageTitle";
@@ -79,7 +79,7 @@ export default function CheckMessage() {
       const r = await complaintsApi.check(buildCheck(v));
       setResult(r);
       setChecked(v);
-      setAnnounce(`Check finished: ${r.risk_level ? `${r.risk_level.toLowerCase()} risk` : "no risk level given"}. Nothing was stored.`);
+      setAnnounce(`Check finished: ${resultText(r.risk_level, r.risk_score, r.assessment)}. Nothing was stored.`);
       setTimeout(() => resultRef.current?.focus(), 0);
     } catch (err) {
       setAnnounce("");

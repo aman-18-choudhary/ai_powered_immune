@@ -107,7 +107,7 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <StatusChip status={c.status} />
-          {c.latest_analysis && <RiskBadge level={c.latest_analysis.risk_level} score={c.latest_analysis.risk_score} />}
+          {c.latest_analysis && <RiskBadge level={c.latest_analysis.risk_level} score={c.latest_analysis.risk_score} assessment={c.latest_analysis.assessment} />}
           <span className="text-xs text-muted">{CATEGORY_LABEL[c.category] ?? c.category}</span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight" data-testid="complaint-title">

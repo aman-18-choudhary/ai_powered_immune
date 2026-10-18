@@ -64,7 +64,7 @@ test("evidence: build case, export package, verify PASS_PINNED", async ({ page }
 test("citizen: three samples in two languages", async ({ page }) => {
   await login(page, "citizen");
   await gotoPath(page, "/citizen");
-  const expectLabel: Record<string, string> = { sample1: "likely_scam", sample2: "suspicious", sample3: "safe" };
+  const expectLabel: Record<string, string> = { sample1: "likely_scam", sample2: "suspicious", sample3: "weak_indicators" };
   for (const lang of ["en", "ta"] as const) {
     await page.getByRole("radio", { name: lang === "en" ? "English" : "தமிழ்" }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(STRINGS[lang].title);
@@ -76,7 +76,7 @@ test("citizen: three samples in two languages", async ({ page }) => {
       await expect(verdict).toBeVisible();
       await expect(verdict).toHaveAttribute("data-label", expectLabel[key]!);
       await expect(page.getByTestId("verdict-label")).toHaveText(
-        STRINGS[lang][expectLabel[key] === "likely_scam" ? "verdictScam" : expectLabel[key] === "safe" ? "verdictSafe" : "verdictSuspicious"],
+        STRINGS[lang][expectLabel[key] === "likely_scam" ? "verdictScam" : expectLabel[key] === "weak_indicators" ? "verdictWeak" : "verdictSuspicious"],
       );
       if (lang === "ta" && key === "sample1") {
         // reasons and advice are localised by the API: Tamil script, not English

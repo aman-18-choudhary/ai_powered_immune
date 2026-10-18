@@ -124,7 +124,7 @@ describe("check a message or link", () => {
     expect(post.body).toEqual({ text: "Sir, Transfer your money to the RBI safe account now", url: "https://bit.ly/x" });
     expect(within(res).getByTestId("nothing-stored")).toHaveTextContent("Nothing was stored");
     expect(within(res).getByTestId("score-semantics")).toHaveTextContent("uncalibrated heuristic score, not a probability");
-    expect(within(res).getAllByTestId("risk-badge")[0]).toHaveTextContent("Critical risk · 93/100");
+    expect(within(res).getAllByTestId("risk-badge")[0]).toHaveTextContent("Very strong scam indicators · 93/100");
     const rules = within(res).getByTestId("indicator-group-rule");
     expect(rules).toHaveTextContent("call_guard.rules");
     expect(rules).toHaveTextContent("Transfer your money to the RBI safe account");
@@ -142,6 +142,27 @@ describe("check a message or link", () => {
     expect(within(res).getByTestId("model-versions")).toHaveTextContent("category-v1");
     const badges = within(within(res).getByTestId("explanation-parts")).getAllByTestId("source-badge").map((b) => b.getAttribute("data-source"));
     expect(badges).toEqual(["rule", "ml"]);
+  });
+
+  it("no indicators found: neutral wording, never 'safe' or 'low risk', category marked as not evidence (mocked API)", async () => {
+    as("CITIZEN");
+    mockFetch({
+      "POST /analyze": json(200, result({
+        risk_score: 0, risk_level: "LOW", assessment: "no_indicators_found", classification: "JOB_SCAM", confidence: 0.42,
+        indicators: [], explanation_parts: [],
+        limitations: ["No scam indicators were found by the rules and models that ran. This is not a finding that the message or event is safe: these checks cover a limited set of scam patterns."],
+      })),
+    });
+    const user = userEvent.setup();
+    renderCheck();
+    await user.type(screen.getByTestId("chk-text"), "We are pleased to offer you the position of analyst.");
+    await user.click(screen.getByTestId("chk-submit"));
+    const res = await screen.findByTestId("check-result");
+    const badge = within(res).getAllByTestId("risk-badge")[0]!;
+    expect(badge).toHaveTextContent("No scam indicators found");
+    expect(badge.textContent!.toLowerCase()).not.toMatch(/safe|low risk/);
+    expect(within(res).getByTestId("category-not-evidence")).toHaveTextContent("not used in the score");
+    expect(res).toHaveTextContent("This is not a finding that the message or event is safe");
   });
 
   it("Register a complaint pre-fills the form without submitting it", async () => {
@@ -216,13 +237,13 @@ describe("complaint analysis panel", () => {
       `/me/complaints/${ID}`,
     );
     const panel = await screen.findByTestId("analysis");
-    expect(within(panel).getAllByTestId("risk-badge")[0]).toHaveTextContent("Critical risk");
+    expect(within(panel).getAllByTestId("risk-badge")[0]).toHaveTextContent("Very strong scam indicators");
     expect(within(panel).getByTestId("indicator-group-rule")).toBeInTheDocument();
     expect(within(panel).getByTestId("provenance")).toHaveTextContent("call_guard.rules");
     const versions = await screen.findAllByTestId("analysis-version");
     expect(versions).toHaveLength(2);
     expect(versions[0]).toHaveTextContent("v2");
-    expect(versions[0]).toHaveTextContent("Critical risk · 93/100");
+    expect(versions[0]).toHaveTextContent("Very strong scam indicators · 93/100");
     expect(versions[1]).toHaveTextContent("(older format)");
   });
 });

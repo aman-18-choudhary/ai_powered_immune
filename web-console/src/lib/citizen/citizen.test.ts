@@ -57,3 +57,16 @@ describe("verdict parsing and message preparation", () => {
     expect(SAMPLES.map((s) => s.key)).toEqual(["sample1", "sample2", "sample3"]);
   });
 });
+
+describe("verdict labels after the accuracy batch (2026-10-18)", () => {
+  it("accepts the evidence labels", () => {
+    for (const label of ["no_indicators_found", "weak_indicators", "insufficient_input", "suspicious", "likely_scam"]) {
+      expect(parseVerdict({ label, score: 0.1 })?.label).toBe(label);
+    }
+  });
+  it("never trusts a 'safe' label from an older server: shown as suspicious and uncertain", () => {
+    const v = parseVerdict({ label: "safe", score: 0.0 });
+    expect(v?.label).toBe("suspicious");
+    expect(v?.uncertain).toBe(true);
+  });
+});

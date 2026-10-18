@@ -124,7 +124,7 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
   return (
     <div className="space-y-4 text-sm" data-testid="analysis">
       <div className="flex flex-wrap items-center gap-2">
-        <RiskBadge level={a.risk_level} score={a.risk_score} />
+        <RiskBadge level={a.risk_level} score={a.risk_score} assessment={a.assessment} />
         <span className="rounded-md border border-line bg-chip px-1.5 py-0.5 text-[11px]" data-testid="analysis-status">
           {STATUS_TEXT[a.status] ?? humanise(a.status)}
         </span>
@@ -148,6 +148,11 @@ export function AnalysisResultView({ a, idPrefix = "an", footer }: { a: Analysis
         ) : (
           <p className="text-muted">No category was predicted.</p>
         )}
+        {a.classification && a.assessment ? (
+          <p className="text-xs text-muted" data-testid="category-not-evidence">
+            A model guess (trained on synthetic data). It is not evidence and is not used in the score.
+          </p>
+        ) : null}
         {a.confidence_interpretation && (
           <p className="text-xs text-muted" data-testid="confidence-interpretation">
             {a.confidence_interpretation}
