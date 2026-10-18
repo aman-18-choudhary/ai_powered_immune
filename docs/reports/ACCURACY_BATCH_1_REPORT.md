@@ -1,5 +1,9 @@
 # Accuracy batch 1: before/after report
 
+> **Update:** accuracy batch 2 (fixes 5 and 6) is reported in
+> [ACCURACY_BATCH_2_REPORT.md](ACCURACY_BATCH_2_REPORT.md). The false positive and false negatives
+> listed below as remaining were addressed there; this report is kept as recorded.
+
 Date: 2026-10-18 (review addendum in section 8). Branch `accuracy-batch1` (the accuracy commits
 cherry-picked onto `6cc5554` without the paused Phase 9 work; see section 8), local only (not
 pushed). Commit hashes in sections 1-7 refer to the original commits on `build/implementation`;

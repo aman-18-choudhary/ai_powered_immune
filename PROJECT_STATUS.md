@@ -3,8 +3,8 @@
 Last updated: **2026-10-18** (accuracy audit and accuracy batch 1). GitHub `main` and
 `build/implementation` are at `6cc5554` (Phase 6 and its review fixes; CI run #34 passed, run #35
 failed on an unidentified flaky test on the same commit). **This branch (`accuracy-batch1`, not
-pushed)** adds only the accuracy audit, the frozen SYNTHETIC evaluation set and accuracy batch 1
-with its review fixes, cherry-picked onto `6cc5554`. The paused, unreviewed Phase 9 backend commits
+pushed)** adds only the accuracy audit, the frozen SYNTHETIC evaluation sets v1/v2, accuracy batch 1 with its review fixes and accuracy
+batch 2, on top of `6cc5554`. The paused, unreviewed Phase 9 backend commits
 are not on this branch; they remain local on `build/implementation`.
 
 ## Accuracy first (2026-10-18)
@@ -21,8 +21,15 @@ SYNTHETIC probes) and [docs/reports/ACCURACY_BATCH_1_REPORT.md](docs/reports/ACC
   scam recall at MEDIUM+ 10/10 → 2/10 (the removed "detections" had no evidence).
 * Review (2026-10-18): every LOW result states it is not a safety finding; older analyses get a
   derived assessment; both citizen checkers score explained points only and agree on all 20 cases.
-* Open: rule misfire on genuine bank OTP SMS (fix 5); no rules for most non-digital-arrest scams
-  (fix 6); transcript confidence (fix 7); Live Protection false positives (fix 9); Phase 9 paused.
+* Batch 2 (rules-v2, links in text): genuine bank OTP warnings no longer flagged; evidence-backed
+  rules for UPI PIN-to-receive, advance fees, guaranteed returns, sextortion, account-block threats
+  and reported scam encounters; offline checks for links written in the text (never fetched,
+  marked not verified). On the SYNTHETIC sets (written by the rule author; regression evidence
+  only): v1 10/10 scams and 0/8 legitimate flagged, v2 36/36 and 0/28. See
+  [docs/reports/ACCURACY_BATCH_2_REPORT.md](docs/reports/ACCURACY_BATCH_2_REPORT.md).
+* Open: transcript confidence and WER (fix 7); Live Protection false positives on conversations
+  about scams (fix 9); native-speaker review of hi/ta/bn texts; SAFE_ACCOUNT_TRANSFER breadth
+  ("secure account"); no real-world accuracy measurement; Phase 9 paused (not on this branch).
 * EXPERIMENTAL until validated on real data: risk bands, category model, script classifier, URL
   heuristics, Hindi/Hinglish transcription, Live Protection levels, LLM explanations, simulator
   numbers, complaint network.

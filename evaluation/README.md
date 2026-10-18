@@ -1,6 +1,6 @@
 # Evaluation
 
-**Everything here is SYNTHETIC.** The datasets are hand-written probe texts, not real complaints or
+**Everything here is SYNTHETIC, and both datasets were written by the author of the rules: scores are regression evidence, not real-world accuracy.** The datasets are hand-written probe texts, not real complaints or
 messages. Results describe behaviour on these cases only; they are not real-world accuracy, and the
 datasets are far too small for statistical claims.
 
@@ -28,6 +28,8 @@ citizen policy. Metric definitions are in the docstring of `run_accuracy_eval.py
 | `results/accuracy_probes_v1__baseline-clean-branch.json` | `89f2aff` | Baseline code on `accuracy-batch1`, corrected runner (real Docker checker path) |
 | `results/accuracy_probes_v1__after-review-clean-branch.json` | `f8f4162` | After the batch 1 review fixes on `accuracy-batch1` |
 | `results/accuracy_probes_v2__baseline-before-batch2.json` | `b62260d` | v2 on the code before any batch 2 rule |
+| `results/accuracy_probes_v1__final-batch2.json` | `74dbf9b` | v1 after accuracy batch 2 ([report](../docs/reports/ACCURACY_BATCH_2_REPORT.md)) |
+| `results/accuracy_probes_v2__final-batch2.json` | `74dbf9b` | v2 after accuracy batch 2 |
 
 The first two files were recorded on `build/implementation` (which also holds paused Phase 9
 commits); their `stack_label` column used an approximation (`policy.label_for`) and is superseded

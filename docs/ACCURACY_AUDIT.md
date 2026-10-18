@@ -143,9 +143,10 @@ category model guessed a scam type with confidence 0.31". The UI cannot tell the
 
 ## 7. Top 10 fixes (ranked by impact, then effort)
 
-Status 2026-10-18: fixes **1, 2, 3, 4 and 8 done** (local, not pushed) with before/after numbers in
-[reports/ACCURACY_BATCH_1_REPORT.md](reports/ACCURACY_BATCH_1_REPORT.md); fixes 5, 6, 7, 9 and 10
-open. The stack citizen checker (over HTTP) does not yet use `require_explained`.
+Status 2026-10-18: fixes **1, 2, 3, 4, 5, 6 and 8 done** (local, not pushed): batch 1 in
+[reports/ACCURACY_BATCH_1_REPORT.md](reports/ACCURACY_BATCH_1_REPORT.md), batch 2 in
+[reports/ACCURACY_BATCH_2_REPORT.md](reports/ACCURACY_BATCH_2_REPORT.md). Fixes 7, 9 and 10 open.
+Both citizen checkers now use explained-only scoring.
 
 | # | Fix | Failure mode addressed | Effort | Acceptance criteria |
 |---|---|---|---|---|
