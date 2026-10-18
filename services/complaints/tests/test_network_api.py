@@ -481,3 +481,40 @@ async def test_session_capabilities_include_network_for_staff(client, inv, tok):
     assert {"network:read", "network:review"} <= set(s["capabilities"])
     s = (await client.get("/auth/session", headers=tok("a"))).json()
     assert not any(c.startswith("network:") for c in s["capabilities"])
+
+
+# --------------------------------------------------------------------- indirect privacy leaks
+async def test_opted_out_complaint_cannot_bridge_or_be_counted(client, inv, tok, mk):
+    # review 2026-10-18: A -(UPI)- B -(phone)- C. When B opts out, nothing may pass through B:
+    # C must not be reached from A, A and C must not form a cluster through B, counts must
+    # not include B, and an existing review involving B must not show from A's side.
+    a = await mk("a", upi_id="bridge.upi@ybl")
+    b = await mk("b", upi_id="bridge.upi@ybl", suspect_phone="9811122233")
+    c = await mk("c", suspect_phone="9811122233")
+    r = await review(client, inv, a, b, "confirmed", note="checked")
+    assert r.status_code == 201
+    g2 = (await client.get(f"/complaints/{a}/graph", params={"depth": 2}, headers=inv)).json()
+    assert {n.get("complaint_id") for n in g2["nodes"]} >= {a, b, c}  # visible while b opts in
+
+    patch = await client.patch(
+        "/me", json={"privacy": {"allow_case_matching": False}}, headers=citizen(tok, "b")
+    )
+    assert patch.status_code == 200
+    g2 = (await client.get(f"/complaints/{a}/graph", params={"depth": 2}, headers=inv)).json()
+    ids = {n.get("complaint_id") for n in g2["nodes"] if n["kind"] == "complaint"}
+    assert ids == {a}  # neither b nor c (reachable only through b)
+    assert all(n.get("complaint_count", 0) <= 1 for n in g2["nodes"] if n["kind"] == "entity")
+    assert not [e for e in g2["edges"] if e["kind"] == "review"]
+    cl = (await client.get("/graph/clusters", headers=inv)).json()
+    assert all(not ({a, c} <= set(x["member_ids"])) for x in cl["items"])
+    assert all(b not in x["member_ids"] for x in cl["items"])
+    s = (await client.post("/entities/search", json={"type": "upi", "value": "bridge.upi@ybl"},
+                           headers=inv)).json()  # fmt: skip
+    assert s["total"] == 1 and [i["id"] for i in s["items"]] == [a]
+    rel = await related(client, inv, a)
+    assert rel["items"] == [] and rel["total"] == 0
+    blob = json.dumps(rel) + json.dumps(g2) + json.dumps(cl) + json.dumps(s)
+    assert b not in blob and c not in blob
+    # a new review of the pair is refused while b opts out
+    r = await review(client, inv, a, b, "rejected")
+    assert r.status_code == 409 and r.json()["error"] == "link_matching_disabled"
