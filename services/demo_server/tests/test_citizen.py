@@ -138,3 +138,17 @@ def test_a_listed_cue_is_never_under_a_no_indicators_heading(client):
     assert r["label"] == "weak_indicators" and "URGENCY" in codes
     for label in ("safe", "no_indicators_found"):
         assert r["label"] != label
+
+
+@pytest.mark.parametrize(("message", "label", "code"), [
+    # accuracy batch 2 (2026-10-18): genuine bank OTP warning no longer flagged; new rule classes
+    ("Your OTP for SBI login is 482913. Do not share this OTP with anyone. SBI never asks for "
+     "your OTP or PIN.", "no_indicators_found", None),
+    ("You have won a cashback of Rs 2,000. Approve the request on your app and enter your UPI PIN "
+     "to receive it.", "suspicious", "UPI_PIN_TO_RECEIVE"),
+])  # fmt: skip
+def test_batch2_rules_reach_the_console_checker(client, message, label, code):
+    r = post(client, message=message)
+    assert r["label"] == label
+    if code:
+        assert code in [x["code"] for x in r["reasons"]]

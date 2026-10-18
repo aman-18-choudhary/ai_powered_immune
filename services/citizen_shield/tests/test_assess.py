@@ -224,7 +224,8 @@ async def test_no_verdict_above_no_indicators_without_a_listed_reason(make_app):
     # at all; the console checker said 'no_indicators_found'. Both now score explained points only.
     async with client(make_app()) as c:
         r = await post(c, message=SEXTORTION)
-    assert r["label"] == "no_indicators_found" and r["score"] == 0.0
+    # batch 2 (rules-v2): now detected, and with its reason listed
+    assert r["label"] == "suspicious" and "SEXTORTION_THREAT" in [x["code"] for x in r["reasons"]]
     for text in (SCAM, BENIGN, SEXTORTION):
         async with client(make_app()) as c:
             v = await post(c, message=text)
@@ -243,3 +244,16 @@ async def test_the_client_asks_call_guard_for_explained_scores_only():
     await guard.score("hello there friend")
     await guard.aclose()
     assert seen == [{"message": "hello there friend", "require_explained": True}]
+
+
+async def test_batch2_rules_reach_the_docker_checker(make_app):
+    # accuracy batch 2 (2026-10-18): same outcomes as the console checker
+    genuine = ("Your OTP for SBI login is 482913. Do not share this OTP with anyone. SBI never asks "
+               "for your OTP or PIN.")  # fmt: skip
+    upi = ("You have won a cashback of Rs 2,000. Approve the request on your app and enter your "
+           "UPI PIN to receive it.")  # fmt: skip
+    async with client(make_app()) as c:
+        g = await post(c, message=genuine)
+        u = await post(c, message=upi)
+    assert g["label"] == "no_indicators_found"
+    assert u["label"] == "suspicious" and "UPI_PIN_TO_RECEIVE" in [x["code"] for x in u["reasons"]]

@@ -69,6 +69,43 @@ REASON_TEXT: dict[str, dict[str, str]] = {
         "ta": "உடனடியாக செயல்படுமாறு அழுத்தம் கொடுக்கப்படுகிறது.",
         "bn": "বার্তাটি আপনাকে এখনই পদক্ষেপ নিতে চাপ দিচ্ছে।",
     },
+    # rules-v2 (accuracy batch 2, 2026-10-18). hi/ta/bn wording needs a native-speaker review.
+    "UPI_PIN_TO_RECEIVE": {
+        "en": "You are asked to enter a UPI PIN or approve a request to receive money. Receiving money never needs a PIN.",
+        "hi": "पैसे पाने के लिए यूपीआई पिन डालने या अनुरोध स्वीकार करने को कहा जा रहा है। पैसे पाने के लिए कभी पिन नहीं लगता।",
+        "ta": "பணம் பெற UPI PIN உள்ளிடவோ கோரிக்கையை ஏற்கவோ சொல்லப்படுகிறது. பணம் பெற PIN தேவையில்லை.",
+        "bn": "টাকা পেতে UPI পিন দিতে বা অনুরোধ মেনে নিতে বলা হচ্ছে। টাকা পেতে কখনও পিন লাগে না।",
+    },
+    "ADVANCE_FEE_DEMAND": {
+        "en": "You are asked to pay a fee or deposit to start a job or task, or to release earnings.",
+        "hi": "नौकरी या टास्क शुरू करने या कमाई निकालने के लिए फीस या जमा राशि मांगी जा रही है।",
+        "ta": "வேலை அல்லது பணியைத் தொடங்க அல்லது வருமானத்தை விடுவிக்க கட்டணம் அல்லது வைப்புத்தொகை கேட்கப்படுகிறது.",
+        "bn": "কাজ বা টাস্ক শুরু করতে, অথবা আয় তুলতে ফি বা জমা চাওয়া হচ্ছে।",
+    },
+    "GUARANTEED_RETURNS": {
+        "en": "The message promises unrealistic guaranteed returns or doubling your money.",
+        "hi": "संदेश अवास्तविक गारंटीड रिटर्न या पैसे दोगुने करने का वादा करता है।",
+        "ta": "நம்பமுடியாத உறுதியான லாபம் அல்லது பணத்தை இரட்டிப்பாக்குவதாக வாக்குறுதி அளிக்கப்படுகிறது.",
+        "bn": "বার্তায় অবাস্তব নিশ্চিত লাভ বা টাকা দ্বিগুণ করার প্রতিশ্রুতি দেওয়া হচ্ছে।",
+    },
+    "SEXTORTION_THREAT": {
+        "en": "Someone threatens to spread private images or recordings unless you pay.",
+        "hi": "पैसे न देने पर निजी तस्वीरें या रिकॉर्डिंग फैलाने की धमकी दी जा रही है।",
+        "ta": "பணம் தராவிட்டால் தனிப்பட்ட படங்கள் அல்லது பதிவுகளைப் பரப்புவதாக மிரட்டப்படுகிறது.",
+        "bn": "টাকা না দিলে ব্যক্তিগত ছবি বা রেকর্ডিং ছড়িয়ে দেওয়ার হুমকি দেওয়া হচ্ছে।",
+    },
+    "ACCOUNT_BLOCK_THREAT": {
+        "en": "The message threatens to block your account, card or SIM unless you update KYC or use a link.",
+        "hi": "केवाईसी अपडेट न करने या लिंक न खोलने पर खाता, कार्ड या सिम बंद करने की धमकी दी जा रही है।",
+        "ta": "KYC புதுப்பிக்காவிட்டால் அல்லது இணைப்பைப் பயன்படுத்தாவிட்டால் கணக்கு, அட்டை அல்லது SIM முடக்கப்படும் என மிரட்டப்படுகிறது.",
+        "bn": "KYC আপডেট না করলে বা লিংক ব্যবহার না করলে অ্যাকাউন্ট, কার্ড বা সিম বন্ধ করার হুমকি দেওয়া হচ্ছে।",
+    },
+    "REPORTED_SCAM_ENCOUNTER": {
+        "en": "The text describes money or details being taken through a known scam method.",
+        "hi": "पाठ में किसी जाने-पहचाने स्कैम तरीके से पैसे या जानकारी लिए जाने का वर्णन है।",
+        "ta": "அறியப்பட்ட மோசடி முறையில் பணம் அல்லது விவரங்கள் பறிக்கப்பட்டதாக உரை விவரிக்கிறது.",
+        "bn": "লেখায় পরিচিত প্রতারণার পদ্ধতিতে টাকা বা তথ্য নেওয়ার বর্ণনা আছে।",
+    },
     "SCRIPT_CLASSIFIER_MATCH": {
         "en": "The wording is similar to known digital-arrest scam scripts.",
         "hi": "भाषा जाने-पहचाने डिजिटल अरेस्ट स्कैम स्क्रिप्ट से मिलती-जुलती है।",

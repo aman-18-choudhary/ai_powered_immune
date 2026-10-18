@@ -31,7 +31,7 @@ from .policy import (
 from .texts import ADVICE, GENERIC_REASON, PARTIAL_NOTICE, REASON_TEXT, TOO_LONG_NOTICE
 
 THRESHOLDS = {"suspicious": SUSPICIOUS, "likely_scam": LIKELY_SCAM}
-RULES_ONLY_PREFIX = "rules"  # call-guard's RULES_VERSION ("rules-v1"): classifier unavailable
+RULES_ONLY_PREFIX = "rules"  # call-guard's RULES_VERSION ("rules-v2"): classifier unavailable
 DEGRADED_SCORE = SUSPICIOUS  # placeholder consistent with the label; not a model output
 DEGRADED_VERSION = "unavailable"
 
