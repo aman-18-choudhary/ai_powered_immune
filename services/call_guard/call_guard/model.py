@@ -124,7 +124,13 @@ class Scorer:
     def model_version(self) -> str:
         return self._clf.version if self._clf else RULES_VERSION
 
-    def score_text(self, text: str) -> tuple[float, list[Reason], str]:
+    def score_text(
+        self, text: str, *, require_explained: bool = False
+    ) -> tuple[float, list[Reason], str]:
+        """Score and reasons. ``require_explained=True`` (real-input paths: complaints, citizen
+        checker) counts the classifier only when it is confident enough to add its
+        SCRIPT_CLASSIFIER_MATCH reason, so every point of the score has a listed reason. The
+        default keeps the simulator's behaviour (and its benchmark) unchanged."""
         rule_score, reasons, advisory = analyse(text)
         score = rule_score
         version = RULES_VERSION
@@ -147,7 +153,8 @@ class Scorer:
                     if classes == 1
                     else 1.0,
                 )
-                if p >= CLF_REASON_MIN and p > rule_score:
+                explained = p >= CLF_REASON_MIN and p > rule_score
+                if explained:
                     reasons = [
                         *reasons,
                         Reason(
@@ -156,7 +163,7 @@ class Scorer:
                             detail="text matches known digital-arrest call scripts",
                         ),
                     ]
-                score = max(rule_score, p)
+                score = rule_score if require_explained and not explained else max(rule_score, p)
         score = round(min(1.0, max(0.0, score)), 4)
         return score, reasons or [no_risk_reason()], version
 

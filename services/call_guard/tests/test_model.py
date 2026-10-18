@@ -261,3 +261,24 @@ def test_review2_set_gates():
             assert hard and max(hard) < 0.5
 
     asyncio.run(main())
+
+
+def test_require_explained_counts_the_classifier_only_with_its_reason():
+    # accuracy audit 2026-10-17: a classifier score below its reason threshold raised the score
+    # (0.40) while the only reason was NO_RISK_INDICATORS. Real-input paths opt out of that.
+    s = Scorer(load_classifier())
+    text = ("I have recorded your private video call. Pay 20000 rupees in 2 hours or I will "
+            "send it to all your contacts and family.")  # fmt: skip
+    default, reasons_d, _ = s.score_text(text)
+    explained, reasons_e, _ = s.score_text(text, require_explained=True)
+    assert [r.code for r in reasons_d] == [r.code for r in reasons_e] == ["NO_RISK_INDICATORS"]
+    assert default == 0.4  # the simulator default is unchanged
+    assert explained == 0.0  # no listed reason, no points
+
+
+def test_require_explained_keeps_confident_classifier_scores():
+    s = Scorer(load_classifier())
+    text = ("This is CBI officer Sharma. Your Aadhaar is linked to money laundering and you are "
+            "under digital arrest. Do not tell anyone. Transfer your savings to the RBI safe "
+            "account today.")  # fmt: skip
+    assert s.score_text(text, require_explained=True)[0] == s.score_text(text)[0]
