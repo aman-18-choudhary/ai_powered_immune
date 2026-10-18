@@ -11,6 +11,7 @@ import {
   ScanSearch,
   Radar,
   ShieldCheck,
+  Share2,
   Smartphone,
   UserCog,
   UserRound,
@@ -24,6 +25,8 @@ export interface NavItem {
   title: string;
   icon: LucideIcon;
   end?: boolean;
+  /** Not highlighted under this sub-path (it has its own entry). */
+  inactiveUnder?: string;
 }
 
 /** Simulator pages (need a demo role; everything on them is simulated). */
@@ -46,7 +49,8 @@ export const ACCOUNT_NAV: readonly AccountNavItem[] = [
   { to: "/me", label: "Reports", title: "My complaints", icon: FileText, end: true, roles: ["CITIZEN"] },
   { to: "/me/complaints/new", label: "Report", title: "Register a complaint", icon: FilePlus2, roles: ["CITIZEN"] },
   { to: "/check", label: "Check", title: "Check a message or link", icon: ScanSearch, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
-  { to: "/investigator", label: "Queue", title: "Investigator queue", icon: ListChecks, roles: ["INVESTIGATOR", "ADMIN"] },
+  { to: "/investigator", label: "Queue", title: "Investigator queue", icon: ListChecks, inactiveUnder: "/investigator/network", roles: ["INVESTIGATOR", "ADMIN"] },
+  { to: "/investigator/network", label: "Network", title: "Complaint network", icon: Share2, roles: ["INVESTIGATOR", "ADMIN"] },
   { to: "/admin", label: "Admin", title: "Administration", icon: UserCog, roles: ["ADMIN"] },
   { to: "/models", label: "Models", title: "Models", icon: BrainCircuit, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
   { to: "/me/profile", label: "Profile", title: "Profile and privacy", icon: UserRound, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
@@ -76,6 +80,7 @@ const TITLES: { to: string; title: string; end?: boolean }[] = [
   { to: "/me/profile", title: "Profile and privacy" },
   { to: "/investigator", title: "Investigator queue" },
   { to: "/investigator/complaints/", title: "Complaint review" },
+  { to: "/investigator/network", title: "Complaint network" },
   { to: "/admin", title: "Administration" },
   { to: "/check", title: "Check a message or link" },
   { to: "/models", title: "Models" },

@@ -24,6 +24,7 @@ const NewComplaint = lazy(() => import("@/routes/account/NewComplaint"));
 const ComplaintPage = lazy(() => import("@/routes/account/ComplaintPage"));
 const Profile = lazy(() => import("@/routes/account/Profile"));
 const InvestigatorQueue = lazy(() => import("@/routes/account/InvestigatorQueue"));
+const Network = lazy(() => import("@/routes/account/Network"));
 const Admin = lazy(() => import("@/routes/account/Admin"));
 const CheckMessage = lazy(() => import("@/routes/account/CheckMessage"));
 const Models = lazy(() => import("@/routes/account/Models"));
@@ -54,6 +55,7 @@ function Authed() {
           <Route path="me/profile" element={<RequireAccount><Profile /></RequireAccount>} />
           <Route path="investigator" element={<RequireAccount roles={STAFF}><InvestigatorQueue /></RequireAccount>} />
           <Route path="investigator/complaints/:id" element={<RequireAccount roles={STAFF}><ComplaintPage /></RequireAccount>} />
+          <Route path="investigator/network" element={<RequireAccount roles={STAFF}><Network /></RequireAccount>} />
           <Route path="admin" element={<RequireAccount roles={["ADMIN"]}><Admin /></RequireAccount>} />
           <Route path="check" element={<RequireAccount><CheckMessage /></RequireAccount>} />
           <Route path="models" element={<RequireAccount><Models /></RequireAccount>} />

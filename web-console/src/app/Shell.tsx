@@ -29,6 +29,7 @@ function useNavItems() {
 
 function Rail() {
   const items = useNavItems();
+  const { pathname } = useLocation();
   return (
     <nav
       aria-label="Primary"
@@ -37,11 +38,11 @@ function Rail() {
       <NavLink to="/" aria-label="ScamShield Immune home" className="mb-3 hidden md:block">
         <BrandMark size={36} />
       </NavLink>
-      {items.map(({ to, label, icon: Icon, end }) => (
+      {items.map(({ to, label, icon: Icon, end, inactiveUnder }) => (
         <NavLink
           key={to}
           to={to}
-          end={end}
+          end={end || (inactiveUnder !== undefined && (pathname === inactiveUnder || pathname.startsWith(`${inactiveUnder}/`)))}
           className={({ isActive }) =>
             cn(
               "group relative flex min-w-[58px] flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10.5px] font-medium transition-colors md:w-full",

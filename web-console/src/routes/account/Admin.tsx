@@ -165,6 +165,12 @@ function UsersTab() {
   );
 }
 
+/** Clearer names for audit actions whose raw code could be misread. */
+const AUDIT_LABEL: Record<string, string> = {
+  link_confirm: "Complaint link confirmed (same case; not a finding of crime)",
+  link_reject: "Complaint link rejected",
+};
+
 function AuditTab() {
   const [offset, setOffset] = useState(0);
   const res = useResource((s) => complaintsApi.adminAudit({ limit: LIMIT, offset }, s), String(offset));
@@ -182,7 +188,7 @@ function AuditTab() {
           {res.data?.items.map((r) => (
             <li key={r.id} className="space-y-0.5 px-4 py-2.5 text-sm" data-testid="audit-row">
               <p>
-                <strong>{humanise(r.action)}</strong> <span className="text-xs text-subtle">{formatDateTime(r.created_at)}</span>
+                <strong>{AUDIT_LABEL[r.action] ?? humanise(r.action)}</strong> <span className="text-xs text-subtle">{formatDateTime(r.created_at)}</span>
               </p>
               <p className="text-xs text-muted">
                 actor <span className="mono">{r.actor_user_id ? shortId(r.actor_user_id) : "system"}</span>
