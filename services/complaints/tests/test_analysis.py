@@ -219,3 +219,30 @@ def test_static_guidance_is_labelled_and_keyed():
             assert acts and all(a["source"] == "static_guidance" and a["text"] for a in acts)
     assert any("1930" in a["text"] for a in static_guidance("UPI_FRAUD", "HIGH"))
     assert MIN  # used import
+
+
+async def test_older_analyses_get_an_assessment_derived_from_stored_evidence(client, tok, analysis):
+    # review 2026-10-18: analyses stored before the assessment existed (for example a HIGH that
+    # rested on the removed category prior, with no indicator) must not read "strong indicators"
+    cases = [
+        ([], "no_indicators_found"),
+        ([{"code": "SCRIPT_CLASSIFIER_MATCH", "source": "ml", "method": "call_guard.clf-v1",
+           "weight": 0.8, "text": "x"}], "model_prediction_only"),
+        ([{"code": "DIGITAL_ARREST_PHRASE", "source": "rule", "method": "call_guard.rules",
+           "weight": 0.7, "text": "x"}], "indicators_found"),
+        # a pre-provenance row (old source vocabulary, no method)
+        ([{"code": "DIGITAL_ARREST_PHRASE", "source": "call_guard", "weight": 0.7, "text": "x"}],
+         "indicators_found"),
+    ]  # fmt: skip
+    for inds, expected in cases:
+        analysis.outcome = AnalysisOutcome(  # no extra["assessment"]: stored like an older row
+            status="COMPLETED", pipeline_version="t", capabilities={}, risk_score=70,
+            risk_level="HIGH", indicators=inds, recommended_actions=[], limitations=[],
+        )  # fmt: skip
+        c = await create(client, tok("a"))
+        await client.post(f"/complaints/{c['id']}/analysis", headers=tok("a"))
+        full = (await client.get(f"/complaints/{c['id']}/analysis", headers=tok("a"))).json()
+        assert (full["assessment"], full["assessment_derived"]) == (expected, True)
+        summary = (await client.get(f"/complaints/{c['id']}", headers=tok("a"))).json()
+        latest = summary["latest_analysis"]
+        assert (latest["assessment"], latest["assessment_derived"]) == (expected, True)

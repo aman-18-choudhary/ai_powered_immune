@@ -287,6 +287,27 @@ def _effective_level(a: dict[str, Any]) -> str | None:
     return d.get("risk_level") or a["risk_level"]
 
 
+def _assessment(d: dict[str, Any] | None, row: dict[str, Any] | None) -> tuple[str | None, bool]:
+    """(assessment, derived). Analyses stored before 2026-10-18 have none: it is derived from the
+    stored status, level and indicators with the same rules as new analyses, so an old level that
+    rested on the removed category prior is not shown as "strong scam indicators"."""
+    stored = (d or {}).get("assessment")
+    if stored or row is None or "status" not in row:
+        return stored, False
+    level = _effective_level(row)
+    if row.get("status") == "INSUFFICIENT_INPUT":
+        return "insufficient_evidence", True
+    if row.get("status") == "UNAVAILABLE" or level is None:
+        return "not_assessed", True
+    srcs = {legacy_indicator(i).get("source") for i in row.get("indicators") or []
+            if isinstance(i, dict)}  # fmt: skip
+    if not srcs & {"rule", "ml"}:
+        return "no_indicators_found", True
+    if "rule" not in srcs:
+        return "model_prediction_only", True
+    return "indicators_found", True
+
+
 def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
     if a is None:
         return None
@@ -296,7 +317,8 @@ def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
         "score_semantics": SCORE_SEMANTICS,
         # indicators_found | model_prediction_only | no_indicators_found | insufficient_evidence |
         # not_assessed; None for analyses stored before 2026-10-18
-        "assessment": (a.get("detail") or {}).get("assessment"),
+        "assessment": _assessment(a.get("detail"), a)[0],
+        "assessment_derived": _assessment(a.get("detail"), a)[1],
     }  # fmt: skip
 
 
@@ -345,8 +367,9 @@ def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) 
         parts = [{"text": row["explanation"], "source": "rule", "method": "explanation_template",
                   "derived_from_legacy": True}]  # fmt: skip
     return {
-        # None for analyses stored before the assessment existed (2026-10-18)
-        "assessment": d.get("assessment"),
+        # derived from stored status, level and indicators for analyses stored before 2026-10-18
+        "assessment": _assessment(d, row)[0],
+        "assessment_derived": _assessment(d, row)[1],
         "explanation_source": d.get("explanation_source"),
         "explanation_parts": parts or [],
         "llm_explanation": d.get("llm_explanation"),

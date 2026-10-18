@@ -951,7 +951,8 @@ class ComplaintStore:
         if summary:
             return {
                 k: d.get(k)
-                for k in ("version", "created_at", "status", "risk_score", "risk_level", "detail")
+                for k in ("version", "created_at", "status", "risk_score", "risk_level", "detail",
+                          "indicators")
             }
         return d
 

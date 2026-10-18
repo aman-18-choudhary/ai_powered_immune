@@ -778,6 +778,13 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 "finding that the message or event is safe: these checks cover a limited set of "
                 "scam patterns."
             )
+        elif level == "LOW":
+            # weak cues only (for example URGENCY): as above, LOW is not a finding of safety
+            limitations.append(
+                "Only weak scam indicators were found, so the level is LOW. This is not a finding "
+                "that the message or event is safe: these checks cover a limited set of scam "
+                "patterns."
+            )
         if assessment == "model_prediction_only" or capped_model_only:
             limitations.append(
                 "The score comes from a machine-learning model only, with no rule-based indicator; "

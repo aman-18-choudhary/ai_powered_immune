@@ -95,7 +95,17 @@ def test_missed_scams_never_read_as_safe(results):
                        for x in r.limitations), cid  # fmt: skip
         else:  # weak indicators only (for example URGENCY): listed, level LOW, never "safe"
             assert r.risk_level == "LOW" and r.indicators, cid
+            # review 2026-10-18: weak-only results lacked the not-a-safety-finding limitation
+            assert any("not a finding that the message or event is safe" in x
+                       for x in r.limitations), cid  # fmt: skip
         assert "safe" not in (a or "")
+
+
+def test_every_low_result_says_it_is_not_a_finding_of_safety(results):
+    for cid, (_, r) in results.items():
+        if r.risk_level == "LOW":
+            assert any("not a finding that the message or event is safe" in x
+                       for x in r.limitations), cid  # fmt: skip
 
 
 def test_classic_digital_arrest_scripts_stay_high(results):
