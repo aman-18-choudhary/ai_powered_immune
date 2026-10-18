@@ -1,11 +1,10 @@
 # Project status
 
-Last updated: **2026-10-18** (accuracy audit and accuracy batch 1). GitHub `main` and
-`build/implementation` are at `6cc5554` (Phase 6 and its review fixes; CI run #34 passed, run #35
-failed on an unidentified flaky test on the same commit). **This branch (`accuracy-batch1`, not
-pushed)** adds only the accuracy audit, the frozen SYNTHETIC evaluation sets v1/v2, accuracy batch 1 with its review fixes and accuracy
-batch 2, on top of `6cc5554`. The paused, unreviewed Phase 9 backend commits
-are not on this branch; they remain local on `build/implementation`.
+Last updated: **2026-10-18** (Phase 9 complaint network). GitHub `main` and `build/implementation`
+are at `b8d9dd7` (accuracy audit, accuracy batches 1 and 2; CI runs #36 and #37 passed). **This
+branch (`phase9-network`, local, not pushed)** adds Phase 9 on top of `b8d9dd7`: complaint
+identifiers (migration 10 with backfill), the staff-only network API, the related complaints panel,
+the network page and their tests. See [docs/reports/PHASE_9_REPORT.md](docs/reports/PHASE_9_REPORT.md).
 
 ## Accuracy first (2026-10-18)
 
@@ -29,7 +28,7 @@ SYNTHETIC probes) and [docs/reports/ACCURACY_BATCH_1_REPORT.md](docs/reports/ACC
   [docs/reports/ACCURACY_BATCH_2_REPORT.md](docs/reports/ACCURACY_BATCH_2_REPORT.md).
 * Open: transcript confidence and WER (fix 7); Live Protection false positives on conversations
   about scams (fix 9); native-speaker review of hi/ta/bn texts; SAFE_ACCOUNT_TRANSFER breadth
-  ("secure account"); no real-world accuracy measurement; Phase 9 paused (not on this branch).
+  ("secure account"); no real-world accuracy measurement.
 * EXPERIMENTAL until validated on real data: risk bands, category model, script classifier, URL
   heuristics, Hindi/Hinglish transcription, Live Protection levels, LLM explanations, simulator
   numbers, complaint network.
@@ -88,7 +87,7 @@ dependency missing), **Limitation**.
 | Feature | Status |
 |---|---|
 | Fraud DNA (similar complaints, Qdrant) | Planned (Qdrant, embedding libraries not installed) |
-| Complaint network (shared identifiers, typed links) | Planned |
+| Complaint network: identifiers from structured fields, observed (exact) and inferred (same domain) links, investigator confirm/reject with audit, related panel, graph (depth ≤ 2, size caps), clusters, POST-only identifier search; staff only; opted-out and deleted complaints excluded everywhere | Verified (tests incl. Postgres; agent Playwright against a real server with SYNTHETIC complaints); **EXPERIMENTAL**: a shared identifier is a lead, not proof |
 | Complaint hotspots and map | Planned |
 | Ring graph, takedown simulation, city hotspots | Verified, **simulator data only** (not complaint intelligence) |
 
@@ -206,6 +205,6 @@ the repository's Actions page or the public API; step logs need a GitHub sign-in
 
 ## 5. Next step
 
-Phase 6 awaits the owner's review and approval to push. Recommended next: Phase 9 (complaint
-network from shared identifiers, no new software), then Phase 8 (Fraud DNA); see
+Phase 9 awaits the owner's review and approval to push (branch `phase9-network`). Recommended next:
+Phase 8 (Fraud DNA), then Phase 10 (hotspots); see
 [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).

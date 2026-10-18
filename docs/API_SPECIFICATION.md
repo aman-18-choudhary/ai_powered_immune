@@ -140,6 +140,19 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 | `GET /admin/audit` | admin | Paginated audit log |
 | `GET /admin/health` | admin | Database, identity keys (JWKS), evidence directory, call-guard scorer, category model, Ollama, `stt` (same object as in `/models`, without `used_for`), and `not_configured` for Qdrant, Neo4j, PostGIS, Redis |
 
+### Complaint network (Phase 9, staff only)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `GET /complaints/{id}/related?limit&offset` | INVESTIGATOR, ADMIN | linked complaints with link type (`observed` / `inferred` / `confirmed` / `rejected`), the shared identifiers (masked) and the field on each side, the latest review; `linking: "disabled"` when the owner opted out |
+| `GET /complaints/{id}/graph?depth=1\|2` | INVESTIGATOR, ADMIN | nodes and edges; every identifier edge has an `evidence` text; caps 40/60/250 with `truncated` |
+| `GET /graph/clusters?limit&offset` | INVESTIGATOR, ADMIN | groups over exact identifiers only |
+| `POST /entities/search` | INVESTIGATOR, ADMIN | `{type, value, platform?}` in the body. Replaces the planned `GET /entities/{type}/{value}/complaints`, which would have put an identifier in a URL |
+| `POST /complaint-links/review` | INVESTIGATOR, ADMIN | `{complaint_a, complaint_b, decision, note?}`; 409 `link_no_relation`, `link_complaint_deleted`, `link_matching_disabled`; audited |
+
+Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
+matching are excluded from every result and count. A confirmed link is not a finding of guilt.
+
 ## 5. Live audio API (`/api/live-audio`, demo-server)
 
 Auth: a demo-server token (any role); the session owner is the token subject.
@@ -171,8 +184,6 @@ simulator output and **are not complaint intelligence**.
 |---|---|---|
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
 | `GET /complaints/{id}/similar` (Fraud DNA) | staff | 8 |
-| `GET /complaints/{id}/related`, `GET /entities/{type}/{value}/complaints`, `GET /graph/clusters` | staff | 9 |
-| `POST /complaint-links` (confirm/reject a link, human review) | staff | 9 |
 | `GET /geo/complaints/hotspots?from&to&category&risk&bbox` | staff | 10 |
 | `GET/POST /complaints/{id}/notes` | staff | 12 |
 | `GET /complaints/{id}/report` (export) | owner (own complaint), staff | 12 |

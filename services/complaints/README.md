@@ -145,6 +145,11 @@ configuration error; there is no insecure fallback.
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
 | `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | health includes `stt` (as in `/models`) |
 | `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | roles granted here have source `admin`; optimistic `expected_role`; last active admin protected; audited |
+| `GET /complaints/{id}/related` | INVESTIGATOR, ADMIN | complaints sharing an exact normalised identifier (`observed`) or only a registrable domain (`inferred`), each with the shared identifiers (masked), the field on both sides and the latest review; `limit` (1-50), `offset`; `linking: "disabled"` and no items when the complaint's owner opted out |
+| `GET /complaints/{id}/graph?depth=1\|2` | INVESTIGATOR, ADMIN | complaint and identifier nodes, identifier edges with their evidence text, review edges among shown complaints; caps 40 complaints, 60 identifiers, 250 edges, `truncated` flag |
+| `GET /graph/clusters` | INVESTIGATOR, ADMIN | connected groups over exact identifiers only (domains never join clusters); `limit`, `offset` |
+| `POST /entities/search` | INVESTIGATOR, ADMIN | body `{type, value, platform?, limit?, offset?}`; the identifier is never in a URL; invalid values are a 422 that does not echo them |
+| `POST /complaint-links/review` | INVESTIGATOR, ADMIN | body `{complaint_a, complaint_b, decision: confirmed\|rejected, note?}`; 201; appends a review (history kept); 409 `link_no_relation` / `link_complaint_deleted` / `link_matching_disabled`; audited as `link_confirm` / `link_reject` with complaint ids, never identifier values or the note |
 
 Status transitions: SUBMITTED to UNDER_REVIEW or REJECTED; UNDER_REVIEW to INVESTIGATING, RESOLVED
 or REJECTED; INVESTIGATING to UNDER_REVIEW, RESOLVED or REJECTED; RESOLVED to INVESTIGATING;
@@ -168,6 +173,7 @@ Errors are JSON `{error, message}`; validation errors are `{error: "validation_e
 | delete complaint | own, SUBMITTED only | no | no |
 | run analysis | own | any | any |
 | alerts, stats | own | own | own |
+| complaint network (related, graph, clusters, identifier search, link review) | no (403) | yes | yes |
 | users, roles, audit, health | no | no | yes |
 
 INVESTIGATOR (allowlist source) and ADMIN (bootstrap source) apply only while the verified email is
@@ -254,10 +260,32 @@ then analyses the complaint (`complaints/transcribe.py`).
 * `bank_name`, `bank_account`, `ifsc` are optional and NULL when absent. They are returned to the
   owner and to staff only (like every complaint field; this service masks no complaint field in
   list views). Invalid values are a 422 that does not echo the value.
-* `users.allow_case_matching` (default true, `PATCH /me`): when false, the user's complaints are to
-  be excluded from future similarity / network matching shown to other parties. **It is stored
-  now and not yet enforced: no such matching exists in this service yet; the Fraud DNA / network
-  phase (Phase D) will honour it.**
+* `users.allow_case_matching` (default true, `PATCH /me`): when false, the user's complaints are
+  excluded, server-side and from the next request on, from every complaint-network result:
+  related complaints, graphs (as nodes and as bridges between other complaints), clusters,
+  identifier search results and counts, and new link reviews (409 `link_matching_disabled`). Staff
+  can still read the complaint itself. Fraud DNA (Phase 8, not built) must honour it too.
+
+## Complaint network (Phase 9)
+
+Identifiers come only from the structured fields (`suspect_phone`, `upi_id`, `suspect_email`,
+`suspicious_url` plus its registrable domain, `bank_account`, `social_platform` + `social_account`),
+never from free text. They are normalised (`complaints/network.py`: phone to `+<country><number>` (+91 for a bare Indian mobile),
+UPI and email casefolded, URL scheme and host lower-cased, default port and fragment dropped, path and query kept as typed, bank account
+digits only, social `platform:account`), stored in `complaint_entities` in the same transaction as
+the complaint, and compared by a SHA-256 of type and value. Responses show masked values only.
+
+* **observed**: two complaints give the same normalised identifier.
+* **inferred**: only the registrable domain of two different links matches. Always labelled
+  inferred; never joins a cluster. The registrable domain uses a small authored suffix list, not
+  the Public Suffix List, so shared hosting can make unrelated sites share a "domain".
+* **confirmed / rejected**: the latest investigator review of the pair (`link_reviews`, every
+  review kept). A review is possible only where a shared identifier exists. Confirming says the
+  complaints appear to be part of one case; it is **not** a finding that anyone committed a crime.
+
+Every query applies the same filter: the complaint is not deleted and its owner allows case
+matching. Opted-out or deleted complaints cannot appear, be counted, or connect other complaints.
+Shared identifiers are leads, not proof that the same person is involved.
 
 ## Schema migrations
 

@@ -40,7 +40,7 @@ The role always comes from `/auth/session`; the frontend never sends a role.
 |---|---|---|
 | Evidence analysis states | Show audio transcription and OCR results (or "unavailable" with the reason) per evidence file | 6 |
 | Similar cases panel | Fraud DNA matches with similarity score, matched traits, links to authorised cases; "similarity is not proof" notice | 8 |
-| Network view | Complaint/entity graph (Cytoscape.js or React Flow, to be chosen), edges labelled observed / inferred / confirmed with their evidence; confirm/reject actions recorded with reviewer | 9 |
+| Network view | **Built (Phase 9)**: `/investigator/network`, staff only. Deterministic radial SVG graph (no graph library), depth 1 or 2; line style and text distinguish observed (solid), inferred (dashed), confirmed (thick, arced) and rejected (dotted); keyboard-selectable nodes; a text list of every connection with its evidence; legend; clusters; POST identifier search. Related complaints panel on the staff complaint page with confirm/reject dialogs. "Leads, not proof" and "a confirmed link is not a finding of crime" shown wherever links are | 9 |
 | Geographic view | Leaflet map of complaints with valid coordinates; date/category/risk filters; cluster counts; time comparison. OpenStreetMap tiles only receive tile coordinates, never complaint data; a privacy note on the page; offline fallback to the existing d3-geo map when tiles are unreachable | 10 |
 | Investigation notes and case report export | Notes timeline; report download with access control | 12 |
 | Complaint edit (while SUBMITTED) | Add bank details or other fields after creation | 11 |

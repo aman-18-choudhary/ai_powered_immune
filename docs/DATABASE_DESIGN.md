@@ -154,6 +154,23 @@ id, user_id, complaint_id, kind, message (300), risk_level (migration 8; used to
 risk alert for the same complaint and level), created_at, read_at. Index
 `ix_alerts_user (user_id, read_at, created_at)`.
 
+### `complaint_entities` (migration 10)
+
+One row per identifier given in a complaint's structured fields: `id`, `complaint_id` (FK),
+`entity_type` (phone, upi, email, url, domain, bank_account, social_account), `value_norm`
+(normalised value, the same data as the complaint field), `value_hash` (SHA-256 of type and value,
+used for matching), `display` (masked), `source_field`, `created_at`. Unique per complaint, type
+and hash; indexed on (type, hash) and on complaint. Written in the same transaction as the
+complaint. It is derived data: it can be rebuilt from `complaints` at any time.
+
+### `link_reviews` (migration 10)
+
+Append-only investigator reviews of a complaint pair: `complaint_low < complaint_high` (CHECK),
+`seq` (unique per pair), `decision` (confirmed / rejected), `basis` (observed / inferred at review
+time), `reviewer_user_id`, optional `note` (≤ 500), `created_at`. The latest `seq` is the current
+decision. Links themselves are not stored; observed and inferred links are computed from
+`complaint_entities` at query time, so they never go stale.
+
 ### `admin_audit`
 id, actor_user_id, action (40), target_user_id, before (JSON), after (JSON), created_at. Indexes
 `ix_audit_created`, `ix_audit_target (target_user_id, action)`. Actions written today include
@@ -193,10 +210,18 @@ run holds an advisory lock so replicas starting together serialise.
 | 7 | analyses_insufficient_input | `INSUFFICIENT_INPUT` status; column widened on Postgres |
 | 8 | alerts_risk_level | `alerts.risk_level` for de-duplication |
 | 9 | evidence_transcripts | Table `evidence_transcripts` + index `ix_transcripts_complaint` (Phase 6) |
+| 10 | complaint_network | Tables `complaint_entities`, `link_reviews` + indexes; backfill of the identifiers of existing complaints (Phase 9) |
 
 Migrations 6-8 came with Phase B (pushed 2026-10-16); migration 9 with Phase 6 (2026-10-16, not
 pushed). Migration 9 was tested on a fresh database, on a database at version 8 with data, and on a
-pre-versioning database (SQLite, and the whole suite on a disposable Postgres 14). Every step is re-checked at start-up (not only
+pre-versioning database (SQLite, and the whole suite on a disposable Postgres 14). Migration 10
+is additive. Its backfill reads complaints in chunks of 500 and never duplicates a row; it runs when
+version 10 is not yet recorded, or when `complaint_entities` is empty while complaints exist (the
+table was dropped and recreated), so a lost table repairs itself at the next start-up. Rollback:
+the previous code ignores both tables, so deploying it is enough; `complaint_entities` may be
+dropped (it is rebuilt); `link_reviews` holds investigator decisions that cannot be rebuilt (the
+audit log keeps each decision with the complaint ids, not the note), so back it up before dropping
+it. Every step is re-checked at start-up (not only
 pending ones), so a database missing a column is repaired. Alembic was considered and not adopted;
 see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 
@@ -219,7 +244,6 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Structure | Purpose | Phase |
 |---|---|---|
 | `investigation_notes` | Investigator notes separate from status history | 12 |
-| `complaint_entities` + `complaint_links` | Normalised identifiers per complaint; links typed `observed` / `inferred` / `confirmed` with evidence and reviewer | 9 |
 | Vector collection (Qdrant) | Privacy-filtered embeddings keyed by complaint/analysis id, minimal metadata | 8 |
 | Geographic aggregation | SQL grid over `latitude/longitude` first; PostGIS geometry column optional | 10 |
 | Report exports | Generated complaint/case reports with access control | 12 |
