@@ -143,6 +143,10 @@ category model guessed a scam type with confidence 0.31". The UI cannot tell the
 
 ## 7. Top 10 fixes (ranked by impact, then effort)
 
+Status 2026-10-18: fixes **1, 2, 3, 4 and 8 done** (local, not pushed) with before/after numbers in
+[reports/ACCURACY_BATCH_1_REPORT.md](reports/ACCURACY_BATCH_1_REPORT.md); fixes 5, 6, 7, 9 and 10
+open. The stack citizen checker (over HTTP) does not yet use `require_explained`.
+
 | # | Fix | Failure mode addressed | Effort | Acceptance criteria |
 |---|---|---|---|---|
 | 1 | **Remove the category prior from the risk score**; the score reflects evidence-backed indicators only; with no indicator the result is "no scam indicators found" (LOW) or `INSUFFICIENT_EVIDENCE` when the text is short/ambiguous; category shown separately as a model guess | Section 2 | S | On the probe/eval set no MEDIUM/HIGH/CRITICAL without ≥1 evidence-backed indicator; every non-zero score component listed with evidence |

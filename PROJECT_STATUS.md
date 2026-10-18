@@ -1,10 +1,28 @@
 # Project status
 
-Last updated: **2026-10-17** (Phase 6: audio evidence transcription, accurate capability
-messages, LLM grounding fixes; work and tests 2026-10-16/17). `main` and `build/implementation` on
-GitHub are at `cb783a3`. Phase 6 is **committed locally on `build/implementation` and not pushed**
-(awaiting the owner's approval); see [docs/reports/PHASE_6_REPORT.md](docs/reports/PHASE_6_REPORT.md).
-CI passes on GitHub since `7b97731` (runs #30 and #31); the Phase 6 commits have not run on GitHub.
+Last updated: **2026-10-18** (accuracy audit and accuracy batch 1). GitHub `main` and
+`build/implementation` are at `6cc5554` (Phase 6 and its review fixes; CI run #34 passed, run #35
+failed on an unidentified flaky test on the same commit). **Local only, not pushed:** three paused,
+unreviewed Phase 9 backend commits (`98f82d6`..`8f4c086`), the accuracy audit (`5a106c3`), the
+frozen SYNTHETIC evaluation set and baseline (`3a714f2`) and accuracy batch 1 (`bdfe20c`..`7e04928`).
+
+## Accuracy first (2026-10-18)
+
+The owner set accuracy, evidence and transparency as the top priority. See
+[docs/ACCURACY_AUDIT.md](docs/ACCURACY_AUDIT.md) (failure modes found by running real pipelines on
+SYNTHETIC probes) and [docs/reports/ACCURACY_BATCH_1_REPORT.md](docs/reports/ACCURACY_BATCH_1_REPORT.md).
+
+* Fixed: risk scores no longer use the category guess (no MEDIUM+ without evidence: 11 → 0 on the
+  frozen set); every scored point has a listed reason; HIGH/CRITICAL need a rule-based indicator;
+  citizen alerts need a rule-based indicator; no "safe" verdict anywhere; results carry an
+  `assessment` and evidence wording.
+* Measured on 20 SYNTHETIC probes only (not real-world accuracy): false positives 6/8 → 1/8,
+  scam recall at MEDIUM+ 10/10 → 2/10 (the removed "detections" had no evidence).
+* Open: rule misfire on genuine bank OTP SMS (fix 5); no rules for most non-digital-arrest scams
+  (fix 6); transcript confidence (fix 7); Live Protection false positives (fix 9); Phase 9 paused.
+* EXPERIMENTAL until validated on real data: risk bands, category model, script classifier, URL
+  heuristics, Hindi/Hinglish transcription, Live Protection levels, LLM explanations, simulator
+  numbers, complaint network.
 
 Labels: **Verified** (tests run and passed; "by hand" where checked in a browser), **Unverified**
 (code exists; only an agent ran the test, or not exercised), **Planned**, **Blocked** (external

@@ -230,10 +230,11 @@ then analyses the complaint (`complaints/transcribe.py`).
   lock; the unique `evidence_id` covers other processes).
 * **Analysis:** the transcripts (segments joined, at most 4,000 characters) are scored by the same
   call-guard scorer (rules + clf-v1) as the description; `transcript_score` enters the risk formula
-  as `max(text_score, transcript_score, category_prior)`. Indicators found in a transcript have
+  as `max(text_score, transcript_score)`. Indicators found in a transcript have
   `stage: audio_transcript` and evidence `{type: "evidence_transcript", evidence_id, start_s,
   end_s, snippet}` (the first segment, or pair of adjacent segments, where the rules find the
-  cue). The category model reads the complaint text only. Provenance has one `audio_transcription`
+  cue). The category model reads the description together with the transcripts (bounded;
+  `category_model.evidence.audio_transcripts_included`) since 2026-10-17. Provenance has one `audio_transcription`
   stage per file. A recording that could not be transcribed makes the run `PARTIAL`, is listed in
   `unanalysed_attachments` with the precise reason, and a result that would be LOW is withheld.
 * **Statuses:** see the table in [docs/API_SPECIFICATION.md](../../docs/API_SPECIFICATION.md).
@@ -301,12 +302,19 @@ A failing stage never blocks another and is never turned into LOW or BENIGN.
 | `llm_explanation` | `unavailable` (`not_configured`, `non_local_host`, `unreachable`), `available`, `timeout`, `error`, `rejected` (grounding checks), `skipped_no_input` (`no_findings_to_rephrase`) |
 
 **Risk score** (`score_semantics: "uncalibrated_heuristic"`, 0-100, never a probability):
-`risk = min(100, max(text_score, transcript_score, category_prior) + round(25 *
+`risk = min(100, max(text_score, transcript_score) + round(25 *
 noisy_or(url_indicator_weights)))`. `text_score = round(100 * call-guard score)` of the title and
-description; `transcript_score` the same for the audio transcripts (when any were transcribed). `category_prior` applies only when the classifier
-answered (DIGITAL_ARREST 70, OTP_SCAM 60, UPI/PHISHING/INVESTMENT 55, BANK/JOB 50,
-SOCIAL_MEDIA 45, OTHER 0); an abstention contributes nothing. Terms of unavailable stages are left
-out. The full formula is in `limitations` and `score_components`. Bands: LOW 0-34, MEDIUM 35-69,
+description, counting only scored points with a listed reason (`require_explained`; points without
+a reason are ignored and recorded in `score_components.unexplained_scores_ignored`);
+`transcript_score` the same for the audio transcripts (when any were transcribed). **The predicted
+category is a model guess and is not part of the score** (until 2026-10-18 a category prior of
+45-70 was added, which made legitimate texts HIGH with no indicator; see
+`docs/ACCURACY_AUDIT.md`). HIGH and CRITICAL need at least one rule-based indicator; a score from
+the ML classifier alone is capped at MEDIUM. Terms of unavailable stages are left out.
+`assessment` says what the result can claim: `indicators_found`, `model_prediction_only`,
+`no_indicators_found` (with a limitation that this is not a finding of safety),
+`insufficient_evidence` or `not_assessed`; it is also in the complaint's `latest_analysis`. Citizen
+`HIGH_RISK_ANALYSIS` alerts require a rule-based indicator. The full formula is in `limitations` and `score_components`. Bands: LOW 0-34, MEDIUM 35-69,
 HIGH 70-89, CRITICAL 90-100. Since migration 6 the exact level (including CRITICAL) is stored in
 `analyses.risk_level`; the `risk_level` list filter is exact (`HIGH` no longer includes CRITICAL)
 and `/me/stats` has `by_risk_level` (latest analysis per own complaint, plus `not_scored` and

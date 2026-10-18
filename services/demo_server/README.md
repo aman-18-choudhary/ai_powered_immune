@@ -198,7 +198,7 @@ and unrelated to the run's wall time or simulated scenario time. Ledger response
 `POST /citizen/assess` scores the text with the real call-guard scorer in-process and returns
 `{label, score, reasons[{code, text, weight}], advice{key, steps[]}, lang, uncertain,
 model_version, thresholds}`. `likely_scam` at score >= 0.7 (the call-guard alert threshold),
-`suspicious` at >= 0.35, otherwise `safe`: "no clear scam cues found", not "verified safe".
+`suspicious` at >= 0.35; below that `weak_indicators` (a cue was found) or `no_indicators_found` (none; NOT a finding of safety), and `insufficient_input` for blank or very short text without a cue. The label was `safe` until 2026-10-18 (renamed after the accuracy audit). Only scored points with a listed reason count.
 Reason and advice texts come from a static dictionary in `en`, `hi`, `ta`, `bn`. `uncertain` is
 true for empty text, text over 4,000 characters (the first 4,000 are scored), an unsupported
 `lang`, fewer than four words, a score within 0.08 of a threshold, or a rules-only scorer. The

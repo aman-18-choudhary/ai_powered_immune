@@ -17,3 +17,10 @@ Run (from the repository root):
 It runs the real complaints pipeline (no LLM), the console's citizen checker and the stack's
 citizen policy. Metric definitions are in the docstring of `run_accuracy_eval.py`. Results in
 `results/` are kept as recorded; a later run is added as a new file, never written over an old one.
+
+## Recorded results
+
+| File | Code | Notes |
+|---|---|---|
+| `results/accuracy_probes_v1__baseline.json` | `5a106c3` | Before any accuracy fix |
+| `results/accuracy_probes_v1__after-batch1.json` | `7e04928` | After fixes 1, 2, 3, 4, 8 ([report](../docs/reports/ACCURACY_BATCH_1_REPORT.md)) |

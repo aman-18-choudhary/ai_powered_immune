@@ -7,6 +7,14 @@ PII-free `Complaint` event that geo-intel turns into hotspots.
 
 Python >= 3.11. Tests: `pytest -W error` (about 2 s; they run the real call-guard app in process).
 
+> **Labels changed on 2026-10-18 (accuracy audit, `docs/ACCURACY_AUDIT.md`).** The label `safe`
+> no longer exists: below the suspicious threshold the verdict is `weak_indicators` (a cue was
+> found) or `no_indicators_found` (none; this is NOT a finding that the message is safe), and blank
+> or very short text without a cue is `insufficient_input`. Where this README says `safe` below,
+> read `no_indicators_found`. This service scores through call-guard over HTTP, which does not yet
+> use `require_explained`, so a classifier-only score can still reach `suspicious` without a listed
+> reason (tracked in `docs/reports/ACCURACY_BATCH_1_REPORT.md`).
+
 ## Design
 
 ```
