@@ -1,0 +1,1033 @@
+{
+  "WARNING": "SYNTHETIC dataset of hand-written probes. Not real-world accuracy. Too small for statistical claims.",
+  "label": "baseline-clean-branch",
+  "dataset": {
+    "path": "evaluation/datasets/accuracy_probes_v1.jsonl",
+    "sha256": "c17a6209a3fbde447664ccb55d817bef3cefcb695d14e8c608be3162a8d7e863",
+    "cases": 20
+  },
+  "code_revision": "89f2aff",
+  "run_at": "2026-10-18T03:44:22+00:00",
+  "python": "3.13.5",
+  "llm": "not used",
+  "summary": {
+    "n_cases": 20,
+    "n_scam": 10,
+    "n_legit": 8,
+    "n_insufficient": 2,
+    "pipeline_flagged_medium_plus": {
+      "tp": 10,
+      "fn": 0,
+      "fp": 6,
+      "tn": 2,
+      "precision": 0.625,
+      "recall": 1.0,
+      "f1": 0.7692,
+      "false_positive_rate": 0.75,
+      "false_negative_rate": 0.0,
+      "false_positive_ids": [
+        "N1_bank_otp_sms",
+        "N2_awareness_news",
+        "N5_police_verification",
+        "N6_family_upi",
+        "N7_job_offer",
+        "N8_customs_genuine"
+      ],
+      "false_negative_ids": []
+    },
+    "pipeline_strong_flag_high_plus": {
+      "tp": 4,
+      "fn": 6,
+      "fp": 3,
+      "tn": 5,
+      "precision": 0.5714,
+      "recall": 0.4,
+      "f1": 0.4706,
+      "false_positive_rate": 0.375,
+      "false_negative_rate": 0.6,
+      "false_positive_ids": [
+        "N1_bank_otp_sms",
+        "N2_awareness_news",
+        "N8_customs_genuine"
+      ],
+      "false_negative_ids": [
+        "S2_upi_collect",
+        "S3_job_task",
+        "S4_investment",
+        "S5_kyc_phish",
+        "S9_otp_theft_hi",
+        "E3_selected_mismatch"
+      ]
+    },
+    "pipeline_by_language_medium_plus": {
+      "en": {
+        "n": 16,
+        "tp": 8,
+        "fn": 0,
+        "fp": 6,
+        "tn": 2,
+        "precision": 0.5714,
+        "recall": 1.0,
+        "f1": 0.7272,
+        "false_positive_rate": 0.75,
+        "false_negative_rate": 0.0
+      },
+      "hinglish": {
+        "n": 2,
+        "tp": 2,
+        "fn": 0,
+        "fp": 0,
+        "tn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": null,
+        "false_negative_rate": 0.0
+      }
+    },
+    "unsupported_flags": [
+      "N2_awareness_news",
+      "N5_police_verification",
+      "N6_family_upi",
+      "N7_job_offer",
+      "N8_customs_genuine",
+      "S2_upi_collect",
+      "S3_job_task",
+      "S4_investment",
+      "S7_sextortion",
+      "S8_victim_narrative",
+      "E3_selected_mismatch"
+    ],
+    "prior_only_flags": [
+      "N2_awareness_news",
+      "N5_police_verification",
+      "N6_family_upi",
+      "N7_job_offer",
+      "N8_customs_genuine",
+      "S2_upi_collect",
+      "S3_job_task",
+      "S4_investment",
+      "S5_kyc_phish",
+      "S7_sextortion",
+      "S8_victim_narrative",
+      "S9_otp_theft_hi",
+      "E3_selected_mismatch"
+    ],
+    "flags_without_rule_backed_indicator": [
+      "N2_awareness_news",
+      "N5_police_verification",
+      "N6_family_upi",
+      "N7_job_offer",
+      "N8_customs_genuine",
+      "S2_upi_collect",
+      "S3_job_task",
+      "S4_investment",
+      "S7_sextortion",
+      "S8_victim_narrative",
+      "E3_selected_mismatch"
+    ],
+    "insufficient_handled": {
+      "E1_empty": true,
+      "E2_tiny": true
+    },
+    "category_correct_on_scams": {
+      "correct": 9,
+      "total": 10,
+      "wrong_ids": [
+        "S7_sextortion"
+      ]
+    },
+    "citizen_console_safe_on_scam": [
+      "S2_upi_collect",
+      "S3_job_task",
+      "S4_investment",
+      "S5_kyc_phish",
+      "S9_otp_theft_hi",
+      "E3_selected_mismatch"
+    ],
+    "citizen_console_safe_on_blank": [
+      "E1_empty",
+      "E2_tiny"
+    ],
+    "citizen_console_scam_on_legit": [
+      "N1_bank_otp_sms"
+    ],
+    "citizen_stack_safe_on_scam": [
+      "S2_upi_collect",
+      "S3_job_task",
+      "S4_investment",
+      "S5_kyc_phish",
+      "S9_otp_theft_hi",
+      "E3_selected_mismatch"
+    ],
+    "citizen_verdicts_without_reason": [
+      "S7_sextortion:console",
+      "S7_sextortion:stack",
+      "S8_victim_narrative:console",
+      "S8_victim_narrative:stack"
+    ],
+    "citizen_checkers_disagree": []
+  },
+  "pipeline": [
+    {
+      "id": "N1_bank_otp_sms",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "HIGH",
+      "risk_score": 71,
+      "classification": "OTP_SCAM",
+      "confidence": 0.3092,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "ISOLATION_DEMAND"
+        },
+        {
+          "source": "rule",
+          "code": "CREDENTIAL_ASK"
+        }
+      ],
+      "rule_backed_indicators": 2,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": 71,
+        "transcript_score": null,
+        "category_prior": 60,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N2_awareness_news",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "HIGH",
+      "risk_score": 70,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.6354,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N3_courier",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "classification": "UNDETERMINED",
+      "confidence": 0.2125,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": false,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": null,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N4_debit_alert",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "LOW",
+      "risk_score": 15,
+      "classification": "OTHER",
+      "confidence": 0.3468,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "URGENCY"
+        }
+      ],
+      "rule_backed_indicators": 1,
+      "ml_indicators": 0,
+      "flagged": false,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": 15,
+        "transcript_score": null,
+        "category_prior": 0,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N5_police_verification",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "classification": "JOB_SCAM",
+      "confidence": 0.2515,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 50,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N6_family_upi",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "classification": "UPI_FRAUD",
+      "confidence": 0.294,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 55,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N7_job_offer",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "classification": "JOB_SCAM",
+      "confidence": 0.4161,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 50,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "N8_customs_genuine",
+      "expected_label": "legit",
+      "language": "en",
+      "expected_category": "OTHER",
+      "status": "COMPLETED",
+      "risk_level": "HIGH",
+      "risk_score": 70,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.308,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S1_digital_arrest",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "DIGITAL_ARREST",
+      "status": "COMPLETED",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.7158,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "DIGITAL_ARREST_PHRASE"
+        },
+        {
+          "source": "rule",
+          "code": "SAFE_ACCOUNT_TRANSFER"
+        },
+        {
+          "source": "rule",
+          "code": "ISOLATION_DEMAND"
+        },
+        {
+          "source": "rule",
+          "code": "AUTHORITY_IMPERSONATION"
+        },
+        {
+          "source": "rule",
+          "code": "LEGAL_THREAT"
+        },
+        {
+          "source": "ml",
+          "code": "SCRIPT_CLASSIFIER_MATCH"
+        }
+      ],
+      "rule_backed_indicators": 5,
+      "ml_indicators": 1,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": 100,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S2_upi_collect",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "UPI_FRAUD",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "classification": "UPI_FRAUD",
+      "confidence": 0.8184,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 55,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S3_job_task",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "JOB_SCAM",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "classification": "JOB_SCAM",
+      "confidence": 0.3866,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 50,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S4_investment",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "INVESTMENT_SCAM",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "classification": "INVESTMENT_SCAM",
+      "confidence": 0.5479,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 55,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S5_kyc_phish",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "PHISHING",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "classification": "PHISHING",
+      "confidence": 0.6082,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "URGENCY"
+        }
+      ],
+      "rule_backed_indicators": 1,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 15,
+        "transcript_score": null,
+        "category_prior": 55,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S6_hinglish_da",
+      "expected_label": "scam",
+      "language": "hinglish",
+      "expected_category": "DIGITAL_ARREST",
+      "status": "COMPLETED",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.8043,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "DIGITAL_ARREST_PHRASE"
+        },
+        {
+          "source": "rule",
+          "code": "ISOLATION_DEMAND"
+        },
+        {
+          "source": "rule",
+          "code": "AUTHORITY_IMPERSONATION"
+        },
+        {
+          "source": "rule",
+          "code": "URGENCY"
+        },
+        {
+          "source": "ml",
+          "code": "SCRIPT_CLASSIFIER_MATCH"
+        }
+      ],
+      "rule_backed_indicators": 4,
+      "ml_indicators": 1,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": 100,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S7_sextortion",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "SOCIAL_MEDIA_FRAUD",
+      "status": "COMPLETED",
+      "risk_level": "HIGH",
+      "risk_score": 70,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.3533,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 40,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S8_victim_narrative",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "DIGITAL_ARREST",
+      "status": "COMPLETED",
+      "risk_level": "HIGH",
+      "risk_score": 70,
+      "classification": "DIGITAL_ARREST",
+      "confidence": 0.7734,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": true,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 40,
+        "transcript_score": null,
+        "category_prior": 70,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "S9_otp_theft_hi",
+      "expected_label": "scam",
+      "language": "hinglish",
+      "expected_category": "OTP_SCAM",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 60,
+      "classification": "OTP_SCAM",
+      "confidence": 0.4109,
+      "assessment": null,
+      "indicators": [
+        {
+          "source": "rule",
+          "code": "URGENCY"
+        }
+      ],
+      "rule_backed_indicators": 1,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 15,
+        "transcript_score": null,
+        "category_prior": 60,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "E1_empty",
+      "expected_label": "insufficient",
+      "language": "en",
+      "expected_category": null,
+      "status": "INSUFFICIENT_INPUT",
+      "risk_level": null,
+      "risk_score": null,
+      "classification": null,
+      "confidence": null,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": false,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": null,
+        "transcript_score": null,
+        "category_prior": null,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "E2_tiny",
+      "expected_label": "insufficient",
+      "language": "en",
+      "expected_category": null,
+      "status": "INSUFFICIENT_INPUT",
+      "risk_level": null,
+      "risk_score": null,
+      "classification": null,
+      "confidence": null,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": false,
+      "strong_flag": false,
+      "unsupported_flag": false,
+      "prior_only_flag": false,
+      "score_components": {
+        "text_score": null,
+        "transcript_score": null,
+        "category_prior": null,
+        "url_adjustment": 0
+      }
+    },
+    {
+      "id": "E3_selected_mismatch",
+      "expected_label": "scam",
+      "language": "en",
+      "expected_category": "JOB_SCAM",
+      "status": "COMPLETED",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "classification": "JOB_SCAM",
+      "confidence": 0.4389,
+      "assessment": null,
+      "indicators": [],
+      "rule_backed_indicators": 0,
+      "ml_indicators": 0,
+      "flagged": true,
+      "strong_flag": false,
+      "unsupported_flag": true,
+      "prior_only_flag": true,
+      "score_components": {
+        "text_score": 0,
+        "transcript_score": null,
+        "category_prior": 50,
+        "url_adjustment": 0
+      }
+    }
+  ],
+  "citizen_checker": [
+    {
+      "id": "N1_bank_otp_sms",
+      "expected_label": "legit",
+      "console_label": "likely_scam",
+      "console_score": 0.7075,
+      "console_reasons": [
+        "ISOLATION_DEMAND",
+        "CREDENTIAL_ASK"
+      ],
+      "stack_label": "likely_scam",
+      "stack_score": 0.7075,
+      "stack_reasons": [
+        "ISOLATION_DEMAND",
+        "CREDENTIAL_ASK"
+      ]
+    },
+    {
+      "id": "N2_awareness_news",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "N3_courier",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "N4_debit_alert",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.15,
+      "console_reasons": [
+        "URGENCY"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.15,
+      "stack_reasons": [
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "N5_police_verification",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "N6_family_upi",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "N7_job_offer",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "N8_customs_genuine",
+      "expected_label": "legit",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "S1_digital_arrest",
+      "expected_label": "scam",
+      "console_label": "likely_scam",
+      "console_score": 1.0,
+      "console_reasons": [
+        "DIGITAL_ARREST_PHRASE",
+        "SAFE_ACCOUNT_TRANSFER",
+        "ISOLATION_DEMAND",
+        "AUTHORITY_IMPERSONATION",
+        "LEGAL_THREAT",
+        "SCRIPT_CLASSIFIER_MATCH"
+      ],
+      "stack_label": "likely_scam",
+      "stack_score": 1.0,
+      "stack_reasons": [
+        "DIGITAL_ARREST_PHRASE",
+        "SAFE_ACCOUNT_TRANSFER",
+        "ISOLATION_DEMAND",
+        "AUTHORITY_IMPERSONATION",
+        "LEGAL_THREAT",
+        "SCRIPT_CLASSIFIER_MATCH"
+      ]
+    },
+    {
+      "id": "S2_upi_collect",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "S3_job_task",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "S4_investment",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "S5_kyc_phish",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.15,
+      "console_reasons": [
+        "URGENCY"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.15,
+      "stack_reasons": [
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "S6_hinglish_da",
+      "expected_label": "scam",
+      "console_label": "likely_scam",
+      "console_score": 1.0,
+      "console_reasons": [
+        "DIGITAL_ARREST_PHRASE",
+        "ISOLATION_DEMAND",
+        "AUTHORITY_IMPERSONATION",
+        "URGENCY",
+        "SCRIPT_CLASSIFIER_MATCH"
+      ],
+      "stack_label": "likely_scam",
+      "stack_score": 1.0,
+      "stack_reasons": [
+        "DIGITAL_ARREST_PHRASE",
+        "ISOLATION_DEMAND",
+        "AUTHORITY_IMPERSONATION",
+        "URGENCY",
+        "SCRIPT_CLASSIFIER_MATCH"
+      ]
+    },
+    {
+      "id": "S7_sextortion",
+      "expected_label": "scam",
+      "console_label": "suspicious",
+      "console_score": 0.4,
+      "console_reasons": [],
+      "stack_label": "suspicious",
+      "stack_score": 0.4,
+      "stack_reasons": []
+    },
+    {
+      "id": "S8_victim_narrative",
+      "expected_label": "scam",
+      "console_label": "suspicious",
+      "console_score": 0.4,
+      "console_reasons": [],
+      "stack_label": "suspicious",
+      "stack_score": 0.4,
+      "stack_reasons": []
+    },
+    {
+      "id": "S9_otp_theft_hi",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.15,
+      "console_reasons": [
+        "URGENCY"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.15,
+      "stack_reasons": [
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "E1_empty",
+      "expected_label": "insufficient",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": []
+    },
+    {
+      "id": "E2_tiny",
+      "expected_label": "insufficient",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    },
+    {
+      "id": "E3_selected_mismatch",
+      "expected_label": "scam",
+      "console_label": "safe",
+      "console_score": 0.0,
+      "console_reasons": [
+        "NO_RISK_INDICATORS"
+      ],
+      "stack_label": "safe",
+      "stack_score": 0.0,
+      "stack_reasons": [
+        "NO_RISK_INDICATORS"
+      ]
+    }
+  ]
+}

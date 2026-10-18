@@ -24,3 +24,9 @@ citizen policy. Metric definitions are in the docstring of `run_accuracy_eval.py
 |---|---|---|
 | `results/accuracy_probes_v1__baseline.json` | `5a106c3` | Before any accuracy fix |
 | `results/accuracy_probes_v1__after-batch1.json` | `7e04928` | After fixes 1, 2, 3, 4, 8 ([report](../docs/reports/ACCURACY_BATCH_1_REPORT.md)) |
+| `results/accuracy_probes_v1__baseline-clean-branch.json` | `89f2aff` | Baseline code on `accuracy-batch1`, corrected runner (real Docker checker path) |
+| `results/accuracy_probes_v1__after-review-clean-branch.json` | `f8f4162` | After the batch 1 review fixes on `accuracy-batch1` |
+
+The first two files were recorded on `build/implementation` (which also holds paused Phase 9
+commits); their `stack_label` column used an approximation (`policy.label_for`) and is superseded
+by the clean-branch files. Their complaints-pipeline rows are identical to the clean-branch runs.

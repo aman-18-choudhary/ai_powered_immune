@@ -1,6 +1,9 @@
 # Accuracy batch 1: before/after report
 
-Date: 2026-10-18. Branch `build/implementation`, local only (not pushed). Scope approved by the
+Date: 2026-10-18 (review addendum in section 8). Branch `accuracy-batch1` (the accuracy commits
+cherry-picked onto `6cc5554` without the paused Phase 9 work; see section 8), local only (not
+pushed). Commit hashes in sections 1-7 refer to the original commits on `build/implementation`;
+the matching commits on this branch are listed in section 8. Scope approved by the
 owner: freeze the 20 audit cases as a SYNTHETIC evaluation set, record the baseline, then fixes
 1, 2, 3, 4 and 8 from [ACCURACY_AUDIT.md](../ACCURACY_AUDIT.md).
 
@@ -74,7 +77,7 @@ indicators; N2-N8 no flag; E1/E2 insufficient evidence.
 | Console checker: scams with no or weak indicators | 6 (as `safe`) | 8 (`no_indicators_found` 6, `weak_indicators` 2): same coverage gap, honest wording |
 | Console checker: blank or too-short input | `safe` (2) | `insufficient_input` (2) |
 | Console checker: legitimate labelled `likely_scam` | 1 (N1) | 1 (N1): fix 5 |
-| Stack checker (`citizen-shield`, over HTTP) | `safe` for 6 scams | `no_indicators_found` for 6 scams; S7/S8 still `suspicious` from an unexplained classifier score (see section 5) |
+| Stack checker (`citizen-shield`, over HTTP) | *(corrected in review, section 8: this row was measured with an approximation and was wrong)* | *(see section 8)* |
 
 ## 4. Tests actually executed (2026-10-18, by the controller)
 
@@ -102,8 +105,8 @@ contract, never loosened to pass; each change is described in its commit message
    victim narratives, Hinglish OTP theft, KYC-link phishing, parcel redelivery-fee links such as the
    console's own sample 3), fix 6.
 3. **Links written inside the text** are not analysed by the URL heuristics, fix 6.
-4. **Stack citizen checker** (`citizen-shield` calling call-guard over HTTP) does not use
-   `require_explained`; a classifier-only score can still produce `suspicious` with no listed reason.
+4. ~~**Stack citizen checker** (`citizen-shield` calling call-guard over HTTP) does not use
+   `require_explained`~~ (fixed in review, section 8); a classifier-only score can still produce `suspicious` with no listed reason.
 5. **Live Protection** is unchanged in this batch: conversations about scams can still reach HIGH,
    fix 9.
 6. **Transcripts** still carry no per-segment confidence, fix 7.
@@ -123,6 +126,48 @@ contract, never loosened to pass; each change is described in its commit message
 * The simulator's call-guard default is unchanged, so simulator pages and the benchmark behave as
   before.
 
-## 7. Push status
+## 7. Push status (superseded by section 8)
 
 Not pushed. All commits are on `build/implementation` locally, awaiting the owner's review.
+
+## 8. Review addendum (2026-10-18)
+
+The owner asked for a review before any push. Findings and fixes (each with a regression test):
+
+| # | Finding | Fix | Commit (this branch) |
+|---|---|---|---|
+| R1 | Results with weak indicators only (S5, S9: LOW 15, URGENCY) lacked the "not a finding that the message or event is safe" limitation | Every LOW result carries it; guard over the frozen set | `d198637` |
+| R2 | Analyses stored before batch 1 (no `assessment`) were shown with indicator wording; an old HIGH that rested on the removed category prior would read "Strong scam indicators" | API derives the assessment from stored status, level and indicators (`assessment_derived: true`) in full views and summaries | `d198637` |
+| R3 | **Docker checker inconsistent with the console**: through HTTP, sextortion (S7) and the victim narrative (S8) were `suspicious` with **no listed reason**; the console said `no_indicators_found` | call-guard `POST /score` accepts `require_explained` (default false for simulator callers); citizen-shield sends true | `83c70d4` |
+| R4 | **The report's Docker column was measured with an approximation** (`policy.label_for` on the score) and misreported labels | The runner now calls `citizen_shield.assess` through the real call-guard HTTP app (in process); new measures: warning verdicts without a reason, checker disagreements | `f8f4162` |
+| R5 | **The accuracy commits sat on top of three unreviewed Phase 9 commits**; pushing `build/implementation` would have published Phase 9 | This branch, `accuracy-batch1`, was built from the pushed head `6cc5554` with only the accuracy commits (cherry-picked, `-x`); `build/implementation` is unchanged and keeps Phase 9 | — |
+
+Commits on this branch: `7548666` (audit), `89f2aff` (dataset, runner, baseline), `4f68651`,
+`f78b784`, `bda5e22`, `e35dd6d`, `416f508`, `0b70e3b` (batch 1), `d198637`, `83c70d4`, `f8f4162`
+(review fixes), plus this documentation commit.
+
+### Corrected citizen-checker results (real code paths, same dataset)
+
+Baseline code `89f2aff` vs after-review code `f8f4162`, both measured on this branch with the
+corrected runner (`results/accuracy_probes_v1__baseline-clean-branch.json`,
+`…__after-review-clean-branch.json`):
+
+| Measure | Baseline | After review |
+|---|---|---|
+| Scams labelled `safe` (console / Docker) | 6 / 6 | 0 / 0 |
+| Blank or too-short input labelled `safe` (console) | 2 | 0 (`insufficient_input`) |
+| Legitimate labelled `likely_scam` (both) | 1 (N1) | 1 (N1) |
+| Warning verdicts with no listed reason | 4 (S7, S8 on both checkers) | 0 |
+| Cases where the two checkers disagree | 0 | 0 |
+| Docker labels for the 8 missed scams | `safe` ×6, `suspicious` (no reason) ×2 | `no_indicators_found` ×6, `weak_indicators` ×2 |
+
+### Pipeline numbers re-verified
+
+The complaints pipeline outputs on this branch (without Phase 9) are identical, case by case
+(level, score, category, assessment, indicator codes), to the results recorded on
+`build/implementation`, for both the baseline and the after state. Sections 2 and 3 stand.
+
+### Push status
+
+Not pushed. Awaiting the owner's approval to push `accuracy-batch1` (fast-forward from
+`6cc5554`).
