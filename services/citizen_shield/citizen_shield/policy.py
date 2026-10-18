@@ -51,12 +51,15 @@ def label_for(score: float) -> str:
     return NO_INDICATORS
 
 
-def refine_label(label: str, reason_codes: list[str]) -> str:
+def refine_label(label: str, reason_codes: list[str], n_words: int | None = None) -> str:
     """Below the suspicious threshold, say "weak indicators" when a cue was found and "no
     indicators" only when none was: a listed cue under a "nothing found" heading would contradict
-    itself (accuracy batch, 2026-10-18)."""
+    itself. With no cue and fewer than ``MIN_WORDS`` words there is too little text to say
+    anything: ``insufficient_input`` (accuracy batch, 2026-10-18)."""
     if label == NO_INDICATORS and any(c != "NO_RISK_INDICATORS" for c in reason_codes):
         return WEAK
+    if label == NO_INDICATORS and n_words is not None and n_words < MIN_WORDS:
+        return INSUFFICIENT
     return label
 
 

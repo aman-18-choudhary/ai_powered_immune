@@ -219,6 +219,8 @@ ADVICE["degraded"] = {
 
 # "weak_indicators" (a cue below the suspicious threshold) uses the same honest advice
 ADVICE["weak_indicators"] = ADVICE["no_indicators_found"]
+# too little text with no cue: the same advice as an empty message
+ADVICE["insufficient_input"] = ADVICE["no_input"]
 
 # Shown when the message is mostly in a script call-guard has no rules for (see policy.coverage):
 # the check is partial, so it is never reported as safe.

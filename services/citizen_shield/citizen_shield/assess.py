@@ -91,7 +91,9 @@ async def assess(guard: CallGuardClient, message: str, requested_lang: str | Non
         shown.append(
             {"code": code, "text": (row or GENERIC_REASON)[lang], "weight": round(float(weight), 3)}
         )
-    label = refine_label(label, [code for code, weight in got.reasons if weight > 0])
+    label = refine_label(
+        label, [code for code, weight in got.reasons if weight > 0], len(text.split())
+    )
     if label != NO_INDICATORS or partial:
         shown = [x for x in shown if x["code"] != "NO_RISK_INDICATORS"]
     score, placeholder = round(got.score, 4), False

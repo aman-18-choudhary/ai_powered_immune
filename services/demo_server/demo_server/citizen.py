@@ -105,7 +105,7 @@ async def assess(scorer: Scorer, message: str, lang: str | None = None) -> Asses
                 "weight": round(float(r.weight), 3),
             }
         )
-    label = refine_label(label, [r.code for r in reasons if r.weight > 0])
+    label = refine_label(label, [r.code for r in reasons if r.weight > 0], len(text.split()))
     if label != NO_INDICATORS:
         shown = [x for x in shown if x["code"] != "NO_RISK_INDICATORS"]
     near = any(abs(score - th) < BORDER for th in (SUSPICIOUS, LIKELY_SCAM))
