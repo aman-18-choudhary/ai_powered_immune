@@ -44,6 +44,13 @@ export const REASONS: Record<string, ReasonInfo> = {
   CREDENTIAL_ASK: { label: "Credential ask", meaning: "The caller asks for an OTP, PIN or password.", source: "call-guard" },
   URGENCY: { label: "Time pressure", meaning: "The caller applies pressure to act immediately.", source: "call-guard" },
   SCRIPT_CLASSIFIER_MATCH: { label: "Known scam script", meaning: "The language model recognises the wording of a known digital-arrest script.", source: "call-guard" },
+  // rules-v2 (accuracy batch 2, 2026-10-18)
+  UPI_PIN_TO_RECEIVE: { label: "PIN to receive money", meaning: "Asks for a UPI PIN or a request approval in order to receive money; receiving never needs a PIN.", source: "call-guard" },
+  ADVANCE_FEE_DEMAND: { label: "Advance fee", meaning: "Asks for a fee or deposit to start a job or task, or to release earnings.", source: "call-guard" },
+  GUARANTEED_RETURNS: { label: "Guaranteed returns", meaning: "Promises unrealistic guaranteed returns or doubling of money.", source: "call-guard" },
+  SEXTORTION_THREAT: { label: "Sextortion threat", meaning: "Threatens to spread private images or recordings unless paid.", source: "call-guard" },
+  ACCOUNT_BLOCK_THREAT: { label: "Account block threat", meaning: "Threatens to block an account, card or SIM unless KYC is updated or a link is used.", source: "call-guard" },
+  REPORTED_SCAM_ENCOUNTER: { label: "Reported scam encounter", meaning: "Describes money or details taken through a known scam method.", source: "call-guard" },
 };
 
 export function humanise(code: string): string {

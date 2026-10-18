@@ -261,7 +261,7 @@ export interface Page<T> {
 export type ProvenanceSource = "rule" | "ml" | "llm" | "static_guidance" | "legacy";
 
 export interface ProvenanceEvidence {
-  type: "text_span" | "field" | "whole_text" | "keyed_by" | "not_recorded" | "generated" | "evidence_transcript" | string;
+  type: "text_span" | "field" | "whole_text" | "keyed_by" | "not_recorded" | "generated" | "evidence_transcript" | "text_link" | string;
   /** evidence_transcript: the audio evidence file and the segment's time range (seconds). */
   evidence_id?: string | null;
   start_s?: number | null;

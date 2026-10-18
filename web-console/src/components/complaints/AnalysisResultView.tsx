@@ -67,7 +67,21 @@ function EvidenceNote({ ev }: { ev?: ProvenanceEvidence }) {
       </>
     );
   } else if (ev.type === "evidence_transcript") body = <>in the audio transcript ({ev.note ?? "position not located"})</>;
-  else if (ev.type === "not_recorded") body = <>evidence not recorded (older analysis)</>;
+  else if (ev.type === "text_link") {
+    // a link written inside the text (accuracy batch 2): extracted and checked offline only
+    body = (
+      <>
+        a link written in {ev.field ?? "the text"}
+        {typeof ev.start === "number" ? ` (characters ${ev.start}–${ev.end})` : ""}
+        {ev.snippet ? (
+          <>
+            : <q className="text-fg">{ev.snippet}</q>
+          </>
+        ) : null}
+        {ev.host ? ` (host ${ev.host})` : ""}; extracted from the text, not opened or verified
+      </>
+    );
+  } else if (ev.type === "not_recorded") body = <>evidence not recorded (older analysis)</>;
   else return null;
   return (
     <span className="block text-xs text-subtle" data-testid="evidence">

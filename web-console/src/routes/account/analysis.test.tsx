@@ -165,6 +165,27 @@ describe("check a message or link", () => {
     expect(res).toHaveTextContent("This is not a finding that the message or event is safe");
   });
 
+  it("shows the evidence of a link written in the message as extracted, not verified (mocked API)", async () => {
+    as("CITIZEN");
+    mockFetch({
+      "POST /analyze": json(200, result({
+        indicators: [{
+          code: "SUSPICIOUS_TLD", source: "rule", method: "url_heuristics", stage: "url_heuristics", weight: 0.25,
+          text: "the top-level domain '.top' is on a static list", evidence: { type: "text_link", field: "description", start: 50, end: 81, snippet: "http://sbi-kyc-update.top/login", host: "sbi-kyc-update.top" },
+        }],
+      })),
+    });
+    const user = userEvent.setup();
+    renderCheck();
+    await user.type(screen.getByTestId("chk-text"), "Your account will be blocked. Update KYC at http://sbi-kyc-update.top/login");
+    await user.click(screen.getByTestId("chk-submit"));
+    const res = await screen.findByTestId("check-result");
+    const ev = within(res).getAllByTestId("evidence").find((e) => e.textContent?.includes("link written"));
+    expect(ev).toBeDefined();
+    expect(ev!).toHaveTextContent("http://sbi-kyc-update.top/login");
+    expect(ev!).toHaveTextContent("not opened or verified");
+  });
+
   it("Register a complaint pre-fills the form without submitting it", async () => {
     as("CITIZEN");
     const { calls } = mockFetch({ "POST /analyze": json(200, result()) });
