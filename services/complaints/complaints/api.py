@@ -382,6 +382,7 @@ def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) 
         "audio_transcription": d.get("audio_transcription") or [],
         "category_model": d.get("category_model"),
         "url_analysis": d.get("url_analysis"),
+        "links_in_text": d.get("links_in_text") or [],
         "entity_checks": d.get("entity_checks"),
         "context": d.get("context"),
         "score_components": d.get("score_components"),

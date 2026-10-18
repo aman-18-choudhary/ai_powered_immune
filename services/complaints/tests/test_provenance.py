@@ -6,6 +6,7 @@ import json
 
 import httpx
 import pytest
+from call_guard.rules import RULES_VERSION
 from conftest import create
 from test_pipeline_v2 import (
     BARE,
@@ -88,7 +89,7 @@ async def test_real_rule_indicators_point_to_a_sentence_not_the_whole_text():
     assert len(starts) == 2  # two different sentences carry the cues
     prov = out.extra["provenance"]
     assert "text_rules" in prov["ran"]
-    assert prov["model_versions"]["call_guard_rules"] == "rules-v1"
+    assert prov["model_versions"]["call_guard_rules"] == RULES_VERSION
     assert any(u["stage"] == "category_classifier" for u in prov["unavailable"])
 
 
@@ -131,7 +132,7 @@ async def test_rules_only_fallback_reports_classifier_unavailable():
 
         def score_text(self, text):
             s, r, _ = super().score_text(text)
-            return s, r, "rules-v1"
+            return s, r, RULES_VERSION
 
     out = await pipe(RulesOnly(0.5)).analyse(BARE)
     st = {s["stage"]: s for s in out.extra["provenance"]["stages"]}

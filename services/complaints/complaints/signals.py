@@ -189,6 +189,58 @@ def analyse_url(raw: str) -> dict[str, Any]:
     return base
 
 
+# ------------------------------------------------------------------------- links in free text
+# accuracy batch 2 (2026-10-18): links written inside the title/description are extracted and
+# given the same offline lexical checks as the URL field. Extraction is not verification: nothing
+# is fetched or resolved (no network access at all, so no SSRF surface), and an address that cannot
+# be parsed is reported as such, never as malicious and never as safe.
+MAX_EMBEDDED_URLS = 5
+_EMBEDDED_URL = re.compile(
+    r"(?i)(?:\b(?:https?|hxxps?)(?::|\[:\])//[^\s<>\"'`]+|\bwww(?:\.|\[\.\])[^\s<>\"'`]+)"
+)
+_TRAILING = ".,;:!?)]}'\"»”’"
+
+
+def _refang(s: str) -> tuple[str, bool]:
+    out = s
+    for a, b in (("[.]", "."), ("(.)", "."), ("[:]", ":"), ("[dot]", ".")):
+        out = out.replace(a, b)
+    low = out.lower()
+    if low.startswith("hxxps"):
+        out = "https" + out[5:]
+    elif low.startswith("hxxp"):
+        out = "http" + out[4:]
+    return out, out != s
+
+
+def extract_urls(text: str) -> list[dict[str, Any]]:
+    """Links found in free text: original span (evidence), offsets, the normalised form used for
+    the checks, and whether it was written in a disguised ("defanged") form. At most
+    ``MAX_EMBEDDED_URLS``; longer than ``MAX_URL`` characters are reported as too long."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if not isinstance(text, str) or not text:
+        return out
+    for m in _EMBEDDED_URL.finditer(text):
+        raw = m.group(0)
+        while raw and raw[-1] in _TRAILING:
+            raw = raw[:-1]
+        if not raw:
+            continue
+        norm, defanged = _refang(raw)
+        if norm.lower() in seen:
+            continue
+        seen.add(norm.lower())
+        out.append({
+            "original": raw[:200], "start": m.start(), "end": m.start() + len(raw),
+            "normalised": norm[:MAX_URL + 1], "defanged": defanged,
+            "too_long": len(norm) > MAX_URL,
+        })  # fmt: skip
+        if len(out) >= MAX_EMBEDDED_URLS:
+            break
+    return out
+
+
 # ----------------------------------------------------------------------------- entities
 def _placeholder_digits(d: str) -> bool:
     if len(set(d)) <= 2 and len(d) >= 8:

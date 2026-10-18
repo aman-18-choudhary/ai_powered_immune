@@ -347,12 +347,25 @@ def explanation_parts(facts: dict[str, Any]) -> list[dict[str, Any]]:
             f"The complainant selected {sel.replace('_', ' ').lower()}; this was not used as "
             "evidence.", "rule", "explanation_template", type="field", field="category",
         ))  # fmt: skip
-    url_ind = [i for i in inds if i.get("stage") == "url_heuristics"]
+    all_url = [i for i in inds if i.get("stage") == "url_heuristics"]
+    in_text = [i for i in all_url if (i.get("evidence") or {}).get("type") == "text_link"]
+    url_ind = [i for i in all_url if i not in in_text]
     if url_ind:
         parts.append(_part(
             "The link has these features: " + "; ".join(str(i["text"]) for i in url_ind[:5]) + ".",
             "rule", "url_heuristics", type="field", field="suspicious_url",
         ))  # fmt: skip
+    if in_text:
+        hosts = sorted({str((i.get("evidence") or {}).get("host")) for i in in_text})
+        parts.append(_part(
+            "A link written in the message (" + ", ".join(hosts[:3]) + ") has these features: "
+            + "; ".join(sorted({str(i["text"]) for i in in_text})[:5])
+            + ". It was extracted from the text and checked offline; it was not opened or "
+            "verified.",
+            "rule", "url_heuristics", type="text_link", field="description",
+        ))  # fmt: skip
+    if all_url:
+        pass
     elif facts.get("url_analysed"):
         parts.append(_part(
             "The link string showed none of the checked suspicious features.", "rule",

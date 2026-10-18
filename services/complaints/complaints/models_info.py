@@ -135,7 +135,7 @@ def call_guard_entry(runtime: dict[str, Any]) -> dict[str, Any]:
         "id": f"call_guard.{version}", "kind": "scam_script_classifier", "source": "ml",
         "version": version,
         "algorithm": "TF-IDF + logistic regression with an isotonic calibrator, blended with the "
-        "rules-v1 cue rules as max(rules, capped classifier)",
+        "call-guard cue rules (rules-v2) as max(rules, capped classifier)",
         "artifact": {"file": name, "bytes": size, "sha256": sha,
                      "verified_at_load": "SHA-256 pin, scikit-learn version and a smoke test"},
         "training_data": {

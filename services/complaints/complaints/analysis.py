@@ -407,7 +407,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
     async def analyse(self, complaint: dict[str, Any]) -> AnalysisOutcome:  # noqa: C901
         from . import provenance as pv
         from .explain import explanation_parts
-        from .signals import analyse_url, check_entities, context_fields
+        from .signals import analyse_url, check_entities, context_fields, extract_urls
 
         layout = pv.TextLayout(
             complaint.get("title"), complaint.get("description"), MAX_TEXT_CHARS,
@@ -593,6 +593,41 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         else:
             caps["url_heuristics"] = "skipped_no_input"
             stage("url_heuristics", "rule", pv.URL_METHOD, "skipped", "no_url")
+        # (c2) links written inside the title / description (accuracy batch 2): extracted, then the
+        # same offline checks; extraction is not verification and nothing is fetched
+        embedded: list[dict[str, Any]] = []
+        structured = str(url).strip().casefold() if url else None
+        for fld in ("title", "description"):
+            for u in extract_urls(str(complaint.get(fld) or "")):
+                if structured and u["normalised"].casefold() == structured:
+                    continue
+                if len(embedded) >= 5:
+                    break
+                res = {"field": fld, "original": u["original"], "start": u["start"],
+                       "end": u["end"], "defanged": u["defanged"], "extracted": True,
+                       "verified": False, "fetched": False}  # fmt: skip
+                if u["too_long"]:
+                    res.update(status="too_long", host=None, indicators=[])
+                else:
+                    a = analyse_url(u["normalised"])
+                    label = f"{layout.field_label if fld == 'description' else fld} (link in text)"
+                    a_ind = [{**pv.tag_url(i, label, a.get("host")),
+                              "evidence": {"type": "text_link", "field": fld,
+                                           "start": u["start"], "end": u["end"],
+                                           "snippet": u["original"][:120], "host": a.get("host")}}
+                             for i in a["indicators"]]  # fmt: skip
+                    indicators += a_ind
+                    res.update(status=a["status"], host=a.get("host"), indicators=a_ind,
+                               notes=a.get("notes", []))  # fmt: skip
+                embedded.append(res)
+        if embedded:
+            ok_any = any(e["status"] == "analysed" for e in embedded)
+            if caps["url_heuristics"] == "skipped_no_input":
+                caps["url_heuristics"] = "available" if ok_any else "unavailable"
+                if not ok_any:
+                    reasons["url_heuristics"] = "links_in_text_unparseable"
+            stage("links_in_text", "rule", pv.URL_METHOD, "ran" if ok_any else "unavailable",
+                  None if ok_any else "links_in_text_unparseable")  # fmt: skip
         caps["url_fetch_reputation"] = "unavailable"
         reasons["url_fetch_reputation"] = "no_network_lookup_by_design"
 
@@ -643,7 +678,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         # (accuracy audit 2026-10-17: a category guess alone produced HIGH for legitimate text)
         bases = [b for b in (text_score, transcript_score) if b is not None]
         risk: int | None = None
-        if bases or (url_analysis and weights):
+        if bases or ((url_analysis or embedded) and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
         scored = (
             text_score is not None or classification is not None
@@ -693,7 +728,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         facts = {
             "risk_score": risk, "risk_level": level, "indicators": indicators,
             "classification": classification, "selected_category": selected,
-            "text_scorer_ran": text_score is not None, "url_analysed": bool(url_analysis),
+            "text_scorer_ran": text_score is not None,
+            "url_analysed": bool(url_analysis or embedded),
             "absent_fields": absent,
             "unavailable": [c.replace("_", " ") for c in applicable_failed],
             "category_model_version": versions["category"],
@@ -912,6 +948,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 confidence, cat_detail, reasons.get("category_classifier")
             ),
             "url_analysis": url_analysis,
+            "links_in_text": embedded,
             "entity_checks": entities,
             "context": ctx,
             "score_components": {
@@ -949,7 +986,7 @@ def _rules_version() -> str:
 
         return str(RULES_VERSION)
     except Exception:
-        return "rules-v1"
+        return "rules-v2"
 
 
 def confidence_interpretation(

@@ -19,12 +19,10 @@ from complaints.analysis import ComplaintAnalysisPipeline  # noqa: E402
 DATASET = Path(__file__).resolve().parents[3] / "evaluation/datasets/accuracy_probes_v1.jsonl"
 SHA256 = "c17a6209a3fbde447664ccb55d817bef3cefcb695d14e8c608be3162a8d7e863"
 FLAGGED = {"MEDIUM", "HIGH", "CRITICAL"}
-# open failure modes still present after the 2026-10-18 batch (to be removed by later fixes)
-KNOWN_FALSE_POSITIVES = {"N1_bank_otp_sms"}  # fix 5: "do not share this OTP" misfires
-KNOWN_FALSE_NEGATIVES = {  # fix 6: no rules yet for these scam types; shown as "no indicators"
-    "S2_upi_collect", "S3_job_task", "S4_investment", "S5_kyc_phish", "S7_sextortion",
-    "S8_victim_narrative", "S9_otp_theft_hi", "E3_selected_mismatch",
-}  # fmt: skip
+# open failure modes: batch 1 (2026-10-18) left N1 (false positive) and eight false negatives;
+# accuracy batch 2 (rules-v2, same day) removed them. Re-adding a case here must be deliberate.
+KNOWN_FALSE_POSITIVES: set[str] = set()
+KNOWN_FALSE_NEGATIVES: set[str] = set()
 
 
 @pytest.fixture(scope="module")
@@ -85,20 +83,12 @@ def test_false_negatives_are_exactly_the_known_open_ones(results):
     assert fn == KNOWN_FALSE_NEGATIVES
 
 
-def test_missed_scams_never_read_as_safe(results):
-    for cid in KNOWN_FALSE_NEGATIVES:
-        _, r = results[cid]
-        a = r.extra["assessment"]
-        assert a in ("no_indicators_found", "indicators_found"), (cid, a)
-        if a == "no_indicators_found":
-            assert any("not a finding that the message or event is safe" in x
-                       for x in r.limitations), cid  # fmt: skip
-        else:  # weak indicators only (for example URGENCY): listed, level LOW, never "safe"
-            assert r.risk_level == "LOW" and r.indicators, cid
-            # review 2026-10-18: weak-only results lacked the not-a-safety-finding limitation
-            assert any("not a finding that the message or event is safe" in x
-                       for x in r.limitations), cid  # fmt: skip
-        assert "safe" not in (a or "")
+def test_every_scam_case_has_a_rule_based_indicator(results):
+    # batch 2: each of the eight previously missed scams is now backed by a deterministic rule
+    for cid, (c, r) in results.items():
+        if c["expected_label"] == "scam":
+            assert any(i.get("source") == "rule" for i in r.indicators), cid
+            assert r.extra["assessment"] == "indicators_found", cid
 
 
 def test_every_low_result_says_it_is_not_a_finding_of_safety(results):
