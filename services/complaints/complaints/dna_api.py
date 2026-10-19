@@ -23,8 +23,9 @@ def register_dna_routes(
         user: StaffUser,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 10,
     ) -> dict[str, Any]:
-        # embedding a text costs more than a plain read: the analysis bucket
-        throttle("analysis", user)
+        # one short embedding (tens of ms) and an index lookup: the read bucket. The analysis
+        # bucket (10/min) was too tight: the panel polls while the model loads after a start
+        throttle("read", user)
         if len(complaint_id) > 64:
             raise NotFound()
         return await dna.similar(complaint_id, limit)

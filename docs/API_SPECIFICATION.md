@@ -165,7 +165,7 @@ Deleted and opted-out complaints are not counted. Counts are of complaints, not 
 
 | Method and path | Auth | Notes |
 |---|---|---|
-| `GET /complaints/{id}/similar?limit=1..50` | INVESTIGATOR, ADMIN | complaints whose title and description (identifiers redacted) are worded alike: `items[]` with `similarity` (cosine, not a probability), `band` (`strong` >= 0.62, `moderate` >= 0.58), `shared_indicators` (rule-based codes of both latest analyses), `same_category`, `identifier_link` (`observed` / `inferred` / null, from the network), `explanation`; `status` `ok` / `loading` / `unavailable` (`reason`: `engine_not_installed`, `model_not_available_offline`, `load_failed`, `index_unavailable`, `embedding_failed`, `disabled`) / `insufficient_text`; `matching: "disabled"` when the owner opted out. Rate bucket: analysis |
+| `GET /complaints/{id}/similar?limit=1..50` | INVESTIGATOR, ADMIN | complaints whose title and description (identifiers redacted) are worded alike: `items[]` with `similarity` (cosine, not a probability), `band` (`strong` >= 0.62, `moderate` >= 0.58), `shared_indicators` (rule-based codes of both latest analyses), `same_category`, `identifier_link` (`observed` / `inferred` / null, from the network), `explanation`; `status` `ok` / `loading` / `unavailable` (`reason`: `engine_not_installed`, `model_not_available_offline`, `load_failed`, `index_unavailable`, `embedding_failed`, `disabled`) / `insufficient_text`; `matching: "disabled"` when the owner opted out. Rate bucket: read |
 
 Unknown or deleted complaint: 404. Excluded (deleted or opted-out) complaints are never returned or
 counted; candidates are re-checked against the database at request time. Similarity is not proof.

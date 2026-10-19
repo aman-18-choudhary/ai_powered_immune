@@ -58,7 +58,7 @@ Date: 2026-10-19. Branch `phase8-fraud-dna`, on top of `e84c490` (the CI fix, be
   * Create, delete and case-matching changes mark the index stale, and the next query syncs first.
 * **API:**
   * `GET /complaints/{id}/similar?limit=1..50`, INVESTIGATOR and ADMIN only (citizens 403,
-    anonymous 401, unknown or deleted complaint 404, bad limit 422), in the analysis rate bucket.
+    anonymous 401, unknown or deleted complaint 404, bad limit 422), in the read rate bucket (changed from the analysis bucket in Phase 10: the panel polls while the model loads).
   * Each item carries: similarity, band, rule-based indicators shared by both latest analyses, same
     category, an `identifier_link` from the network reported separately, and an explanation.
   * Response states: `ok`, `loading`, `unavailable` (with a reason), `insufficient_text`, and

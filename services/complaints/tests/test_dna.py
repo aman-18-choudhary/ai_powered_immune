@@ -318,3 +318,11 @@ def test_real_model_offline_and_meaningful(monkeypatch):
 
     assert cos(v[0], v[1]) > cos(v[0], v[2]) + 0.2
     assert cos(v[0], v[3]) > cos(v[3], v[2])
+
+
+async def test_repeated_panel_loads_are_not_rate_limited_like_analysis_runs(client, inv, mk):
+    # the panel polls while the model loads; 15 quick loads stay within the read bucket
+    a = await mk("a", ARREST)
+    codes = [(await client.get(f"/complaints/{a}/similar", headers=inv)).status_code
+             for _ in range(15)]  # fmt: skip
+    assert codes == [200] * 15
