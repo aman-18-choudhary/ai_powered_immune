@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 import pytest_asyncio
-from conftest import instant, login, make_settings, wait_status
+from conftest import assert_same_run, instant, login, make_settings, wait_status
 from fastapi.testclient import TestClient
 
 from demo_server.engine import TICK_S, Engine, _shared_models
@@ -14,31 +14,6 @@ IGNORED = {"wall", "run_id", "latency_ms", "wall_offset"}
 
 def norm(events):
     return [{k: v for k, v in e.items() if k not in IGNORED} for e in events]
-
-
-def split_ledger(events):
-    """(non-ledger events without ids or ledger counters, ledger entries by seq and type)."""
-    other, ledger = [], []
-    for e in norm(events):
-        if e["kind"] == "ledger.entry":
-            ledger.append((e["seq"], e["event_type"]))
-            continue
-        e = {k: v for k, v in e.items() if k != "id"}
-        if "counters" in e:
-            e["counters"] = {k: v for k, v in e["counters"].items() if k != "ledger_entries"}
-        other.append(e)
-    return other, ledger
-
-
-def assert_same_run(a_events, b_events):
-    """The engine's documented determinism contract: everything except ledger.entry events is
-    identical; ledger entries wait at most LEDGER_WAIT_S for the ledger consumer and otherwise
-    appear later (shifting ids and ledger counters after them), so they must be the same
-    sequence, one run possibly lagging at the end."""
-    a, b = split_ledger(a_events), split_ledger(b_events)
-    assert a[0] == b[0]
-    shorter, longer = sorted((a[1], b[1]), key=len)
-    assert longer[: len(shorter)] == shorter
 
 
 def test_compress_gap_monotone_bounded_continuous():
@@ -82,7 +57,7 @@ async def test_both_modes_same_events_and_wall_offset(engine):
     await engine.start_run(1, 20.0, "hero", "cinematic")
     await engine.join(60)
     cine = list(engine.log.history)
-    assert_same_run(real, cine)
+    assert_same_run(norm(real), norm(cine))
     offs = [e["wall_offset"] for e in cine]
     assert offs == sorted(offs) and offs[-1] > 55
     assert [e["wall_offset"] for e in real] == [e["t"] for e in real]
@@ -123,7 +98,7 @@ async def test_seek_by_wall_equals_seek_by_t(engine):
     # ledger consumer and otherwise appear later, so under load their position (and the ids and
     # ledger counters after them) can differ. Everything else must be identical, and the ledger
     # entries must be the same sequence (one replay may lag at the end).
-    assert_same_run(ev_t, list(engine.log.history))
+    assert_same_run(norm(ev_t), norm(list(engine.log.history)))
 
 
 def test_api_pacing_and_seek_wall(app_factory):
@@ -166,5 +141,26 @@ async def test_ledger_lag_in_one_run_keeps_the_contract(tmp_path, monkeypatch):
     finally:
         await e.aclose()
     assert norm(real) != norm(cine)  # the lag really changed the positions
-    assert_same_run(real, cine)
+    assert_same_run(norm(real), norm(cine))
     assert any(x["kind"] == "ledger.entry" for x in cine)
+
+
+def test_contract_helpers_still_catch_real_differences():
+    from conftest import assert_run_prefix
+
+    tick = {
+        "id": 1,
+        "t": 30.0,
+        "kind": "metric.tick",
+        "counters": {"chunks": 1, "ledger_entries": 0},
+    }
+    led = {"id": 2, "t": 30.0, "kind": "ledger.entry", "seq": 1, "event_type": "callrisk.alert"}
+    lag = [dict(tick, id=1), dict(led, id=2)]
+    on_time = [dict(led, id=1), dict(tick, id=2, counters={"chunks": 1, "ledger_entries": 1})]
+    assert_same_run(on_time, lag)  # only the ledger position and counters differ: allowed
+    with pytest.raises(AssertionError):  # a different non-ledger event is not
+        assert_same_run(on_time, [dict(tick, counters={"chunks": 2}), led])
+    with pytest.raises(AssertionError):  # nor a different ledger sequence
+        assert_same_run(on_time, [tick, dict(led, seq=2)])
+    with pytest.raises(AssertionError):  # nor a replay that is not a prefix
+        assert_run_prefix([dict(tick, t=60.0)], on_time)

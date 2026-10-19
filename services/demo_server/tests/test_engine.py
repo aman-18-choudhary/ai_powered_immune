@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 import pytest_asyncio
-from conftest import instant, make_settings
+from conftest import assert_run_prefix, assert_same_run, instant, make_settings
 
 from demo_server.engine import Engine
 
@@ -80,7 +80,7 @@ async def test_same_seed_same_events_independent_of_speed(engine):
         fast_total = sum(d for d, _ in sleeps)
     finally:
         engine.sleep = instant
-    assert norm(a) == norm(b)
+    assert_same_run(norm(a), norm(b))  # speed never changes the events (ledger timing aside)
     assert n_slow > 100
     # wall pacing: simulated duration divided by speed
     dur = engine.state.duration
@@ -159,14 +159,14 @@ async def test_seek_replays_deterministically_then_continues(engine):
     assert st["status"] == "paused" and st["epoch"] == 1  # was finished: stays paused at t
     assert 995.0 <= engine.state.t <= 1000.0
     hist = norm(engine.log.history)
-    assert hist == full[: len(hist)]  # the replay IS the original prefix, ids included
+    assert_run_prefix(hist, full)  # the replay is the original prefix (ledger timing aside)
     assert hist[-1]["t"] <= 1000.0 and len(hist) < len(full)
     snap = engine.snapshot()
     assert snap["kind"] == "scenario.state" and snap["id"] == hist[-1]["id"]
     assert snap["counters"]["ledger_entries"] >= 1
     await engine.control("resume")
     await engine.join(60)
-    assert norm(engine.log.history) == full  # continuing reproduces the original run
+    assert_same_run(norm(engine.log.history), full)  # continuing reproduces the original run
 
 
 @pytest.mark.asyncio
