@@ -14,6 +14,7 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from dna_fakes import FakeEmbedder
 from jwt.algorithms import RSAAlgorithm
 
 from complaints.analysis import CAPABILITIES_NONE, AnalysisOutcome
@@ -145,6 +146,9 @@ def make_app(settings, idp, analysis) -> Iterator[Callable[..., object]]:
         jwks = kw.pop("jwks", idp.jwks())
         # no real speech-to-text in API tests unless a test passes an engine (mocked or real)
         kw.setdefault("stt_engine", NoEngine("engine_disabled"))
+        # no real embedding model either: a deterministic fake, index synced on query
+        kw.setdefault("dna_embedder", FakeEmbedder())
+        kw.setdefault("dna_background", False)
         app = create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
         made.append(app)
         return app

@@ -1,3 +1,4 @@
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -5,7 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from demo_server.api import create_app
+# the mounted complaints service must not load the real Fraud DNA model in these tests
+os.environ.setdefault("COMPLAINTS_DNA_ENABLED", "0")
+
+from demo_server.api import create_app  # noqa: E402
 from demo_server.config import Settings
 
 SECRET = "unit-test-secret-" + "x" * 32

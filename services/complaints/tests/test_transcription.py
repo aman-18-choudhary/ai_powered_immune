@@ -369,10 +369,12 @@ async def test_disabled_by_config(make_app, tok, settings, admin):
 
 
 async def test_default_engine_comes_from_the_live_audio_env(settings, idp, monkeypatch):
+    from dna_fakes import FakeEmbedder
+
     from complaints.api import create_app
 
     monkeypatch.setenv("LIVE_STT_ENGINE", "none")
-    app = create_app(settings, jwks=idp.jwks())
+    app = create_app(settings, jwks=idp.jwks(), dna_embedder=FakeEmbedder(), dna_background=False)
     try:
         c = cl(app)
         r = await c.get("/models", headers={"Authorization": f"Bearer {idp.token()}"})

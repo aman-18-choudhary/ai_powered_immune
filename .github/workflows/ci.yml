@@ -19,7 +19,7 @@ jobs:
           python -m pip install --upgrade pip
           python - > /tmp/external-requirements.txt <<'PY'
           import pathlib, re, tomllib
-          skip_groups = {"stt"}
+          skip_groups = {"stt", "dna"}  # heavy optional ML runtimes; tests use fakes
           projects = [p for p in pathlib.Path(".").rglob("pyproject.toml")
                       if ".venv" not in p.parts and "node_modules" not in p.parts]
           meta = [tomllib.loads(p.read_text())["project"] for p in projects]

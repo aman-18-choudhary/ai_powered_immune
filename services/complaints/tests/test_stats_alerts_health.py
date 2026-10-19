@@ -83,8 +83,11 @@ async def test_health_endpoints(client, tok, admin):
     assert h["db"]["status"] == "ok" and h["evidence_dir"]["status"] == "ok"
     assert h["jwks"]["status"] in ("configured", "injected")
     assert h["call_guard"]["status"] in ("importable", "unavailable")
-    for k in ("qdrant", "neo4j", "postgis", "ollama", "redis"):
+    for k in ("neo4j", "postgis", "ollama", "redis"):
         assert h[k]["status"] == "not_configured"
+    # Qdrant runs embedded for Fraud DNA (Phase 8); nothing is started until first use here
+    assert h["qdrant"]["status"] in ("local", "not_started") and h["qdrant"]["mode"] == "memory"
+    assert h["dna"]["status"] in ("ready", "loading") and h["dna"]["model"] == "test/fake-bow-64"
     assert (await client.get("/admin/health", headers=tok("a"))).status_code == 403
     blob = json.dumps(h)
     assert "sk_" not in blob and "postgres" not in blob.casefold().replace("postgis", "")

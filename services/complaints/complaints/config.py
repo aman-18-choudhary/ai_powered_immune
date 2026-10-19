@@ -92,6 +92,11 @@ class Settings:
     stt_max_seconds_per_file: float = 180.0
     stt_max_files_per_run: int = 2
     stt_run_budget_s: float = 120.0
+    # Fraud DNA (complaints.dna): the cached embedding model (optional 'dna' extra) and the
+    # Qdrant embedded index directory (None = in memory, rebuilt from the database at start-up)
+    dna_enabled: bool = True
+    dna_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    dna_dir: Path | None = None
     # TEST ONLY: also append local sign-in codes to this file (end-to-end tests read it). Refused
     # in clerk mode; never set it outside an automated test run.
     local_auth_outbox: Path | None = None
@@ -144,6 +149,15 @@ class Settings:
             ),
             stt_max_files_per_run=_int("COMPLAINTS_STT_MAX_FILES_PER_RUN", 2, 0, 10),
             stt_run_budget_s=_float("COMPLAINTS_STT_RUN_BUDGET_S", 120.0, 5.0, 900.0),
+            dna_enabled=(os.getenv("COMPLAINTS_DNA_ENABLED") or "1").strip().lower()
+            not in ("0", "false", "no", "off"),
+            dna_model=(os.getenv("COMPLAINTS_DNA_MODEL") or "").strip()
+            or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            dna_dir=(
+                Path(os.environ["COMPLAINTS_DNA_DIR"].strip())
+                if (os.getenv("COMPLAINTS_DNA_DIR") or "").strip()
+                else None
+            ),
             local_auth_outbox=(
                 Path(os.environ["COMPLAINTS_LOCAL_AUTH_OUTBOX"].strip())
                 if (os.getenv("COMPLAINTS_LOCAL_AUTH_OUTBOX") or "").strip()

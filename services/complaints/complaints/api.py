@@ -41,6 +41,8 @@ from .analysis import (
     stored_level,
 )
 from .config import ConfigError, Settings
+from .dna import Embedder, FraudDna, SentenceTransformerEmbedder
+from .dna_api import register_dna_routes
 from .evidence import EvidenceStorage, UploadError, receive_upload
 from .explain import OllamaClient
 from .identity import (
@@ -578,6 +580,8 @@ def create_app(
     local_auth: LocalAuth | None = None,
     stt_engine: Any = None,
     transcriber: Transcriber | None = None,
+    dna_embedder: Embedder | None = None,
+    dna_background: bool = True,
 ) -> FastAPI:
     """``stt_engine``: an already-built speech-to-text engine to share (the demo server passes
     its live-audio engine so one model is in memory); default: ``LIVE_STT_ENGINE`` /
@@ -658,6 +662,13 @@ def create_app(
         raise ConfigError("COMPLAINTS_EVIDENCE_DIR is not usable") from exc
 
     store = ComplaintStore(settings.database_url)
+    # Fraud DNA: the cached sentence-transformers model unless an embedder is injected (tests use
+    # a deterministic fake and no background task)
+    fraud_dna = FraudDna(
+        store, dna_embedder or SentenceTransformerEmbedder(settings.dna_model), settings.dna_dir,
+        enabled=settings.dna_enabled, background=dna_background,
+    )  # fmt: skip
+    closers.append(fraud_dna.close)
     limiter = RateLimiter(
         {
             "write": settings.rate_write_per_min,
@@ -671,6 +682,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        fraud_dna.start()  # loads the model and builds the index in the background
         try:
             yield
         finally:
@@ -689,6 +701,7 @@ def create_app(
     app.state.settings = settings
     app.state.local_auth = local_codes
     app.state.stt = stt
+    app.state.dna = fraud_dna
     app.include_router(make_health_router(ready))
 
     # ------------------------------------------------------------------ errors
@@ -874,6 +887,8 @@ def create_app(
     register_network_routes(
         app, network=NetworkStore(store), staff=StaffUser, throttle=throttle, now=now
     )
+    # Fraud DNA (Phase 8): staff-only similar-complaints route in dna_api.py
+    register_dna_routes(app, dna=fraud_dna, staff=StaffUser, throttle=throttle)
 
     def session_payload(row: CurrentUser) -> dict[str, Any]:
         return {
@@ -1036,6 +1051,8 @@ def create_app(
         c, created = await asyncio.to_thread(
             store.create_complaint, user.id, fields, now(), idempotency_key, request_hash
         )
+        if created:
+            fraud_dna.notify()  # index it in the background (never blocks or fails the request)
         view = await _detail(user, c)
         return JSONResponse(
             view,
@@ -1125,6 +1142,7 @@ def create_app(
         if len(complaint_id) > 64:
             raise ApiError(404, "not_found", "Not found.")
         await asyncio.to_thread(store.soft_delete, complaint_id, user.id, now())
+        fraud_dna.notify()  # removed from the index; queries re-check deletion regardless
         return Response(status_code=204)
 
     # ------------------------------------------------------------------ evidence
@@ -1365,6 +1383,11 @@ def create_app(
                 "provider": "ollama", **llm,
                 "used_for": "explanation wording only; never the score, level or category",
             },
+            "dna": {
+                **fraud_dna.status(),
+                "used_for": "finding complaints described in similar words (staff only); never "
+                "the score, level or category, and never proof of a link",
+            },
             "stt": {
                 **await stt.health(),
                 "used_for": "transcribing uploaded audio evidence when a complaint analysis runs; "
@@ -1427,6 +1450,8 @@ def create_app(
         u = await asyncio.to_thread(
             store.update_profile, user.id, changes, now(), ident.display_name
         )
+        if "allow_case_matching" in changes:
+            fraud_dna.notify()  # index or remove this user's complaints; queries re-check anyway
         return _me_view(u, user)
 
     @app.get("/me/stats")
@@ -1512,7 +1537,7 @@ def create_app(
             "jwks": {"status": jwks_status},
             "call_guard": {"status": "importable" if guard_ok else "unavailable"},
         }
-        for name in ("qdrant", "neo4j", "postgis", "redis"):
+        for name in ("neo4j", "postgis", "redis"):
             out[name] = {"status": "not_configured"}
         # complaint network queries run as SQL on the complaints database (Phase 9)
         out["graph"] = {
@@ -1528,6 +1553,12 @@ def create_app(
             "model": ollama_client.model if ollama_client.configured else None,
         }
         out["stt"] = await stt.health()
+        out["dna"] = fraud_dna.status()
+        out["qdrant"] = {
+            "status": "local" if fraud_dna.index.ready else "not_started",
+            "mode": "embedded" if settings.dna_dir else "memory",
+            "message": "embedded (local mode), used by Fraud DNA",
+        }  # fmt: skip
         return out
 
     # ------------------------------------------------------------------ middleware stack

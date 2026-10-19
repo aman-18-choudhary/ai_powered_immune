@@ -8,6 +8,7 @@ import httpx
 import jwt
 import pytest
 from conftest import INVESTIGATOR_EMAIL, bearer
+from dna_fakes import FakeEmbedder
 
 from complaints.api import create_app
 from complaints.local_auth import LocalAuth, local_subject, print_to_terminal
@@ -52,7 +53,8 @@ def local_settings(settings):
 @pytest.fixture
 def lapp(local_settings, analysis, clock, outbox):
     app = create_app(local_settings, analysis=analysis,
-                     local_auth=LocalAuth(SECRET, deliver=outbox, clock=clock))  # fmt: skip
+                     local_auth=LocalAuth(SECRET, deliver=outbox, clock=clock),
+                     dna_embedder=FakeEmbedder(), dna_background=False)  # fmt: skip
     yield app
     app.state.store.close()
 
@@ -285,7 +287,7 @@ async def test_clerk_publishable_key_is_exposed_only_when_publishable(make_app, 
 
 async def test_demo_mode_also_offers_local_sign_in(settings, analysis):
     s = dataclasses.replace(settings, auth_mode="demo", demo_jwt_secret=SECRET)
-    app = create_app(s, analysis=analysis)
+    app = create_app(s, analysis=analysis, dna_embedder=FakeEmbedder(), dna_background=False)
     try:
         c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
         assert (await c.get("/auth/config")).json()["local"]["enabled"] is True
@@ -298,7 +300,7 @@ async def test_test_only_file_outbox_writes_the_code(local_settings, analysis, t
     import stat
 
     box = tmp_path / "outbox.jsonl"
-    app = create_app(dataclasses.replace(local_settings, local_auth_outbox=box), analysis=analysis)
+    app = create_app(dataclasses.replace(local_settings, local_auth_outbox=box), analysis=analysis, dna_embedder=FakeEmbedder(), dna_background=False)
     try:
         c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
         r = await c.post("/local-auth/start", json={"email": "E2E@Example.org"})

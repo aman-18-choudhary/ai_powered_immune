@@ -55,6 +55,8 @@ def complaints_settings(cfg: Settings) -> ComplaintsSettings:
         base,
         database_url=db_url,
         evidence_dir=evidence,
+        # Fraud DNA index (Qdrant embedded mode) next to the demo database unless set explicitly
+        dna_dir=base.dna_dir or (cfg.ensure_work_dir() / "complaints" / "dna"),
         auth_mode=mode,
         # demo mode verifies this server's own HS256 tokens (role claim ignored)
         demo_jwt_secret=cfg.jwt_secret if mode != "clerk" else base.demo_jwt_secret,
