@@ -5,7 +5,9 @@ import httpx
 import pytest
 
 from gateway.main import create_app
+from gateway.ratelimit import RateLimiter
 
+MID_WINDOW = 6_000_000 * 60 + 10.0  # 10 s into a 60 s window
 SECRET = "test-secret-test-secret-test-secret-0123"  # test-only, 32+ bytes for HS256
 
 
@@ -39,9 +41,16 @@ def redis():
 @pytest.fixture
 def make_client(upstream, redis):
     def _make(**kw) -> httpx.AsyncClient:
+        the_redis = kw.pop("redis", redis)
+        if "limiter" not in kw:
+            # The limiters use fixed windows aligned to the wall clock (60 s). On the real clock a
+            # test's requests can straddle a minute boundary and the count restarts (seen in a
+            # Python 3.11 run, 2026-10-19). Pin the clock inside one window so tests check the
+            # counting, not the time of day.
+            kw["limiter"] = RateLimiter(the_redis, kw.pop("limits", None), clock=lambda: MID_WINDOW)
         app = create_app(
             secret=SECRET,
-            redis=kw.pop("redis", redis),
+            redis=the_redis,
             upstream_transport=httpx.MockTransport(upstream.handler),
             upstreams={
                 p: f"http://{p}.internal" for p in ("txn", "graph", "geo", "ledger", "citizen")

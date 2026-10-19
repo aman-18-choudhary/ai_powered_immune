@@ -304,3 +304,20 @@ async def test_chunked_login_body_capped(make_client):
     assert r.status_code == 413
     ok = await c.post("/auth/login", json={"username": "admin", "password": "pw-admin"})
     assert ok.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "start, locked", [(6_000_000 * 60 + 10.0, True), (6_000_000 * 60 - 0.05, False)]
+)
+async def test_login_lock_counts_per_fixed_window(make_client, redis, start, locked):
+    """The failed-login counter is per fixed 60 s window aligned to the clock: 11 attempts inside
+    one window lock the login; attempts straddling a boundary start a new count (why the test
+    fixture pins the clock; seen as an intermittent failure on 2026-10-19)."""
+    import itertools
+
+    from gateway.ratelimit import RateLimiter
+
+    ticks = itertools.count()
+    c = make_client(limiter=RateLimiter(redis, clock=lambda: start + next(ticks) * 0.01))
+    codes = [(await c.post("/auth/login", json=BAD)).status_code for _ in range(11)]
+    assert (codes[-1] == 429) is locked

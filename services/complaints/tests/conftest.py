@@ -149,6 +149,9 @@ def make_app(settings, idp, analysis) -> Iterator[Callable[..., object]]:
         # no real embedding model either: a deterministic fake, index synced on query
         kw.setdefault("dna_embedder", FakeEmbedder())
         kw.setdefault("dna_background", False)
+        # the per-user limiter uses fixed 60 s windows: pin its clock inside one window so a
+        # test's requests never straddle a boundary (see the gateway fix, 2026-10-19)
+        kw.setdefault("rate_clock", lambda: 6_000_000 * 60 + 10.0)
         app = create_app(s, jwks=jwks, analysis=kw.pop("analysis", analysis), **kw)
         made.append(app)
         return app

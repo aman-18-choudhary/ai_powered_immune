@@ -587,6 +587,7 @@ def create_app(
     transcriber: Transcriber | None = None,
     dna_embedder: Embedder | None = None,
     dna_background: bool = True,
+    rate_clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     """``stt_engine``: an already-built speech-to-text engine to share (the demo server passes
     its live-audio engine so one model is in memory); default: ``LIVE_STT_ENGINE`` /
@@ -681,7 +682,9 @@ def create_app(
             "analysis": settings.rate_analysis_per_min,
             "analyze": settings.rate_analyze_per_min,
             "read": settings.rate_read_per_min,
-        }
+        },
+        # tests pin this inside one window: the windows are fixed (60 s) on the clock
+        clock=rate_clock or time.monotonic,
     )
     lookup_cache: dict[str, tuple[float, tuple[str, bool] | None]] = {}
 
