@@ -30,6 +30,17 @@ def split_ledger(events):
     return other, ledger
 
 
+def assert_same_run(a_events, b_events):
+    """The engine's documented determinism contract: everything except ledger.entry events is
+    identical; ledger entries wait at most LEDGER_WAIT_S for the ledger consumer and otherwise
+    appear later (shifting ids and ledger counters after them), so they must be the same
+    sequence, one run possibly lagging at the end."""
+    a, b = split_ledger(a_events), split_ledger(b_events)
+    assert a[0] == b[0]
+    shorter, longer = sorted((a[1], b[1]), key=len)
+    assert longer[: len(shorter)] == shorter
+
+
 def test_compress_gap_monotone_bounded_continuous():
     gs = [i / 10 for i in range(0, 20_000)]
     ws = [compress_gap(g) for g in gs]
@@ -71,7 +82,7 @@ async def test_both_modes_same_events_and_wall_offset(engine):
     await engine.start_run(1, 20.0, "hero", "cinematic")
     await engine.join(60)
     cine = list(engine.log.history)
-    assert norm(real) == norm(cine)
+    assert_same_run(real, cine)
     offs = [e["wall_offset"] for e in cine]
     assert offs == sorted(offs) and offs[-1] > 55
     assert [e["wall_offset"] for e in real] == [e["t"] for e in real]
@@ -112,10 +123,7 @@ async def test_seek_by_wall_equals_seek_by_t(engine):
     # ledger consumer and otherwise appear later, so under load their position (and the ids and
     # ledger counters after them) can differ. Everything else must be identical, and the ledger
     # entries must be the same sequence (one replay may lag at the end).
-    a, b = split_ledger(ev_t), split_ledger(list(engine.log.history))
-    assert a[0] == b[0]
-    shorter, longer = sorted((a[1], b[1]), key=len)
-    assert longer[: len(shorter)] == shorter
+    assert_same_run(ev_t, list(engine.log.history))
 
 
 def test_api_pacing_and_seek_wall(app_factory):
@@ -136,3 +144,27 @@ def test_api_pacing_and_seek_wall(app_factory):
         runs = c.get("/api/demo/runs", headers=off).json()["runs"]
         assert runs[-1]["pacing"] == "cinematic"
         _ = asyncio  # keep import for parity
+
+
+@pytest.mark.asyncio
+async def test_ledger_lag_in_one_run_keeps_the_contract(tmp_path, monkeypatch):
+    """Regression (CI run #38/#39, 2026-10-19): on a slow runner one run's ledger entries missed
+    the LEDGER_WAIT_S window and appeared after a metric tick. Forcing that lag in one run: the
+    exact sequences differ, the documented contract still holds."""
+    import demo_server.engine as engine_mod
+
+    e = Engine(make_settings(tmp_path), sleep=instant)
+    await e.start()
+    try:
+        await e.start_run(1, 20.0, "hero", "real")
+        await e.join(60)
+        real = list(e.log.history)
+        monkeypatch.setattr(engine_mod, "LEDGER_WAIT_S", 0.0)  # a ledger consumer that lags
+        await e.start_run(1, 20.0, "hero", "cinematic")
+        await e.join(60)
+        cine = list(e.log.history)
+    finally:
+        await e.aclose()
+    assert norm(real) != norm(cine)  # the lag really changed the positions
+    assert_same_run(real, cine)
+    assert any(x["kind"] == "ledger.entry" for x in cine)
