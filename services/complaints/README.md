@@ -175,6 +175,8 @@ Errors are JSON `{error, message}`; validation errors are `{error: "validation_e
 | run analysis | own | any | any |
 | alerts, stats | own | own | own |
 | complaint network (related, graph, clusters, identifier search, link review) | no (403) | yes | yes |
+| Fraud DNA (similar complaints), hotspots, investigation notes, case timeline | no (403) | yes | yes |
+| case report download | own complaint (owner version) | yes (staff version) | yes (staff version) |
 | users, roles, audit, health | no | no | yes |
 
 INVESTIGATOR (allowlist source) and ADMIN (bootstrap source) apply only while the verified email is
@@ -288,6 +290,14 @@ the complaint, and compared by a SHA-256 of type and value. Responses show maske
 Every query applies the same filter: the complaint is not deleted and its owner allows case
 matching. Opted-out or deleted complaints cannot appear, be counted, or connect other complaints.
 Shared identifiers are leads, not proof that the same person is involved.
+
+## Investigator case tools (Phase 12)
+
+Investigation notes (`GET/POST /complaints/{id}/notes`, staff, append-only, never shown to the
+complainant, audited without the text), the case timeline (`GET /complaints/{id}/timeline`, staff,
+built from the stored status history, evidence, transcripts, analyses, link reviews and notes) and
+the case report (`GET /complaints/{id}/report`, Markdown attachment; the owner's version leaves out
+notes, link reviews and user ids; every export audited as `case_report_export`).
 
 ## Complaint hotspots (Phase 10)
 

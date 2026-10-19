@@ -96,7 +96,8 @@ dependency missing), **Limitation**.
 |---|---|
 | Queue with search, filters, sort, pagination | Verified (tests); UI agent Playwright only |
 | Admin users, roles, activation, audit, service health | Verified (tests); UI agent Playwright only |
-| Investigation notes, case report export, per-case audit view, configuration view | Planned |
+| Investigation notes (staff only, append-only, audited), case timeline, Markdown case report (owner and staff versions, audited) | Verified (tests incl. Postgres; agent Playwright against a real server) |
+| Configuration view | Planned |
 
 ### Platform
 | Feature | Status |

@@ -181,6 +181,12 @@ demo server uses `<COMPLAINTS_DATA_DIR>/dna`), or in memory when unset. Derived 
 `complaints` by the service's sync (start-up, after create/delete/opt-out, before a query when
 stale); deleting the directory is a safe recovery step. A model change starts a new collection.
 
+### `investigation_notes` (migration 11, Phase 12)
+
+`id`, `complaint_id` (FK), `author_user_id` (FK), `body` (text, up to 4000 characters), `created_at`;
+index (complaint, created). Staff only, append-only (no update or delete route); the text is never
+logged or copied into `admin_audit`.
+
 ### `admin_audit`
 id, actor_user_id, action (40), target_user_id, before (JSON), after (JSON), created_at. Indexes
 `ix_audit_created`, `ix_audit_target (target_user_id, action)`. Actions written today include
@@ -221,6 +227,7 @@ run holds an advisory lock so replicas starting together serialise.
 | 8 | alerts_risk_level | `alerts.risk_level` for de-duplication |
 | 9 | evidence_transcripts | Table `evidence_transcripts` + index `ix_transcripts_complaint` (Phase 6) |
 | 10 | complaint_network | Tables `complaint_entities`, `link_reviews` + indexes; backfill of the identifiers of existing complaints (Phase 9) |
+| 11 | investigation_notes | Table `investigation_notes` + index (Phase 12) |
 
 Migrations 6-8 came with Phase B (pushed 2026-10-16); migration 9 with Phase 6 (2026-10-16, not
 pushed). Migration 9 was tested on a fresh database, on a database at version 8 with data, and on a
@@ -253,7 +260,6 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 
 | Structure | Purpose | Phase |
 |---|---|---|
-| `investigation_notes` | Investigator notes separate from status history | 12 |
 | Geographic aggregation | SQL grid over `latitude/longitude` first; PostGIS geometry column optional | 10 |
 | Report exports | Generated complaint/case reports with access control | 12 |
 | Evidence-access audit | Audit rows for downloads | 14 |

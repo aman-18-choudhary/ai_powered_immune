@@ -153,6 +153,15 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
 matching are excluded from every result and count. A confirmed link is not a finding of guilt.
 
+### Investigator case tools (Phase 12)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `GET /complaints/{id}/notes?limit&offset` | INVESTIGATOR, ADMIN | investigation notes, newest first; never visible to the complainant |
+| `POST /complaints/{id}/notes` | INVESTIGATOR, ADMIN | `{body}` 1-4000 characters (trimmed, control characters removed); 201; append-only; audited as `case_note_add` (ids and length, not the text) |
+| `GET /complaints/{id}/timeline` | INVESTIGATOR, ADMIN | ordered case events from the stored tables: `complaint_created`, `status_changed` (with its note), `evidence_added`/`evidence_removed`, `transcript`, `analysis`, `link_review`, `investigation_note` |
+| `GET /complaints/{id}/report` | owner, INVESTIGATOR, ADMIN | Markdown attachment `complaint-<id8>-report.md`; the owner version leaves out notes, link reviews and user ids; every export audited as `case_report_export`; others 404 |
+
 ### Complaint hotspots (Phase 10, staff only)
 
 | Method and path | Auth | Notes |
@@ -200,8 +209,6 @@ simulator output and **are not complaint intelligence**.
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
-| `GET/POST /complaints/{id}/notes` | staff | 12 |
-| `GET /complaints/{id}/report` (export) | owner (own complaint), staff | 12 |
 | `PATCH /complaints/{id}` (citizen edits while `SUBMITTED`) | owner | 11 |
 
 Each will follow the same error format, ownership scoping and rate limiting.
