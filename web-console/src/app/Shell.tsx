@@ -42,7 +42,7 @@ function Rail() {
         <NavLink
           key={to}
           to={to}
-          end={end || (inactiveUnder !== undefined && (pathname === inactiveUnder || pathname.startsWith(`${inactiveUnder}/`)))}
+          end={end || (inactiveUnder?.some((u) => pathname === u || pathname.startsWith(`${u}/`)) ?? false)}
           className={({ isActive }) =>
             cn(
               "group relative flex min-w-[58px] flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10.5px] font-medium transition-colors md:w-full",

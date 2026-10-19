@@ -54,12 +54,20 @@ async function signIn(page: Page, email: string, entry: "citizen" | "investigato
   await page.getByTestId("local-verify").click();
 }
 
-async function report(page: Page, title: string, upi: string): Promise<string> {
+async function report(page: Page, title: string, upi: string, where: "button" | "typed" = "typed"): Promise<string> {
   await page.goto("/me/complaints/new");
   await page.getByTestId("f-category").selectOption("UPI_FRAUD");
   await page.getByTestId("f-title").fill(title);
   await page.getByTestId("f-description").fill("SYNTHETIC test complaint: a caller asked me to approve a UPI collect request to receive a refund.");
   await page.getByTestId("f-upi_id").fill(upi);
+  // Phase 10: every report of this run is in one map cell of its own
+  if (where === "button") {
+    await page.getByTestId("use-location").click();
+    await expect(page.getByTestId("f-latitude")).toHaveValue(LOC.lat.toFixed(5));
+  } else {
+    await page.getByTestId("f-latitude").fill(String(LOC.lat));
+    await page.getByTestId("f-longitude").fill(String(LOC.lon));
+  }
   const created = page.waitForResponse((r) => r.url().endsWith("/api/complaints/complaints") && r.request().method() === "POST");
   await page.getByTestId("submit-complaint").click();
   const res = await created;
@@ -68,6 +76,9 @@ async function report(page: Page, title: string, upi: string): Promise<string> {
 }
 
 const run = Date.now().toString(36);
+// a 0.25-degree cell inside India chosen from the run id (cell centre + 0.05), so counts are exact
+const slot = parseInt(run.slice(-3), 36);
+const LOC = { lat: 21 + (slot % 20) * 0.25 + 0.05, lon: 74 + (Math.floor(slot / 20) % 30) * 0.25 + 0.05 };
 const SHARED = `synthetic.${run}@okaxis`;
 const OTHER = `unrelated.${run}@okicici`;
 const ids = { a: "", b: "", c: "", d: "", deleted: "" };
@@ -98,7 +109,7 @@ test.skip(!OUTBOX, "set COMPLAINTS_OUTBOX to the server's COMPLAINTS_LOCAL_AUTH_
 // this file keeps to 6 sign-ins (each session is reused for several checks).
 test("citizens report: two share a UPI ID, one unrelated, one opted out; citizens get no network", async ({ browser }) => {
   for (const k of ["a", "b", "c", "d"] as const) {
-    const ctx = await browser.newContext();
+    const ctx = await browser.newContext(k === "a" ? { geolocation: { latitude: LOC.lat, longitude: LOC.lon }, permissions: ["geolocation"] } : {});
     const page = await ctx.newPage();
     await signIn(page, `net.${k}.${run}@example.org`, "citizen");
     await expect(page).toHaveURL(/\/me$/);
@@ -111,7 +122,7 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
       await expect(sw).toHaveAttribute("aria-checked", "false");
     }
     // B types the same UPI ID differently: normalisation must still match it
-    ids[k] = await report(page, titles[k], k === "c" ? OTHER : k === "b" ? `  ${SHARED.toUpperCase()} ` : SHARED);
+    ids[k] = await report(page, titles[k], k === "c" ? OTHER : k === "b" ? `  ${SHARED.toUpperCase()} ` : SHARED, k === "a" ? "button" : "typed");
     if (k === "a") await citizenHasNoNetwork(page);
     if (k === "c") {
       // a complaint with the same wording, deleted by its owner: must never be suggested
@@ -188,21 +199,44 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
   await page.goto(`/investigator/complaints/${ids.a}`);
   const sim = page.getByTestId("similar-panel");
   await expect(sim.getByTestId("similar-disclaimer")).toContainText("not proof");
-  // other specs' synthetic complaints with similar wording may appear too: check by title
-  await expect(sim.getByTestId("similar-item").filter({ hasText: titles.c })).toHaveCount(1, { timeout: 60_000 });
-  const simB = sim.getByTestId("similar-item").filter({ hasText: titles.b });
-  const simC = sim.getByTestId("similar-item").filter({ hasText: titles.c });
-  await expect(simB).toHaveCount(1);
-  await expect(simB.getByTestId("similar-identifier-link")).toContainText("observed");
-  await expect(simC.getByTestId("similar-identifier-link")).toHaveCount(0);
-  await expect(simC.getByTestId("similar-score")).toContainText(/similarity/i);
-  await expect(sim).not.toContainText(titles.d);
-  await expect(sim).not.toContainText(`E2E net deleted ${run}`);
+  // the panel shows the 10 most similar; reports from other specs or earlier runs on the same
+  // server can share the wording, so membership is checked through the API (up to 50)
+  await expect(sim.getByTestId("similar-item").first()).toBeVisible({ timeout: 60_000 });
+  await expect(sim.getByTestId("similar-explanation").first()).toContainText("worded alike");
+  const similar = await page.evaluate(async (id) => {
+    const raw = sessionStorage.getItem("ssi.account");
+    const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
+    const r = await fetch(`/api/complaints/complaints/${id}/similar?limit=50`, { headers: { Authorization: `Bearer ${token}` } });
+    const j = (await r.json()) as { status: string; items: { complaint: { id: string }; identifier_link: string | null }[] };
+    return { status: j.status, items: j.items.map((i) => [i.complaint.id, i.identifier_link] as const) };
+  }, ids.a);
+  expect(similar.status).toBe("ok");
+  const linkOf = new Map(similar.items);
+  expect(linkOf.get(ids.b)).toBe("observed"); // similar AND sharing an identifier
+  expect(linkOf.has(ids.c) && linkOf.get(ids.c) === null).toBe(true); // similar only
+  expect(linkOf.has(ids.d)).toBe(false); // opted out
+  expect(linkOf.has(ids.deleted)).toBe(false); // deleted
   // C is similar but not related: the two features stay distinct
   await expect(page.getByTestId("related-panel")).not.toContainText(titles.c);
   await page.goto(`/investigator/complaints/${ids.d}`);
   await expect(page.getByTestId("similar-disabled")).toBeVisible();
   expect(page.url()).not.toContain("synthetic");
+
+  // Phase 10 hotspots: A, B and C share this run's cell; D (opted out) and the deleted complaint
+  // are not counted. The cell's centre is shown, never a complainant's coordinates.
+  await page.goto("/investigator/map");
+  const cellCount = await page.evaluate(async (loc) => {
+    const raw = sessionStorage.getItem("ssi.account");
+    const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
+    const bbox = [loc.lat - 0.01, loc.lon - 0.01, loc.lat + 0.01, loc.lon + 0.01].join(",");
+    const r = await fetch(`/api/complaints/geo/complaints/hotspots?cell=0.25&bbox=${bbox}`, { headers: { Authorization: `Bearer ${token}` } });
+    const j = (await r.json()) as { cells: { count: number; lat: number }[] };
+    return j.cells.map((c) => [c.count, c.lat]);
+  }, LOC);
+  expect(cellCount.map(([n]) => n)).toEqual([3]);
+  expect(cellCount[0]![1]).toBeCloseTo(LOC.lat - 0.05 + 0.125, 5); // the cell centre, not a report's point
+  await expect(page.locator('[data-testid="map-cell-dot"][data-count="3"]').first()).toBeVisible();
+  await expect(page.getByTestId("map-note")).toContainText("no map or tile service is contacted");
 
   // accessibility: axe (no serious/critical) and no horizontal overflow at 360 px, both themes
   await page.setViewportSize({ width: 360, height: 780 });
@@ -230,6 +264,9 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("graph-detail").getByTestId("edge-evidence").first()).toBeVisible();
     await scan("/investigator/network?complaint (selected)");
+    await page.goto("/investigator/map");
+    await expect(page.getByTestId("map-cell-dot").first()).toBeVisible();
+    await scan("/investigator/map");
   }
   expect(found).toEqual([]);
 });

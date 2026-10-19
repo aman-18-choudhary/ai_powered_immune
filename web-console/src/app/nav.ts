@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogIn,
+  MapPinned,
   BrainCircuit,
   ScanSearch,
   Radar,
@@ -25,8 +26,8 @@ export interface NavItem {
   title: string;
   icon: LucideIcon;
   end?: boolean;
-  /** Not highlighted under this sub-path (it has its own entry). */
-  inactiveUnder?: string;
+  /** Not highlighted under these sub-paths (they have their own entries). */
+  inactiveUnder?: readonly string[];
 }
 
 /** Simulator pages (need a demo role; everything on them is simulated). */
@@ -49,8 +50,9 @@ export const ACCOUNT_NAV: readonly AccountNavItem[] = [
   { to: "/me", label: "Reports", title: "My complaints", icon: FileText, end: true, roles: ["CITIZEN"] },
   { to: "/me/complaints/new", label: "Report", title: "Register a complaint", icon: FilePlus2, roles: ["CITIZEN"] },
   { to: "/check", label: "Check", title: "Check a message or link", icon: ScanSearch, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
-  { to: "/investigator", label: "Queue", title: "Investigator queue", icon: ListChecks, inactiveUnder: "/investigator/network", roles: ["INVESTIGATOR", "ADMIN"] },
+  { to: "/investigator", label: "Queue", title: "Investigator queue", icon: ListChecks, inactiveUnder: ["/investigator/network", "/investigator/map"], roles: ["INVESTIGATOR", "ADMIN"] },
   { to: "/investigator/network", label: "Network", title: "Complaint network", icon: Share2, roles: ["INVESTIGATOR", "ADMIN"] },
+  { to: "/investigator/map", label: "Map", title: "Complaint map", icon: MapPinned, roles: ["INVESTIGATOR", "ADMIN"] },
   { to: "/admin", label: "Admin", title: "Administration", icon: UserCog, roles: ["ADMIN"] },
   { to: "/models", label: "Models", title: "Models", icon: BrainCircuit, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
   { to: "/me/profile", label: "Profile", title: "Profile and privacy", icon: UserRound, roles: ["CITIZEN", "INVESTIGATOR", "ADMIN"] },
@@ -81,6 +83,7 @@ const TITLES: { to: string; title: string; end?: boolean }[] = [
   { to: "/investigator", title: "Investigator queue" },
   { to: "/investigator/complaints/", title: "Complaint review" },
   { to: "/investigator/network", title: "Complaint network" },
+  { to: "/investigator/map", title: "Complaint map" },
   { to: "/admin", title: "Administration" },
   { to: "/check", title: "Check a message or link" },
   { to: "/models", title: "Models" },

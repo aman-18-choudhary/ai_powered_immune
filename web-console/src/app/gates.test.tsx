@@ -78,11 +78,12 @@ describe("navigation by role", () => {
   it("simulator pages stay when a demo role is active; account items follow the effective role", () => {
     expect(paths(true, null)).toEqual(["/", "/command", "/analyst", "/evidence", "/citizen", "/insights", "/about", "/sign-in"]);
     expect(paths(true, "CITIZEN")).toContain("/me/complaints/new");
-    expect(paths(false, "INVESTIGATOR")).toEqual(["/check", "/investigator", "/investigator/network", "/models", "/me/profile", "/simulation"]);
-    expect(paths(false, "ADMIN")).toEqual(["/check", "/investigator", "/investigator/network", "/admin", "/models", "/me/profile", "/simulation"]);
+    expect(paths(false, "INVESTIGATOR")).toEqual(["/check", "/investigator", "/investigator/network", "/investigator/map", "/models", "/me/profile", "/simulation"]);
+    expect(paths(false, "ADMIN")).toEqual(["/check", "/investigator", "/investigator/network", "/investigator/map", "/admin", "/models", "/me/profile", "/simulation"]);
     expect(paths(false, "CITIZEN")).toEqual(["/me", "/me/complaints/new", "/check", "/models", "/me/profile", "/simulation"]);
     expect(paths(false, "CITIZEN")).not.toContain("/investigator");
     expect(paths(false, "CITIZEN")).not.toContain("/investigator/network");
+    expect(paths(false, "CITIZEN")).not.toContain("/investigator/map");
   });
 
   it("titles and account paths", () => {

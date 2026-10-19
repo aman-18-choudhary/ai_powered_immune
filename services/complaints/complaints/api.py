@@ -45,6 +45,8 @@ from .dna import Embedder, FraudDna, SentenceTransformerEmbedder
 from .dna_api import register_dna_routes
 from .evidence import EvidenceStorage, UploadError, receive_upload
 from .explain import OllamaClient
+from .geo_api import register_geo_routes
+from .geo_store import GeoStore
 from .identity import (
     ClerkBackendClient,
     ClerkJwtVerifier,
@@ -889,6 +891,8 @@ def create_app(
     )
     # Fraud DNA (Phase 8): staff-only similar-complaints route in dna_api.py
     register_dna_routes(app, dna=fraud_dna, staff=StaffUser, throttle=throttle)
+    # complaint hotspots (Phase 10): staff-only route in geo_api.py
+    register_geo_routes(app, geo=GeoStore(store), staff=StaffUser, throttle=throttle, now=now)
 
     def session_payload(row: CurrentUser) -> dict[str, Any]:
         return {
