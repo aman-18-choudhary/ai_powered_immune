@@ -73,10 +73,29 @@ const OTHER = `unrelated.${run}@okicici`;
 const ids = { a: "", b: "", c: "", d: "" };
 const titles = { a: `E2E net A ${run}`, b: `E2E net B ${run}`, c: `E2E net C ${run}`, d: `E2E net D ${run}` };
 
+/** A citizen sees no Network entry, is refused the page, and gets 403 from the network API. */
+async function citizenHasNoNetwork(page: Page) {
+  await expect(page.getByRole("link", { name: "Network" })).toHaveCount(0);
+  await page.goto("/investigator/network");
+  await expect(page.getByTestId("role-mismatch")).toBeVisible();
+  const status = await page.evaluate(async (id) => {
+    const raw = sessionStorage.getItem("ssi.account");
+    const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
+    const h = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const r1 = await fetch(`/api/complaints/complaints/${id}/related`, { headers: h });
+    const r2 = await fetch(`/api/complaints/entities/search`, { method: "POST", headers: h, body: JSON.stringify({ type: "upi", value: "x@okaxis" }) });
+    const r3 = await fetch(`/api/complaints/graph/clusters`, { headers: h });
+    return [r1.status, r2.status, r3.status];
+  }, ids.a);
+  expect(status).toEqual([403, 403, 403]);
+}
+
 test.describe.configure({ mode: "serial" });
 test.skip(!OUTBOX, "set COMPLAINTS_OUTBOX to the server's COMPLAINTS_LOCAL_AUTH_OUTBOX file");
 
-test("citizens report: two share a UPI ID, one unrelated, one opted out", async ({ browser }) => {
+// Local sign-in allows 20 code requests per IP per 15 minutes; with the other specs in one run,
+// this file keeps to 6 sign-ins (each session is reused for several checks).
+test("citizens report: two share a UPI ID, one unrelated, one opted out; citizens get no network", async ({ browser }) => {
   for (const k of ["a", "b", "c", "d"] as const) {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
@@ -92,30 +111,12 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out", async 
     }
     // B types the same UPI ID differently: normalisation must still match it
     ids[k] = await report(page, titles[k], k === "c" ? OTHER : k === "b" ? `  ${SHARED.toUpperCase()} ` : SHARED);
+    if (k === "a") await citizenHasNoNetwork(page);
     await ctx.close();
   }
 });
 
-test("a citizen cannot open the network page or call the network API", async ({ page, allow }) => {
-  allow.push(/status of 403 \(Forbidden\)/); // the three refused calls below
-  await signIn(page, `net.a.${run}@example.org`, "citizen");
-  await expect(page).toHaveURL(/\/me$/);
-  await expect(page.getByRole("link", { name: "Network" })).toHaveCount(0);
-  await page.goto("/investigator/network");
-  await expect(page.getByTestId("role-mismatch")).toBeVisible();
-  const status = await page.evaluate(async (id) => {
-    const raw = sessionStorage.getItem("ssi.account");
-    const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
-    const h = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-    const r1 = await fetch(`/api/complaints/complaints/${id}/related`, { headers: h });
-    const r2 = await fetch(`/api/complaints/entities/search`, { method: "POST", headers: h, body: JSON.stringify({ type: "upi", value: "x@okaxis" }) });
-    const r3 = await fetch(`/api/complaints/graph/clusters`, { headers: h });
-    return [r1.status, r2.status, r3.status];
-  }, ids.a);
-  expect(status).toEqual([403, 403, 403]);
-});
-
-test("investigator: linked complaints with evidence, opted-out and unrelated absent, confirm audited", async ({ page }) => {
+test("investigator: linked complaints with evidence, opted-out and unrelated absent, confirm, accessibility", async ({ page }) => {
   await signIn(page, INVESTIGATOR, "investigator");
   await expect(page).toHaveURL(/\/investigator$/);
   await page.goto(`/investigator/complaints/${ids.a}`);
@@ -170,40 +171,22 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
   await expect(page.getByTestId("search-item")).toHaveCount(2);
   await expect(page.getByTestId("search-result")).not.toContainText(titles.d);
   expect(page.url()).not.toContain("synthetic");
-});
 
-test("admin: the link review is in the audit log", async ({ page }) => {
-  test.skip(!ADMIN, "set E2E_ADMIN_EMAIL to an ADMIN_BOOTSTRAP_EMAILS address");
-  await signIn(page, ADMIN, "citizen");
-  await expect(page).toHaveURL(/\/admin$/);
-  await page.getByRole("tab", { name: "Audit log" }).click();
-  const row = page.getByTestId("audit-row").filter({ hasText: "Complaint link confirmed" }).filter({ hasText: ids.a < ids.b ? ids.a : ids.b });
-  await expect(row.first()).toContainText("not a finding of crime");
-  await expect(row.first()).not.toContainText(SHARED);
-});
-
-for (const theme of ["dark", "light"] as const) {
-  test(`network pages: axe has no serious/critical violations and nothing overflows at 360 px (${theme})`, async ({ page }) => {
-    await page.addInitScript((t) => {
-      try {
-        localStorage.setItem("ssi.theme", t);
-      } catch {
-        /* ignore */
-      }
-    }, theme);
-    await page.setViewportSize({ width: 360, height: 780 });
-    const found: unknown[] = [];
+  // accessibility: axe (no serious/critical) and no horizontal overflow at 360 px, both themes
+  await page.setViewportSize({ width: 360, height: 780 });
+  const found: unknown[] = [];
+  for (const theme of ["dark", "light"] as const) {
     const scan = async (where: string) => {
       await page.waitForTimeout(700);
       const r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
       for (const v of r.violations.filter((x) => x.impact === "serious" || x.impact === "critical"))
-        found.push({ where, id: v.id, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(" ")) });
+        found.push({ theme, where, id: v.id, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(" ")) });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-      expect(overflow, `horizontal overflow on ${where}`).toBeLessThanOrEqual(0);
+      expect(overflow, `horizontal overflow on ${where} (${theme})`).toBeLessThanOrEqual(0);
     };
-    await signIn(page, INVESTIGATOR, "investigator");
-    await expect(page).toHaveURL(/\/investigator$/);
+    await page.evaluate((t) => localStorage.setItem("ssi.theme", t), theme);
     await page.goto(`/investigator/complaints/${ids.a}`);
+    await expect(page.locator("html")).toHaveClass(new RegExp(theme === "dark" ? "dark" : "^(?!.*dark)"));
     await expect(page.getByTestId("related-item")).toHaveCount(1);
     await scan("/investigator/complaints/:id (related panel)");
     await page.goto("/investigator/network");
@@ -215,6 +198,16 @@ for (const theme of ["dark", "light"] as const) {
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("graph-detail").getByTestId("edge-evidence").first()).toBeVisible();
     await scan("/investigator/network?complaint (selected)");
-    expect(found, `${theme} mode violations`).toEqual([]);
-  });
-}
+  }
+  expect(found).toEqual([]);
+});
+
+test("admin: the link review is in the audit log", async ({ page }) => {
+  test.skip(!ADMIN, "set E2E_ADMIN_EMAIL to an ADMIN_BOOTSTRAP_EMAILS address");
+  await signIn(page, ADMIN, "citizen");
+  await expect(page).toHaveURL(/\/admin$/);
+  await page.getByRole("tab", { name: "Audit log" }).click();
+  const row = page.getByTestId("audit-row").filter({ hasText: "Complaint link confirmed" }).filter({ hasText: ids.a < ids.b ? ids.a : ids.b });
+  await expect(row.first()).toContainText("not a finding of crime");
+  await expect(row.first()).not.toContainText(SHARED);
+});
