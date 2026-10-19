@@ -153,6 +153,14 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
 matching are excluded from every result and count. A confirmed link is not a finding of guilt.
 
+### Complaint hotspots (Phase 10, staff only)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `GET /geo/complaints/hotspots?from&to&category&risk_level&cell&bbox&min_count&compare` | INVESTIGATOR, ADMIN | counts per lat/lon cell (`cell` 0.1, 0.25 (default), 0.5, 1.0 degrees): cell centre and bounds (never a complaint's own coordinates), `count`, `by_category`, `by_risk` (latest analysis; `not_scored`), first/last report time; `compare=true` (needs `from`) adds `previous_count` and `change` for the equal period before `from`; `places[]` counts complaints without coordinates by state and city; `totals`; `bbox` = south,west,north,east; invalid values 422 |
+
+Deleted and opted-out complaints are not counted. Counts are of complaints, not offences.
+
 ### Fraud DNA (Phase 8, staff only)
 
 | Method and path | Auth | Notes |
@@ -192,7 +200,6 @@ simulator output and **are not complaint intelligence**.
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
-| `GET /geo/complaints/hotspots?from&to&category&risk&bbox` | staff | 10 |
 | `GET/POST /complaints/{id}/notes` | staff | 12 |
 | `GET /complaints/{id}/report` (export) | owner (own complaint), staff | 12 |
 | `PATCH /complaints/{id}` (citizen edits while `SUBMITTED`) | owner | 11 |

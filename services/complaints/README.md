@@ -289,6 +289,16 @@ Every query applies the same filter: the complaint is not deleted and its owner 
 matching. Opted-out or deleted complaints cannot appear, be counted, or connect other complaints.
 Shared identifiers are leads, not proof that the same person is involved.
 
+## Complaint hotspots (Phase 10)
+
+`GET /geo/complaints/hotspots` (staff) counts complaints per latitude/longitude grid cell from the
+optional coordinates complainants give (no geocoding, no map service). Only cell centres and
+bounds are returned, never a complaint's coordinates; complaints without coordinates are counted
+by `state`/`city`. Filters: `from`, `to`, `category`, `risk_level` (latest analysis or
+`not_scored`), `cell` (0.1/0.25/0.5/1.0), `bbox`, `min_count`; `compare=true` with `from` adds the
+equal period before. Deleted and opted-out complaints are not counted. Bounds: 50,000 complaints
+read, 500 cells, 100 places, each with a `truncated` flag.
+
 ## Fraud DNA (Phase 8)
 
 `GET /complaints/{id}/similar` (staff): complaints whose **descriptions** are worded alike, from

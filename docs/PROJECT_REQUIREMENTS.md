@@ -123,7 +123,7 @@ Module letters follow the target specification. "Where" names the implementing c
 | F2 | Complaint and evidence review, AI explanations | **Verified** | Shared detail page with staff fields |
 | F3 | Status updates with notes | **Verified** | `PATCH /complaints/{id}/status` with transition rules and history |
 | F4 | Investigation notes separate from status history | **Planned** | |
-| F5 | Fraud DNA similarity, network graph, geo intelligence on complaints | **Planned** | |
+| F5 | Fraud DNA similarity, network graph, geo intelligence on complaints | **Implemented** (Phases 8, 9, 10; staff only; opt-out enforced) | Synthetic evaluation only for Fraud DNA |
 | F6 | Case reports and exports | **Planned** | The simulator's signed evidence packages are a separate, simulator-only feature |
 | F7 | Per-case audit history | **Partial** | Status history per complaint exists; admin audit covers role and evidence actions |
 
@@ -178,7 +178,8 @@ blocked. Project-level criteria:
    refused with a clear message. (Met; investigator flow verified by an agent-run Playwright test.)
 3. Live Protection works only after consent and stops cleanly. (Met.)
 4. Cross-complaint intelligence (similar cases, shared identifiers, hotspots) is derived only from
-   persisted complaints, with evidence for every link. (Not yet.)
+   persisted complaints, with evidence for every link. (Met: Phases 8-10; similarity and
+   shared identifiers are leads, not proof.)
 5. No dashboard number, chart or result is hard-coded or fabricated; synthetic data is labelled.
    (Met for the complaint paths; simulator numbers are labelled SIMULATION.)
 

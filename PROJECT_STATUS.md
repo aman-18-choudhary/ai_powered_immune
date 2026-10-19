@@ -1,10 +1,10 @@
 # Project status
 
-Last updated: **2026-10-18** (Phase 9 complaint network). GitHub `main` and `build/implementation`
-are at `b8d9dd7` (accuracy audit, accuracy batches 1 and 2; CI runs #36 and #37 passed). **This
-branch (`phase9-network`, local, not pushed)** adds Phase 9 on top of `b8d9dd7`: complaint
-identifiers (migration 10 with backfill), the staff-only network API, the related complaints panel,
-the network page and their tests. See [docs/reports/PHASE_9_REPORT.md](docs/reports/PHASE_9_REPORT.md).
+Last updated: **2026-10-19**. GitHub `main` and `build/implementation` carry Phase 9 (complaint
+network), the CI fix (`873430f`, `e84c490`: demo-server tests now follow the engine's ledger
+timing contract; root cause in [docs/reports/PHASE_8_REPORT.md](docs/reports/PHASE_8_REPORT.md))
+and Phase 8 (Fraud DNA, `06ce8d2`). Branch `phase10-geo` adds Phase 10 (complaint hotspots); see
+[docs/reports/PHASE_10_REPORT.md](docs/reports/PHASE_10_REPORT.md).
 
 ## Accuracy first (2026-10-18)
 
@@ -88,7 +88,7 @@ dependency missing), **Limitation**.
 |---|---|
 | Fraud DNA (similar complaints): cached multilingual MiniLM offline, Qdrant embedded, redacted text, staff-only API and panel, opt-out/deletion excluded at index and query time | Verified (tests incl. a real-model offline test; agent Playwright against a real server); **EXPERIMENTAL**: thresholds from SYNTHETIC data (held-out precision 0.82 / recall 0.52); weak on Hinglish |
 | Complaint network: identifiers from structured fields, observed (exact) and inferred (same domain) links, investigator confirm/reject with audit, related panel, graph (depth ≤ 2, size caps), clusters, POST-only identifier search; staff only; opted-out and deleted complaints excluded everywhere | Verified (tests incl. Postgres; agent Playwright against a real server with SYNTHETIC complaints); **EXPERIMENTAL**: a shared identifier is a lead, not proof |
-| Complaint hotspots and map | Planned |
+| Complaint hotspots and map (grid cells from optional coordinates, places without coordinates, period comparison, staff map without any tile service) | Verified (tests; agent Playwright against a real server); counts exclude opted-out and deleted complaints |
 | Ring graph, takedown simulation, city hotspots | Verified, **simulator data only** (not complaint intelligence) |
 
 ### Investigator and admin
@@ -205,6 +205,6 @@ the repository's Actions page or the public API; step logs need a GitHub sign-in
 
 ## 5. Next step
 
-Phase 9 awaits the owner's review and approval to push (branch `phase9-network`). Recommended next:
-Phase 8 (Fraud DNA), then Phase 10 (hotspots); see
+Recommended next: Phase 12 investigator tools (investigation notes, case report export, per-case
+audit view), then Phase 14 hardening (production auth guard, retention job, Docker build); see
 [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
