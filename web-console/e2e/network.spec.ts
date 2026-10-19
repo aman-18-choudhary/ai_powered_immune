@@ -76,6 +76,8 @@ async function report(page: Page, title: string, upi: string, where: "button" | 
   return ((await res.json()) as { id: string }).id;
 }
 
+// a SYNTHETIC SMS rendered as an image (services/complaints/tests/fixtures)
+const SHOT = new URL("../../services/complaints/tests/fixtures/synthetic_kyc_sms.png", import.meta.url).pathname;
 const run = Date.now().toString(36);
 // a 0.25-degree cell inside India chosen from the run id (cell centre + 0.05), so counts are exact
 const slot = parseInt(run.slice(-3), 36);
@@ -136,6 +138,19 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
       expect(md).toContain(titles.a);
       expect(md).not.toContain("(by `");
       await expect(page.getByTestId("notes-panel")).toHaveCount(0);
+      // Phase 6 OCR: a screenshot's text is read on this server when the analysis runs
+      await page.getByTestId("add-evidence").setInputFiles(SHOT);
+      await expect(page.getByTestId("ocr-status")).toHaveAttribute("data-status", "not_read_yet");
+      const ran = page.waitForResponse((r) => /\/analysis$/.test(r.url()) && r.request().method() === "POST");
+      await page.getByTestId("run-analysis").click();
+      const res = await ran;
+      expect(res.status()).toBe(201);
+      const an = (await res.json()) as { screenshot_ocr: { status: string }[]; indicators: { stage: string; source: string }[] };
+      expect(an.screenshot_ocr[0]!.status).toBe("extracted");
+      expect(an.indicators.some((i) => i.stage === "screenshot_text" && i.source === "rule")).toBe(true);
+      await expect(page.getByTestId("ocr-status")).toHaveAttribute("data-status", "extracted");
+      await page.getByTestId("ocr-toggle").click();
+      await expect(page.getByTestId("ocr-text")).toContainText("KYC");
       // Phase 11: while SUBMITTED the complainant can add a detail they forgot
       await page.getByTestId("edit-details").click();
       await page.getByTestId("e-bank_name").fill("Synthetic Example Bank");

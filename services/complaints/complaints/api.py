@@ -64,6 +64,8 @@ from .identity import (
 from .local_auth import LocalAuth, LocalAuthInvalid, LocalAuthRateLimited, file_outbox
 from .network_api import register_network_routes
 from .network_store import NetworkStore
+from .ocr import OcrService
+from .ocr import engine_from_env as ocr_engine_from_env
 from .provenance import legacy_action, legacy_indicator, legacy_provenance
 from .schema import CATEGORIES, ROLES, STATUSES
 from .store import ComplaintStore, Conflict, NotFound, StoreError
@@ -391,6 +393,7 @@ def _detail_fields(d: dict[str, Any] | None, row: dict[str, Any] | None = None) 
         "unavailable_capabilities": d.get("unavailable_capabilities") or [],
         "unanalysed_attachments": unanalysed,
         "audio_transcription": d.get("audio_transcription") or [],
+        "screenshot_ocr": d.get("screenshot_ocr") or [],
         "category_model": d.get("category_model"),
         "url_analysis": d.get("url_analysis"),
         "links_in_text": d.get("links_in_text") or [],
@@ -442,8 +445,9 @@ _AUDIO_HERE = (
     "optional fields only."
 )
 _SCREENSHOT_HERE = (
-    "Screenshots are not analysed: no OCR engine is installed on this server. This check takes "
-    "text and the optional fields only."
+    "Screenshots are read only when they are attached to a complaint: their text is read by OCR "
+    "on this server when the complaint analysis runs. This check takes text and the optional "
+    "fields only."
 )
 
 
@@ -492,8 +496,8 @@ def _input_capabilities(c: dict[str, Any], out: AnalysisOutcome) -> dict[str, An
         }  # fmt: skip
     out_caps["audio"] = {"status": "not_accepted_here", "reason": _AUDIO_HERE,
                          "where": "complaint_evidence"}  # fmt: skip
-    out_caps["screenshot"] = {"status": "unavailable", "reason": _SCREENSHOT_HERE,
-                              "cause": "no_ocr_engine_installed"}  # fmt: skip
+    out_caps["screenshot"] = {"status": "not_accepted_here", "reason": _SCREENSHOT_HERE,
+                              "where": "complaint_evidence"}  # fmt: skip
     return out_caps
 
 
@@ -545,10 +549,34 @@ def _transcription_view(
     }  # fmt: skip
 
 
+def _ocr_view(e: dict[str, Any], row: dict[str, Any] | None,
+              latest: dict[str, Any] | None) -> dict[str, Any] | None:  # fmt: skip
+    """OCR state of one image file (no text here: GET .../ocr returns it)."""
+    if _kind(e["mime_type"]) != "image":
+        return None
+    from .ocr import STATUS_TEXT as OCR_TEXT
+
+    if row is None:
+        last = {a.get("evidence_id"): a for a in ((latest or {}).get("detail") or {})
+                .get("screenshot_ocr") or []}.get(e["id"])  # fmt: skip
+        st = (last or {}).get("status") or "not_read_yet"
+        return {"status": st, "source": "last_analysis" if last else "none",
+                "message": OCR_TEXT.get(st, "Not read yet: screenshot text is read when the "
+                                        "complaint analysis runs."),
+                "text_available": False, "chars": 0, "mean_confidence": None,
+                "languages": []}  # fmt: skip
+    return {"status": row["status"], "source": "stored",
+            "message": OCR_TEXT.get(row["status"], row["status"]),
+            "text_available": row["status"] == "extracted", "chars": len(row["text"]),
+            "mean_confidence": row["mean_confidence"], "languages": row["languages"],
+            "engine": row["engine"]}  # fmt: skip
+
+
 def _evidence_view(
     e: dict[str, Any],
     transcripts: dict[str, dict[str, Any]] | None = None,
     latest: dict[str, Any] | None = None,
+    ocr: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     last_runs = {
         a.get("evidence_id"): a
@@ -563,6 +591,7 @@ def _evidence_view(
             e, (transcripts or {}).get(e["id"]), last_runs.get(e["id"]),
             (latest or {}).get("created_at"),
         ),
+        "ocr": _ocr_view(e, (ocr or {}).get(e["id"]), latest),
     }  # fmt: skip
 
 
@@ -586,6 +615,7 @@ def create_app(
     local_auth: LocalAuth | None = None,
     stt_engine: Any = None,
     transcriber: Transcriber | None = None,
+    ocr_engine: Any = None,
     dna_embedder: Embedder | None = None,
     dna_background: bool = True,
     rate_clock: Callable[[], float] | None = None,
@@ -646,6 +676,10 @@ def create_app(
             enabled=settings.stt_enabled,
         )  # fmt: skip
     stt = transcriber
+    ocr_svc = OcrService(
+        ocr_engine if ocr_engine is not None else ocr_engine_from_env(settings.ocr_enabled),
+        enabled=settings.ocr_enabled,
+    )  # fmt: skip
 
     local_codes: LocalAuth | None = None
     if settings.local_auth_enabled:
@@ -1012,7 +1046,10 @@ def create_app(
         transcripts: dict[str, dict[str, Any]] = {}
         if any(_kind(e["mime_type"]) == "audio" for e in evidence):
             transcripts = await asyncio.to_thread(store.list_transcripts, complaint_id)
-        return [_evidence_view(e, transcripts, latest) for e in evidence]
+        ocr: dict[str, dict[str, Any]] = {}
+        if any(_kind(e["mime_type"]) == "image" for e in evidence):
+            ocr = await asyncio.to_thread(store.list_ocr, complaint_id)
+        return [_evidence_view(e, transcripts, latest, ocr) for e in evidence]
 
     async def _detail(user: CurrentUser, c: dict[str, Any]) -> dict[str, Any]:
         history = await asyncio.to_thread(store.complaint_history, c["id"])
@@ -1228,6 +1265,31 @@ def create_app(
         latest = await asyncio.to_thread(store.latest_analysis, complaint_id)
         return {"items": await _evidence_views(complaint_id, rows, latest)}
 
+    @app.get("/complaints/{complaint_id}/evidence/{evidence_id}/ocr")
+    async def get_ocr(complaint_id: str, evidence_id: str, user: User) -> Response:
+        """Text read by OCR from one image evidence file (owner and staff; others 404)."""
+        throttle("read", user)
+        await _load(user, complaint_id)
+        ev = await asyncio.to_thread(store.get_evidence, complaint_id, evidence_id[:64])
+        if ev is None:
+            raise ApiError(404, "not_found", "Not found.")
+        if _kind(ev["mime_type"]) != "image":
+            raise ApiError(404, "not_image_evidence", "This evidence file is not an image.")
+        row = (await asyncio.to_thread(store.list_ocr, complaint_id)).get(ev["id"])
+        if row is None or row["status"] != "extracted":
+            latest = await asyncio.to_thread(store.latest_analysis, complaint_id)
+            view = _ocr_view(ev, row, latest)
+            assert view is not None
+            msg = f"No text is available for this file: {view['message']}"
+            return JSONResponse({"error": "ocr_text_not_available", "message": msg, "ocr": view},
+                                status_code=404)  # fmt: skip
+        return JSONResponse({
+            "evidence_id": ev["id"], "complaint_id": complaint_id, "status": row["status"],
+            "engine": row["engine"], "languages": row["languages"],
+            "mean_confidence": row["mean_confidence"], "text": row["text"],
+            "note": "Machine-read text (OCR); it may contain recognition errors.",
+        }, headers={"Cache-Control": "no-store"})  # fmt: skip
+
     @app.get("/complaints/{complaint_id}/evidence/{evidence_id}/transcript")
     async def get_transcript(complaint_id: str, evidence_id: str, user: User) -> Response:
         """The stored transcript of one audio evidence file (owner and staff; others 404)."""
@@ -1325,6 +1387,15 @@ def create_app(
 
         # audio evidence: transcribed once (synchronously, within the run's budget), reused after
         transcripts = await stt.prepare(complaint_id, files, path_for, load_existing, save)
+
+        async def load_ocr() -> dict[str, dict[str, Any]]:
+            return await asyncio.to_thread(store.list_ocr, complaint_id)
+
+        async def save_ocr(rec: dict[str, Any]) -> dict[str, Any] | None:
+            return await asyncio.to_thread(store.save_ocr, complaint_id, rec, now())
+
+        # screenshots: text read once by OCR (within the run's budget), reused after
+        ocr = await ocr_svc.prepare(files, path_for, load_ocr, save_ocr)
         out = await analysis_service.analyse(
             {
                 **c,
@@ -1334,6 +1405,7 @@ def create_app(
                         "mime_type": e["mime_type"],
                         "size_bytes": e["size_bytes"],
                         "transcription": transcripts.get(e["id"]),
+                        "ocr": ocr.get(e["id"]),
                     }
                     for e in files
                 ],
@@ -1435,6 +1507,11 @@ def create_app(
                 **fraud_dna.status(),
                 "used_for": "finding complaints described in similar words (staff only); never "
                 "the score, level or category, and never proof of a link",
+            },
+            "ocr": {
+                **await ocr_svc.health(),
+                "used_for": "reading the text of screenshot evidence when a complaint analysis "
+                "runs; the text is scored by the same rules as the description",
             },
             "stt": {
                 **await stt.health(),
@@ -1646,6 +1723,7 @@ def create_app(
             "model": ollama_client.model if ollama_client.configured else None,
         }
         out["stt"] = await stt.health()
+        out["ocr"] = await ocr_svc.health()
         out["dna"] = fraud_dna.status()
         out["qdrant"] = {
             "status": "local" if fraud_dna.index.ready else "not_started",

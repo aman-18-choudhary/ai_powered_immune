@@ -20,6 +20,7 @@ from jwt.algorithms import RSAAlgorithm
 from complaints.analysis import CAPABILITIES_NONE, AnalysisOutcome
 from complaints.api import create_app
 from complaints.config import Settings
+from complaints.ocr import NoOcr
 from complaints.transcribe import NoEngine
 
 ISSUER = "https://clerk.test.example"
@@ -146,6 +147,8 @@ def make_app(settings, idp, analysis) -> Iterator[Callable[..., object]]:
         jwks = kw.pop("jwks", idp.jwks())
         # no real speech-to-text in API tests unless a test passes an engine (mocked or real)
         kw.setdefault("stt_engine", NoEngine("engine_disabled"))
+        # no real OCR either unless a test injects an engine (CI has no tesseract)
+        kw.setdefault("ocr_engine", NoOcr("engine_disabled"))
         # no real embedding model either: a deterministic fake, index synced on query
         kw.setdefault("dna_embedder", FakeEmbedder())
         kw.setdefault("dna_background", False)

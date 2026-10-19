@@ -349,6 +349,24 @@ link_reviews = Table(
     Index("ix_link_reviews_high", "complaint_high"),
 )  # fmt: skip
 
+# migration 12 (Phase 6, OCR): text read from one image evidence file by Tesseract, stored once
+# and reused by later analyses; deleted with the evidence. The text is user content (never logged).
+evidence_ocr = Table(
+    "evidence_ocr", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("evidence_id", String(36), ForeignKey("complaint_evidence.id", ondelete="RESTRICT"),
+           nullable=False, unique=True),
+    Column("complaint_id", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("engine", String(64)),
+    Column("languages", String(32)),
+    Column("mean_confidence", Float),
+    Column("text", Text, nullable=False, default=""),
+    Column("created_at", UTCDateTime, nullable=False),
+    Index("ix_ocr_complaint", "complaint_id"),
+)  # fmt: skip
+
 # migration 11 (Phase 12): investigators' working notes on a complaint. Staff only (never shown
 # to the complainant, unlike status-history notes); append-only; the text is user content and is
 # never logged or put in the audit log.

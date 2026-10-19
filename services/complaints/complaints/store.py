@@ -51,6 +51,7 @@ from .schema import (
     complaint_evidence,
     complaint_status_history,
     complaints,
+    evidence_ocr,
     evidence_transcripts,
     idempotency_keys,
     users,
@@ -922,6 +923,7 @@ class ComplaintStore:
             # the transcript is derived from the file and goes with it (same transaction)
             et = evidence_transcripts
             conn.execute(delete(et).where(et.c.evidence_id == evidence_id))
+            conn.execute(delete(evidence_ocr).where(evidence_ocr.c.evidence_id == evidence_id))
             self._audit(
                 conn, actor_id, "evidence_delete", cur["owner_user_id"],
                 {"complaint_id": complaint_id, "evidence_id": evidence_id, "status": "stored"},
@@ -978,6 +980,53 @@ class ComplaintStore:
 
     def get_transcript(self, complaint_id: str, evidence_id: str) -> dict[str, Any] | None:
         return self.list_transcripts(complaint_id).get(evidence_id)
+
+    @staticmethod
+    def _ocr_row(r: Any) -> dict[str, Any]:
+        return {
+            "evidence_id": r.evidence_id, "status": r.status, "engine": r.engine,
+            "languages": (r.languages or "").split("+") if r.languages else [],
+            "mean_confidence": r.mean_confidence, "text": r.text or "",
+            "created_at": _aware(r.created_at),
+        }  # fmt: skip
+
+    def list_ocr(self, complaint_id: str) -> dict[str, dict[str, Any]]:
+        """OCR results of the complaint's STORED evidence, by evidence id."""
+        with self.engine.connect() as c:
+            rows = c.execute(
+                select(evidence_ocr)
+                .join(complaint_evidence, complaint_evidence.c.id == evidence_ocr.c.evidence_id)
+                .where(evidence_ocr.c.complaint_id == complaint_id,
+                       complaint_evidence.c.status == "stored")
+            ).all()  # fmt: skip
+        return {r.evidence_id: self._ocr_row(r) for r in rows}
+
+    def save_ocr(
+        self, complaint_id: str, rec: dict[str, Any], now: datetime
+    ) -> dict[str, Any] | None:
+        """Store an OCR result once (None when stored now, else the row already there)."""
+        values = {
+            "evidence_id": rec["evidence_id"], "complaint_id": complaint_id,
+            "status": rec["status"], "engine": (rec.get("engine") or "")[:64] or None,
+            "languages": "+".join(rec.get("languages") or [])[:32] or None,
+            "mean_confidence": rec.get("mean_confidence"), "text": rec.get("text") or "",
+        }  # fmt: skip
+        try:
+            with self._tx() as conn:
+                ev = conn.execute(select(complaint_evidence.c.id).where(
+                    complaint_evidence.c.id == rec["evidence_id"],
+                    complaint_evidence.c.complaint_id == complaint_id,
+                    complaint_evidence.c.status == "stored",
+                )).first()  # fmt: skip
+                if ev is None:
+                    return None
+                conn.execute(insert(evidence_ocr).values(id=new_id(), created_at=now, **values))
+            return None
+        except IntegrityError:
+            with self.engine.connect() as c:
+                r = c.execute(select(evidence_ocr).where(
+                    evidence_ocr.c.evidence_id == rec["evidence_id"])).first()  # fmt: skip
+            return self._ocr_row(r) if r else None
 
     def save_transcript(
         self, complaint_id: str, rec: dict[str, Any], now: datetime

@@ -153,6 +153,19 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
 matching are excluded from every result and count. A confirmed link is not a finding of guilt.
 
+### Screenshot text (OCR, Phase 6) and configuration (Phase 12)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `GET /complaints/{id}/evidence/{eid}/ocr` | owner, staff | machine-read text of one image (PNG/JPEG/WebP) read by local Tesseract when the analysis ran: `text`, `mean_confidence`, `languages`, `engine`, a note that OCR may misread; 404 `not_image_evidence`, `ocr_text_not_available` (with the file's OCR state) |
+| `GET /admin/config` | ADMIN | effective non-secret settings (environment, auth mode, allowlist sizes, database type, limits, rate limits, CORS, LLM host and model, speech-to-text, OCR and Fraud DNA settings); never keys, emails, the database URL or paths |
+
+Evidence items carry `ocr` (images only: status, message, `text_available`, `chars`,
+`mean_confidence`, `languages`). Analyses carry `screenshot_ocr` (per image) and indicators with
+`stage: "screenshot_text"` and `evidence: {type: "screenshot_text", evidence_id, mean_confidence}`.
+`POST /analyze` reports `screenshot: not_accepted_here` (screenshots are read only as complaint
+evidence), like audio.
+
 ### Complaint details edit (Phase 11)
 
 | Method and path | Auth | Notes |
@@ -214,6 +227,5 @@ simulator output and **are not complaint intelligence**.
 
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
-| OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
 
 Each will follow the same error format, ownership scoping and rate limiting.

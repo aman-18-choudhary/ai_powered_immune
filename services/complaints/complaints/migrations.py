@@ -303,6 +303,12 @@ def _investigation_notes(conn: Connection) -> None:
     ensure_index(conn, "investigation_notes", "ix_notes_complaint")
 
 
+def _evidence_ocr(conn: Connection) -> None:
+    """Table ``evidence_ocr`` (Phase 6 OCR): screenshot text per image evidence file."""
+    metadata.tables["evidence_ocr"].create(conn, checkfirst=True)
+    ensure_index(conn, "evidence_ocr", "ix_ocr_complaint")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -315,6 +321,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(9, "evidence_transcripts", _evidence_transcripts),
     Migration(NETWORK_VERSION, "complaint_network", _complaint_network),
     Migration(11, "investigation_notes", _investigation_notes),
+    Migration(12, "evidence_ocr", _evidence_ocr),
 )
 LATEST = MIGRATIONS[-1].version
 

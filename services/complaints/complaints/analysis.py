@@ -268,6 +268,7 @@ def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, 
     from .transcribe import STATUS_TEXT, TRANSCRIBED
 
     kinds: dict[tuple[str, str], int] = {}
+    images_reason: dict[str, str] = {}
     seen: set[str] = set()
     audio: list[dict[str, Any]] = []
     for e in evidence or []:
@@ -279,6 +280,15 @@ def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, 
             else "other"
         )  # fmt: skip
         seen.add(kind)
+        if kind == "screenshot_or_image":
+            from .ocr import STATUS_TEXT as OCR_TEXT
+
+            st = (e.get("ocr") or {}).get("status") or "engine_unavailable"
+            if st in ("extracted", "no_text"):
+                continue  # read by OCR: analysed
+            kinds[(kind, mime)] = kinds.get((kind, mime), 0) + 1
+            images_reason[mime] = OCR_TEXT.get(st, st)
+            continue
         if kind == "audio":
             st = (e.get("transcription") or {}).get("status") or "not_attempted"
             if st not in TRANSCRIBED:
@@ -295,7 +305,8 @@ def _attachments(evidence: list[dict[str, Any]] | None) -> tuple[list[dict[str, 
         "other": "this file type is not analysed",
     }
     out = [
-        {"type": k, "mime_type": m, "count": n, "analysed": False, "reason": reasons[k]}
+        {"type": k, "mime_type": m, "count": n, "analysed": False,
+         "reason": images_reason.get(m, reasons[k]) if k == "screenshot_or_image" else reasons[k]}
         for (k, m), n in kinds.items()
     ] + audio
     out.sort(key=lambda x: (x["type"], x["mime_type"]))
@@ -309,6 +320,41 @@ _STAGE_STATUS = {
     "unsupported_format": "unavailable", "budget_exhausted": "skipped",
     "not_attempted_limit": "skipped", "engine_error": "error", "not_attempted": "skipped",
 }  # fmt: skip
+
+
+def _ocr_summary(e: dict[str, Any]) -> dict[str, Any]:
+    from .ocr import STATUS_TEXT
+
+    o = e.get("ocr") or {}
+    st = o.get("status") or "engine_unavailable"
+    return {
+        "evidence_id": e.get("evidence_id"), "mime_type": e.get("mime_type"), "status": st,
+        "message": STATUS_TEXT.get(st, st), "engine": o.get("engine"),
+        "languages": o.get("languages") or [], "mean_confidence": o.get("mean_confidence"),
+        "chars": len(o.get("text") or ""),
+    }  # fmt: skip
+
+
+def _tag_screenshot(reasons: list[Any], evidence_id: str, conf: Any, version: str) -> list[dict]:
+    """Indicators from the text of one screenshot: they point to the image, and say the text was
+    machine-read (OCR can misread)."""
+    from . import provenance as pv
+
+    ev = {"type": "screenshot_text", "evidence_id": evidence_id, "mean_confidence": conf,
+          "note": "text read from the screenshot by OCR; machine-read, it may contain errors"}
+    out = []
+    for r in reasons:
+        if r.code == "NO_RISK_INDICATORS":
+            continue
+        ind: dict[str, Any] = {"code": r.code, "weight": r.weight,
+                               "text": r.detail or _humanise(r.code), "stage": "screenshot_text",
+                               "evidence": ev}  # fmt: skip
+        if r.code == pv.CLASSIFIER_CODE:
+            ind.update(source="ml", method=pv.classifier_method(version))
+        else:
+            ind.update(source="rule", method=pv.RULES_METHOD)
+        out.append(ind)
+    return out
 
 
 def _audio_summary(e: dict[str, Any]) -> dict[str, Any]:
@@ -526,6 +572,53 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                       reasons.get("audio_transcript_scoring") or transcript_scoring),
                   version=rules_version if transcript_scoring == "ran" else None)  # fmt: skip
 
+        # (a3) screenshot evidence text (OCR by the API before this call; see complaints.ocr):
+        # scored per image by the same scorer; indicators point to the image they came from
+        img_ev = [e for e in complaint.get("evidence") or []
+                  if str(e.get("mime_type") or "").startswith("image/")]  # fmt: skip
+        ocr_files = [
+            (str(e.get("evidence_id") or ""), str((e.get("ocr") or {}).get("text") or ""),
+             (e.get("ocr") or {}).get("mean_confidence"))
+            for e in img_ev if (e.get("ocr") or {}).get("status") == "extracted"
+        ]  # fmt: skip
+        ocr_score: int | None = None
+        ocr_scoring: str | None = None  # ran | skipped | unavailable
+        if ocr_files:
+            if insufficient:
+                ocr_scoring = "skipped"
+            elif scorer is None:
+                ocr_scoring = "unavailable"
+                reasons["screenshot_text_scoring"] = reasons.get(
+                    "text_risk_scorer", "not_installed_or_not_loadable")
+            else:
+                try:
+                    best = 0
+                    for eid, otext, conf in ocr_files:
+                        o_score, o_rs, o_ver = await asyncio.to_thread(
+                            _explained_score, scorer, otext[:MAX_TEXT_CHARS]
+                        )
+                        sc = max(0, min(100, round(float(o_score) * 100)))
+                        if sc and not _has_reason(o_rs):
+                            unexplained[f"screenshot_score:{eid}"], sc = sc, 0
+                        best = max(best, sc)
+                        indicators += _tag_screenshot(list(o_rs), eid, conf, o_ver)
+                    ocr_score, ocr_scoring = best, "ran"
+                except Exception as exc:
+                    log.warning("screenshot text scoring failed: %s", type(exc).__name__)
+                    ocr_scoring = "unavailable"
+                    reasons["screenshot_text_scoring"] = "scoring_error"
+        caps["screenshot_text_scoring"] = {
+            None: "skipped_no_input", "ran": "available", "skipped": SKIPPED_SHORT,
+            "unavailable": "unavailable",
+        }[ocr_scoring]  # fmt: skip
+        if ocr_files:
+            stage("screenshot_text_scoring", "rule", pv.RULES_METHOD,
+                  {"ran": "ran", "unavailable": "unavailable"}.get(ocr_scoring or "", "skipped"),
+                  None if ocr_scoring == "ran" else (
+                      reasons.get("screenshot_text_scoring") or ocr_scoring),
+                  version=rules_version if ocr_scoring == "ran" else None)  # fmt: skip
+        ocr_text = "\n".join(t for _, t, _ in ocr_files)
+
         # (b) category classification with abstention
         classification: str | None = None
         confidence: float | None = None
@@ -545,6 +638,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             if tlayout is not None and tlayout.text.strip():
                 cat_text = f"{text}\n{tlayout.text}"[: 2 * MAX_TEXT_CHARS]
                 n_transcripts = len(tr_files)
+            if ocr_text.strip():  # screenshot text is part of what the complaint shows too
+                cat_text = f"{cat_text}\n{ocr_text}"[: 3 * MAX_TEXT_CHARS]
             try:
                 pred = await asyncio.to_thread(cat_model.predict, cat_text)
                 classification, confidence = pred.label, pred.confidence
@@ -662,11 +757,23 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 failed_audio[0] if len(failed_audio) == 1 else "multiple_reasons"
             )
         audio_missing = bool(failed_audio) or transcript_scoring == "unavailable"
-        caps["screenshot_ocr"] = "unavailable"
-        reasons["screenshot_ocr"] = "no_ocr_engine_installed"
+        ocr_results = [_ocr_summary(e) for e in img_ev]
+        failed_ocr = sorted({o["status"] for o in ocr_results
+                             if o["status"] not in ("extracted", "no_text")})  # fmt: skip
+        if not img_ev:
+            caps["screenshot_ocr"] = "skipped_no_input"
+            reasons["screenshot_ocr"] = "no_image_evidence"
+        elif not failed_ocr:
+            caps["screenshot_ocr"] = "available"
+        else:
+            caps["screenshot_ocr"] = "unavailable"
+            reasons["screenshot_ocr"] = (
+                failed_ocr[0] if len(failed_ocr) == 1 else "multiple_reasons"
+            )
+        ocr_missing = bool(failed_ocr) or ocr_scoring == "unavailable"
         caps["document_text_extraction"] = "unavailable"
         reasons["document_text_extraction"] = "not_implemented"
-        reasons["evidence_content_analysis"] = "audio_only_via_transcription"
+        reasons["evidence_content_analysis"] = "audio_via_transcription_images_via_ocr"
 
         # (h) risk score
         weights = [float(i["weight"]) for i in indicators if i.get("stage") == "url_heuristics"]
@@ -676,13 +783,13 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         adj = round(URL_ADJUSTMENT_MAX * (1.0 - miss))
         # the predicted category is shown separately as a model guess; it never adds to the score
         # (accuracy audit 2026-10-17: a category guess alone produced HIGH for legitimate text)
-        bases = [b for b in (text_score, transcript_score) if b is not None]
+        bases = [b for b in (text_score, transcript_score, ocr_score) if b is not None]
         risk: int | None = None
         if bases or ((url_analysis or embedded) and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
         scored = (
             text_score is not None or classification is not None
-            or bool(weights) or transcript_score is not None
+            or bool(weights) or transcript_score is not None or ocr_score is not None
         )  # fmt: skip
         level: str | None = band_v2(risk) if risk is not None else None
         rule_backed = [i for i in indicators if i.get("source") == "rule"]
@@ -700,6 +807,9 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         elif audio_missing and level in (None, "LOW"):
             # never LOW while an uploaded recording could not be transcribed and scored
             risk, level, withheld, withheld_audio = None, None, True, True
+        elif ocr_missing and level in (None, "LOW"):
+            # never LOW while an uploaded screenshot could not be read and scored
+            risk, level, withheld = None, None, True
 
         # status: applicable stages that were not available are named
         applicable_failed: list[str] = []
@@ -715,8 +825,10 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             applicable_failed.append("audio_transcription")
         if transcript_scoring == "unavailable":
             applicable_failed.append("audio_transcript_scoring")
-        if "screenshot_or_image" in kinds:
+        if failed_ocr:
             applicable_failed.append("screenshot_ocr")
+        if ocr_scoring == "unavailable":
+            applicable_failed.append("screenshot_text_scoring")
         if "document" in kinds:
             applicable_failed.append("document_text_extraction")
 
@@ -912,10 +1024,14 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                   "speech_to_text", _STAGE_STATUS.get(a["status"], "unavailable"),
                   None if a["status"] == "transcribed" else a["status"], version=a["model"],
                   evidence_id=a["evidence_id"], reused=a["reused"])  # fmt: skip
-        for cap in ("screenshot_ocr", "document_text_extraction"):
-            if cap in applicable_failed:
-                stage(cap, "rule" if cap == "document_text_extraction" else "ml", cap,
-                      "unavailable", reasons.get(cap))  # fmt: skip
+        for o in ocr_results:  # one stage per image file
+            stage("screenshot_ocr", "ml", o["engine"] or "ocr",
+                  "ran" if o["status"] in ("extracted", "no_text") else "unavailable",
+                  None if o["status"] in ("extracted", "no_text") else o["status"],
+                  evidence_id=o["evidence_id"])  # fmt: skip
+        if "document_text_extraction" in applicable_failed:
+            stage("document_text_extraction", "rule", "document_text_extraction", "unavailable",
+                  reasons.get("document_text_extraction"))  # fmt: skip
         provenance = {
             "schema": pv.PROVENANCE_SCHEMA, "derived_from_legacy": False, "legacy": False,
             "pipeline": PIPELINE_V2, "stages": stages,
@@ -941,6 +1057,7 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "unavailable_capabilities": sorted(set(applicable_failed) | set(optional_failed)),
             "unanalysed_attachments": unanalysed,
             "audio_transcription": audio_results,
+            "screenshot_ocr": ocr_results,
             "category_model": cat_detail,
             "confidence_semantics": "model_confidence_uncalibrated" if confidence is not None
             else None,  # fmt: skip

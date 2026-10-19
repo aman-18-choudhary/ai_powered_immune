@@ -145,7 +145,7 @@ configuration error; there is no insecure fallback.
 | `POST /analyze` | any authenticated user | stateless analysis of `text` (10-5000) plus optional `url`, `upi_id`, `phone`, `email`, `amount`, `payment_method` (the older names `suspicious_url`, `suspect_phone`, `suspect_email` still work; giving both names with different values is a 422 on the short name), `city`, `state`, `social_platform`; same pipeline and provenance; `input_capabilities` per input (`analysed`, `format_checked`, `context_only`, `not_provided`, `insufficient_input`; `audio` is `not_accepted_here`: recordings are analysed only when attached to a complaint; `screenshot` is `unavailable`: no OCR engine is installed); nothing stored, content not logged, `persisted: false`; own rate bucket |
 | `GET /models` | any authenticated user | `stt`: speech-to-text state for audio evidence (`ready`, `available_offline`, `model_not_available_offline`, `engine_not_configured`, `configured`), limits, decoders. category-v1 and call-guard clf-v1: version, pinned artifact SHA-256, training data (100% synthetic), held-out metrics read from the shipped metrics file (clf-v1 ships none: `metrics: null` with the reason), the leaky random split separately (`is_headline: false`), limitations (category: from `MODEL_CARD.md`), runtime status; `llm`: Ollama `not_configured` / `unavailable` (reason) / `ready` with the model name. Never contacts a non-local host |
 | `GET /alerts`, `POST /alerts/{id}/read`, `GET /me/stats` | any (own data) | stats are computed from the DB, zeros when empty |
-| `GET /admin/users`, `GET /admin/audit`, `GET /admin/health` | ADMIN | health includes `stt` (as in `/models`) |
+| `GET /admin/users`, `GET /admin/audit`, `GET /admin/health`, `GET /admin/config` | ADMIN | health includes `stt`, `ocr`, `dna`, `qdrant`; config shows the effective non-secret settings |
 | `PUT /admin/users/{id}/role`, `PUT /admin/users/{id}/active` | ADMIN | roles granted here have source `admin`; optimistic `expected_role`; last active admin protected; audited |
 | `GET /complaints/{id}/related` | INVESTIGATOR, ADMIN | complaints sharing an exact normalised identifier (`observed`) or only a registrable domain (`inferred`), each with the shared identifiers (masked), the field on both sides and the latest review; `limit` (1-50), `offset`; `linking: "disabled"` and no items when the complaint's owner opted out |
 | `GET /complaints/{id}/graph?depth=1\|2` | INVESTIGATOR, ADMIN | complaint and identifier nodes, identifier edges with their evidence text, review edges among shown complaints; caps 40 complaints, 60 identifiers, 250 edges, `truncated` flag |
@@ -303,6 +303,19 @@ complainant, audited without the text), the case timeline (`GET /complaints/{id}
 built from the stored status history, evidence, transcripts, analyses, link reviews and notes) and
 the case report (`GET /complaints/{id}/report`, Markdown attachment; the owner's version leaves out
 notes, link reviews and user ids; every export audited as `case_report_export`).
+
+## Screenshot text (OCR, Phase 6)
+
+Image evidence (PNG, JPEG, WebP) is read by the local `tesseract` program (5.x; `eng` and `hin`
+when their data files are installed) when a complaint analysis runs: at most 3 new files per run,
+20 s per file, 45 s per run; the text (at most 5000 characters) is stored once in `evidence_ocr`
+and reused. The text is scored per image by the same call-guard rules as the description;
+indicators carry `stage: "screenshot_text"` and point to the image, and the category model reads
+it with the description. OCR can misread: each result has Tesseract's mean word confidence and is
+labelled machine-read. Without tesseract every image reports `engine_unavailable` and the
+analysis never returns LOW while a screenshot could not be read. Variable:
+`COMPLAINTS_OCR_ENABLED` (default 1). `GET /complaints/{id}/evidence/{eid}/ocr` returns the text
+(owner and staff).
 
 ## Complaint hotspots (Phase 10)
 

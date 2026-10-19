@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, AudioLines, BrainCircuit, Dna, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, AudioLines, BrainCircuit, Dna, ScanText, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
 import { Panel } from "@/components/common/Panel";
 import { ErrorBlock, LoadingBlock, PageHeader } from "@/components/complaints/ui";
 import { SourceBadge } from "@/components/complaints/AnalysisResultView";
@@ -214,6 +214,22 @@ function Stt({ stt }: { stt: NonNullable<ModelsInfo["stt"]> }) {
   );
 }
 
+function Ocr({ ocr }: { ocr: NonNullable<ModelsInfo["ocr"]> }) {
+  return (
+    <Panel title="Screenshot text (OCR)" icon={<ScanText className="h-3.5 w-3.5" aria-hidden />} actions={<Runtime status={ocr.status} reason={ocr.reason} />} data-testid="model-ocr">
+      <div className="space-y-1 p-4 text-sm">
+        <p>
+          Engine <span className="mono">{ocr.version ?? ocr.engine ?? "none"}</span>
+          {ocr.languages.length ? ` · languages ${ocr.languages.join(", ")}` : ""}. Used for {ocr.used_for}.
+        </p>
+        <p className="text-xs text-muted" data-testid="ocr-state">
+          {ocr.status === "ready" ? "Installed on this server; nothing is sent elsewhere." : `Not available: ${humanise(ocr.reason ?? ocr.status).toLowerCase()}.`} OCR text is machine-read and can contain errors.
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
 function FraudDna({ dna }: { dna: NonNullable<ModelsInfo["dna"]> }) {
   return (
     <Panel title="Fraud DNA (similar complaints)" icon={<Dna className="h-3.5 w-3.5" aria-hidden />} actions={<Runtime status={dna.status} reason={dna.reason} />} data-testid="model-dna">
@@ -263,6 +279,7 @@ export default function Models() {
           ))}
           <Llm llm={res.data.llm} />
           {res.data.stt && <Stt stt={res.data.stt} />}
+          {res.data.ocr && <Ocr ocr={res.data.ocr} />}
           {res.data.dna && <FraudDna dna={res.data.dna} />}
           <p className="flex items-center gap-1.5 text-xs text-subtle">
             <BrainCircuit className="h-3.5 w-3.5" aria-hidden /> Rule components (call-guard cue rules, link and format checks) are not trained models and are not listed here.

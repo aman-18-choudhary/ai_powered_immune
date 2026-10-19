@@ -181,6 +181,13 @@ demo server uses `<COMPLAINTS_DATA_DIR>/dna`), or in memory when unset. Derived 
 `complaints` by the service's sync (start-up, after create/delete/opt-out, before a query when
 stale); deleting the directory is a safe recovery step. A model change starts a new collection.
 
+### `evidence_ocr` (migration 12, Phase 6 OCR)
+
+One row per image evidence file read by OCR: `evidence_id` (unique FK), `complaint_id`, `status`
+(`extracted`, `no_text`, `unsupported_type`, `failed`, `timeout`), `engine`, `languages`,
+`mean_confidence`, `text` (at most 5000 characters), `created_at`. Written once and reused by later
+analyses; deleted with the evidence; the text is never logged.
+
 ### `investigation_notes` (migration 11, Phase 12)
 
 `id`, `complaint_id` (FK), `author_user_id` (FK), `body` (text, up to 4000 characters), `created_at`;
@@ -228,6 +235,7 @@ run holds an advisory lock so replicas starting together serialise.
 | 9 | evidence_transcripts | Table `evidence_transcripts` + index `ix_transcripts_complaint` (Phase 6) |
 | 10 | complaint_network | Tables `complaint_entities`, `link_reviews` + indexes; backfill of the identifiers of existing complaints (Phase 9) |
 | 11 | investigation_notes | Table `investigation_notes` + index (Phase 12) |
+| 12 | evidence_ocr | Table `evidence_ocr` + index (Phase 6 OCR) |
 
 Migrations 6-8 came with Phase B (pushed 2026-10-16); migration 9 with Phase 6 (2026-10-16, not
 pushed). Migration 9 was tested on a fresh database, on a database at version 8 with data, and on a

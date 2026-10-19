@@ -1,6 +1,6 @@
 import { ApiError, mapStatus } from "@/lib/api/client";
 import { isRecord } from "@/types/guards";
-import type {
+import type { OcrText,
   AdminHealth,
   AdminUser,
   AccountRole,
@@ -224,6 +224,8 @@ export const complaintsApi = {
     request<AdminUser>("PUT", `/admin/users/${enc(id)}/role`, { body: { role, expected_role: expected } }),
   adminSetActive: (id: string, isActive: boolean) => request<AdminUser>("PUT", `/admin/users/${enc(id)}/active`, { body: { is_active: isActive } }),
   adminAudit: (p: { limit: number; offset: number }, signal?: AbortSignal) => request<Page<AuditRow>>("GET", `/admin/audit${qs(p)}`, { signal }),
+  /** Phase 6 OCR: the machine-read text of one image evidence file (owner and staff). */
+  ocrText: (id: string, eid: string, signal?: AbortSignal) => request<OcrText>("GET", `/complaints/${enc(id)}/evidence/${enc(eid)}/ocr`, { signal }),
   adminHealth: (signal?: AbortSignal) => request<AdminHealth>("GET", "/admin/health", { signal }),
   /** Phase 12: effective non-secret settings (read-only). */
   adminConfig: (signal?: AbortSignal) => request<Record<string, unknown>>("GET", "/admin/config", { signal }),

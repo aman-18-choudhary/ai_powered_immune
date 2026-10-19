@@ -158,6 +158,29 @@ export interface Evidence {
   kind?: "audio" | "image" | "document" | "other";
   /** Audio files only; null for other kinds. */
   transcription?: EvidenceTranscription | null;
+  /** Images only (Phase 6 OCR): whether text was read; the text itself comes from .../ocr. */
+  ocr?: EvidenceOcr | null;
+}
+
+export interface EvidenceOcr {
+  status: "extracted" | "no_text" | "unsupported_type" | "failed" | "timeout" | "file_missing" | "engine_unavailable" | "budget_exhausted" | "disabled" | "not_read_yet" | string;
+  source: "stored" | "last_analysis" | "none";
+  message: string;
+  text_available: boolean;
+  chars: number;
+  mean_confidence: number | null;
+  languages: string[];
+  engine?: string | null;
+}
+
+export interface OcrText {
+  evidence_id: string;
+  status: string;
+  engine: string | null;
+  languages: string[];
+  mean_confidence: number | null;
+  text: string;
+  note: string;
 }
 
 export interface TranscriptSegment {
@@ -450,6 +473,8 @@ export interface ModelsInfo {
     limits?: { max_seconds_per_file: number; max_files_per_run: number; run_budget_s: number };
     decoders?: { wav: string; mp3_ogg_m4a: string };
   };
+  /** Screenshot text (OCR, Phase 6). */
+  ocr?: { status: string; reason: string | null; engine: string | null; version: string | null; languages: string[]; used_for: string };
   /** Fraud DNA embeddings (Phase 8). */
   dna?: {
     status: "ready" | "loading" | "unavailable" | string;

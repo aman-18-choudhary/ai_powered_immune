@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Spinner } from "./ui";
 import { UploadList } from "./UploadList";
 import { TranscriptViewer } from "./TranscriptViewer";
+import { OcrLine, OcrViewer } from "./OcrViewer";
 import { complaintsApi, messageFor, saveBlob } from "@/lib/complaints/api";
 import { ACCEPT, MAX_FILES } from "@/lib/complaints/form";
 import { formatBytes, formatDateTime } from "@/lib/complaints/format";
@@ -168,6 +169,22 @@ export function EvidenceManager({
                     </button>
                   )}
                   {open === e.id && <TranscriptViewer complaintId={complaintId} evidenceId={e.id} id={`tr-${e.id}`} />}
+                  {e.ocr && <OcrLine o={e.ocr} />}
+                  {e.ocr?.text_available && (
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex items-center gap-1 rounded text-xs font-medium text-fg underline underline-offset-2 hover:text-muted focus-visible:outline focus-visible:outline-2"
+                      aria-expanded={open === `ocr-${e.id}`}
+                      aria-controls={`ocr-${e.id}`}
+                      onClick={() => setOpen(open === `ocr-${e.id}` ? null : `ocr-${e.id}`)}
+                      data-testid="ocr-toggle"
+                    >
+                      {open === `ocr-${e.id}` ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
+                      {open === `ocr-${e.id}` ? "Hide text" : "Show text"}
+                      <span className="sr-only"> read from {e.original_filename}</span>
+                    </button>
+                  )}
+                  {open === `ocr-${e.id}` && <OcrViewer complaintId={complaintId} evidenceId={e.id} id={`ocr-${e.id}`} />}
                 </div>
                 <div className="flex gap-1.5">
                   <Button size="sm" variant="secondary" onClick={() => void download(e)} disabled={busy === e.id} aria-label={`Download ${e.original_filename}`} data-testid="evidence-download">

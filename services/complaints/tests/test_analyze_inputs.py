@@ -46,8 +46,10 @@ async def test_short_names_accepted_and_reported_per_input(app_cl, tok):
     assert ic["audio"]["status"] == "not_accepted_here"
     assert "attached to a complaint" in ic["audio"]["reason"]
     assert "no speech-to-text engine" not in ic["audio"]["reason"]
-    assert ic["screenshot"]["status"] == "unavailable"
-    assert "no OCR engine is installed" in ic["screenshot"]["reason"]
+    # screenshots, like audio, are read only as complaint evidence (OCR, Phase 6)
+    assert ic["screenshot"]["status"] == "not_accepted_here"
+    assert "attached to a complaint" in ic["screenshot"]["reason"]
+    assert "no OCR engine" not in ic["screenshot"]["reason"]
     url_ind = [i for i in a["indicators"] if i["stage"] == "url_heuristics"]
     assert url_ind and url_ind[0]["evidence"]["field"] == "url"
     fields = {c["evidence"]["field"] for c in a["entity_checks"]["checks"]}

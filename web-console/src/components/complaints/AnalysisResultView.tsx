@@ -81,7 +81,8 @@ function EvidenceNote({ ev }: { ev?: ProvenanceEvidence }) {
         {ev.host ? ` (host ${ev.host})` : ""}; extracted from the text, not opened or verified
       </>
     );
-  } else if (ev.type === "not_recorded") body = <>evidence not recorded (older analysis)</>;
+  } else if (ev.type === "screenshot_text") body = <>in the text read from a screenshot (machine-read by OCR; it may contain errors{typeof ev.mean_confidence === "number" ? `, confidence ${Math.round(ev.mean_confidence)}/100` : ""})</>;
+  else if (ev.type === "not_recorded") body = <>evidence not recorded (older analysis)</>;
   else return null;
   return (
     <span className="block text-xs text-subtle" data-testid="evidence">

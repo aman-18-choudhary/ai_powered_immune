@@ -174,10 +174,10 @@ test("citizen: check a message (nothing stored), register it pre-filled, run ana
   await expect(result.getByTestId("score-semantics")).toContainText("uncalibrated heuristic score, not a probability");
   await expect(result.getByTestId("indicator-group-rule")).toContainText("call_guard.rules");
   await expect(result.getByTestId("indicator-group-rule")).toContainText("url_heuristics");
-  // audio is analysed only as complaint evidence; screenshots: no OCR engine (Phase 6 wording)
+  // audio and screenshots are analysed only as complaint evidence (transcription, OCR)
   await expect(result.getByTestId("input-capabilities")).toContainText("Audio: not accepted here");
-  await expect(result.getByTestId("input-capabilities")).toContainText("attached to a complaint");
-  await expect(result.getByTestId("input-capabilities")).toContainText("no OCR engine is installed");
+  await expect(result.getByTestId("input-capabilities")).toContainText("Screenshot: not accepted here");
+  await expect(result.getByTestId("input-capabilities")).toContainText("their text is read by OCR");
   await expect(result.getByTestId("model-versions")).toContainText("category-v1");
   // nothing was stored: the history still has one complaint
   const stats = await page.evaluate(async () => {

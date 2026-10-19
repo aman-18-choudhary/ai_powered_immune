@@ -74,7 +74,7 @@ dependency missing), **Limitation**.
 | URL analysis | Partial: offline heuristics only, by design |
 | Uploaded audio evidence transcription (local faster-whisper, WAV/MP3/OGG/M4A, limits, stored once, timed indicators, precise statuses) | **Unverified** (agent-run only, 2026-10-16): mocked-engine tests, real Whisper opt-in tests (English WAV + M4A, Hindi, Hinglish; 4 passed), Playwright e2e with real Whisper (agent run, own server); Postgres suite. Phase 6, **not pushed** |
 | Accurate capability messages (`/analyze`, `/models`, `/admin/health`, evidence states) | **Unverified** (agent-run tests and Playwright) |
-| Screenshot OCR | **Blocked** (no OCR engine) |
+| Screenshot OCR (local Tesseract 5.5, eng + hin; text scored by the same rules, indicators point to the image; stored once per file; text viewable by owner and staff) | Verified 2026-10-19 (tests incl. real Tesseract on a synthetic screenshot; agent Playwright against a real server). OCR quality on real screenshots not measured |
 
 ### Live Protection
 | Feature | Status |
@@ -206,7 +206,7 @@ txn-guard duplicate hub submission on Python 3.11; the flaky demo-server seek te
 
 ## 4. External setup still required
 
-Clerk keys; Tesseract (OCR); the optional `stt` extra and a cached faster-whisper model on any
+Clerk keys; Tesseract for OCR on any other machine (`brew install tesseract`, plus `hin.traineddata` from tesseract-ocr/tessdata_fast; installed on this machine 2026-10-19, not in the Docker images); the optional `stt` extra and a cached faster-whisper model on any
 machine that should transcribe audio evidence (`pip install -e "services/complaints[stt]"`, model
 in the Hugging Face cache; nothing is downloaded at runtime); Qdrant + an embedding runtime (sentence-transformers/torch or
 fastembed); optionally Neo4j and PostGIS; a Docker daemon for the stack. Ollama runs only while

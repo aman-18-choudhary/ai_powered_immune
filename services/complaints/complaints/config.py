@@ -94,6 +94,8 @@ class Settings:
     stt_run_budget_s: float = 120.0
     # Fraud DNA (complaints.dna): the cached embedding model (optional 'dna' extra) and the
     # Qdrant embedded index directory (None = in memory, rebuilt from the database at start-up)
+    # screenshot text (OCR, complaints.ocr) with the local tesseract program when installed
+    ocr_enabled: bool = True
     dna_enabled: bool = True
     dna_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     dna_dir: Path | None = None
@@ -151,6 +153,8 @@ class Settings:
             ),
             stt_max_files_per_run=_int("COMPLAINTS_STT_MAX_FILES_PER_RUN", 2, 0, 10),
             stt_run_budget_s=_float("COMPLAINTS_STT_RUN_BUDGET_S", 120.0, 5.0, 900.0),
+            ocr_enabled=(os.getenv("COMPLAINTS_OCR_ENABLED") or "1").strip().lower()
+            not in ("0", "false", "no", "off"),
             dna_enabled=(os.getenv("COMPLAINTS_DNA_ENABLED") or "1").strip().lower()
             not in ("0", "false", "no", "off"),
             dna_model=(os.getenv("COMPLAINTS_DNA_MODEL") or "").strip()
