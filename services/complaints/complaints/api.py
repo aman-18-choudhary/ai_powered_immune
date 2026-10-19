@@ -72,6 +72,7 @@ from .validation import (
     BANK_FIELDS,
     ActiveBody,
     AnalyzeIn,
+    ComplaintEdit,
     ComplaintIn,
     EntryBody,
     LocalStartBody,
@@ -1148,6 +1149,27 @@ def create_app(
         )
         return await _detail(user, c)
 
+    @app.patch("/complaints/{complaint_id}")
+    async def edit_complaint(
+        complaint_id: str, body: ComplaintEdit, user: Citizen
+    ) -> dict[str, Any]:
+        """Phase 11: the owner adds or corrects optional details while the complaint is
+        SUBMITTED (others: 404; after review started: 409 complaint_not_editable)."""
+        throttle("write", user)
+        if len(complaint_id) > 64:
+            raise ApiError(404, "not_found", "Not found.")
+        changes = body.model_dump(include=body.model_fields_set)
+        if "incident_at" in changes and changes["incident_at"] is not None:
+            v = changes["incident_at"]
+            v = v.replace(tzinfo=UTC) if v.tzinfo is None else v.astimezone(UTC)
+            if v > now() + FUTURE_SKEW:
+                raise _field_error("incident_at", "must not be in the future")
+            if v < EARLIEST:
+                raise _field_error("incident_at", "is too far in the past")
+            changes["incident_at"] = v
+        c = await asyncio.to_thread(store.update_details, complaint_id, user.id, changes, now())
+        return await _detail(user, c)
+
     @app.delete("/complaints/{complaint_id}", status_code=204)
     async def delete_complaint(complaint_id: str, user: Citizen) -> Response:
         throttle("write", user)
@@ -1303,8 +1325,12 @@ def create_app(
             {
                 **c,
                 "evidence": [
-                    {"evidence_id": e["id"], "mime_type": e["mime_type"],
-                     "size_bytes": e["size_bytes"], "transcription": transcripts.get(e["id"])}
+                    {
+                        "evidence_id": e["id"],
+                        "mime_type": e["mime_type"],
+                        "size_bytes": e["size_bytes"],
+                        "transcription": transcripts.get(e["id"]),
+                    }
                     for e in files
                 ],
             }  # fmt: skip
@@ -1609,6 +1635,8 @@ _CONFLICT_TEXT = {
     "role_conflict": "The user's role changed. Reload and try again.",
     "last_admin": "At least one active administrator must remain.",
     "target_email_not_verified": "The user has no verified email address.",
+    "complaint_not_editable": "Details can only be changed while the complaint is still submitted "
+    "(before review starts).",
     "link_no_relation": "These complaints share no identifier, so there is no link to review.",
     "link_complaint_deleted": "One of these complaints has been deleted.",
     "link_matching_disabled": "Linking is off for one of these complaints at the complainant's "

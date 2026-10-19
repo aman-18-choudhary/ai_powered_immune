@@ -18,6 +18,7 @@ from sqlalchemy import func, insert, or_, select
 
 from .network_store import _iso
 from .schema import (
+    admin_audit,
     analyses,
     complaint_evidence,
     complaint_status_history,
@@ -82,6 +83,18 @@ class CaseStore:
             ev.append({"at": c.created_at, "kind": "complaint_created",
                        "text": "Complaint registered by the complainant.",
                        "actor_user_id": c.owner_user_id})  # fmt: skip
+            au = admin_audit
+            edits = select(au).where(
+                au.c.action == "complaint_edit", au.c.target_user_id == c.owner_user_id
+            )
+            for r in conn.execute(edits):
+                after = r.after if isinstance(r.after, dict) else {}
+                if after.get("complaint_id") != cid:
+                    continue
+                fields = ", ".join(str(f).replace("_", " ") for f in after.get("fields", []))
+                ev.append({"at": r.created_at, "kind": "details_edited",
+                           "text": f"Details updated by the complainant: {fields}.",
+                           "actor_user_id": r.actor_user_id})  # fmt: skip
             h = complaint_status_history
             for r in conn.execute(select(h).where(h.c.complaint_id == cid)):
                 if r.from_status is None:

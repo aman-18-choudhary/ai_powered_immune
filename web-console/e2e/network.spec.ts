@@ -136,6 +136,12 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
       expect(md).toContain(titles.a);
       expect(md).not.toContain("(by `");
       await expect(page.getByTestId("notes-panel")).toHaveCount(0);
+      // Phase 11: while SUBMITTED the complainant can add a detail they forgot
+      await page.getByTestId("edit-details").click();
+      await page.getByTestId("e-bank_name").fill("Synthetic Example Bank");
+      await page.getByTestId("edit-save").click();
+      await expect(page.getByTestId("edit-form")).toHaveCount(0);
+      await expect(page.locator('[data-field="Bank name"]')).toHaveText("Synthetic Example Bank");
       await citizenHasNoNetwork(page);
     }
     if (k === "c") {

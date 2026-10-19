@@ -6,6 +6,7 @@ import { AnalysisPanel } from "./AnalysisPanel";
 import { RelatedPanel } from "./RelatedPanel";
 import { SimilarPanel } from "./SimilarPanel";
 import { CaseTimeline, InvestigationNotes, ReportDownload } from "./CaseTools";
+import { EditDetails } from "./EditDetails";
 import { EvidenceManager } from "./EvidenceManager";
 import { Field, RiskBadge, Spinner, StatusChip, inputCls } from "./ui";
 import { complaintsApi, messageFor } from "@/lib/complaints/api";
@@ -119,7 +120,10 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
         <p className="text-xs text-muted">
           Complaint ID <span className="mono text-fg" data-testid="complaint-id">{c.id}</span> · reported {formatDateTime(c.reported_at)} (set by the server)
         </p>
-        <ReportDownload complaintId={c.id} staff={staff} />
+        <div className="flex flex-wrap items-start gap-2">
+          <ReportDownload complaintId={c.id} staff={staff} />
+          {!staff && c.status === "SUBMITTED" && <EditDetails complaint={c} onSaved={onReplace} />}
+        </div>
       </header>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">

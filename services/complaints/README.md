@@ -134,6 +134,7 @@ configuration error; there is no insecure fallback.
 | `GET /complaints` | any | citizen: own only; staff: all non-deleted. Filters `status category city state incident_from/to created_from/to risk_level has_evidence q`, `sort`, `limit` (1-100), `offset`. `q` matches title/description and, exactly, a bank account number (spaces ignored) or IFSC |
 | `GET /complaints/{id}` | owner, INVESTIGATOR, ADMIN | others get 404, identical to a missing id; includes status history, latest analysis summary, evidence list |
 | `PATCH /complaints/{id}/status` | INVESTIGATOR, ADMIN | valid transitions only, history row, alert to the owner |
+| `PATCH /complaints/{id}` | owner (CITIZEN) | add or correct optional details while SUBMITTED (409 `complaint_not_editable` after); `null` clears; category/title/description fixed; identifiers re-extracted; audited (`complaint_edit`, field names only) |
 | `DELETE /complaints/{id}` | owner (CITIZEN) | soft delete, only while SUBMITTED, audited |
 | `POST /complaints/{id}/evidence` | owner (CITIZEN) | multipart, one file in field `file` |
 | `GET /complaints/{id}/evidence`, `.../{eid}/download` | owner, staff | `Content-Disposition: attachment`, `nosniff`. Evidence items carry `kind` and, for audio, `transcription` (status, precise reason, source `stored` / `last_analysis` / `none`) |

@@ -187,6 +187,8 @@ export const complaintsApi = {
   entry: (entry: "citizen" | "investigator", token?: string) => request<SessionPayload>("POST", "/auth/entry", { body: { entry }, token }),
 
   me: (signal?: AbortSignal) => request<Me>("GET", "/me", { signal }),
+  /** Phase 11: the owner adds or corrects optional details while SUBMITTED; null clears. */
+  editDetails: (id: string, changes: Record<string, string | null>) => request<ComplaintDetail>("PATCH", `/complaints/${enc(id)}`, { body: changes }),
   updateMe: (patch: { display_name?: string | null; privacy?: { allow_case_matching: boolean } }) => request<Me>("PATCH", "/me", { body: patch }),
   stats: (signal?: AbortSignal) => request<MyStats>("GET", "/me/stats", { signal }),
   alerts: (p: { unread?: boolean; limit?: number; offset?: number }, signal?: AbortSignal) =>

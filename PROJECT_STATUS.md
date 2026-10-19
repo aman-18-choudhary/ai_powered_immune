@@ -53,6 +53,7 @@ dependency missing), **Limitation**.
 |---|---|
 | Complaint with only category, title, description; optional fields stored as NULL | Verified (tests; by hand 2026-10-14) |
 | Optional bank, payment, suspect, social and location fields | Verified (tests) |
+| Owner adds or corrects optional details while SUBMITTED (identifiers re-extracted, audited, in the timeline) | Verified (tests; agent Playwright) |
 | Ownership (foreign ids 404) | Verified (tests) |
 | Status workflow with history and owner alerts | Verified (tests); investigator UI: agent Playwright only |
 | Evidence upload with content sniffing and size limits; honest per-file result | Verified (tests); upload in the browser: agent Playwright only |

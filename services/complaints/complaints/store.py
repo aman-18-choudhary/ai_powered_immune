@@ -199,6 +199,49 @@ class ComplaintStore:
             )
         )  # fmt: skip
 
+    def update_details(
+        self, complaint_id: str, owner_id: str, changes: dict[str, Any], now: datetime
+    ) -> dict[str, Any]:
+        """Phase 11: the owner adds or corrects optional details while the complaint is
+        SUBMITTED. The complaint's identifiers (network) are re-extracted in the same
+        transaction; audited with the changed field names, never the values."""
+        with self._tx() as conn:
+            cur = self._get_complaint(conn, complaint_id, lock=True)
+            if cur is None or cur["owner_user_id"] != owner_id:
+                raise NotFound()
+            if cur["status"] != "SUBMITTED":
+                raise Conflict("complaint_not_editable")
+            merged = {**cur, **changes}
+            if merged.get("amount") is not None and merged.get("currency") is None:
+                changes["currency"] = "INR"
+                merged["currency"] = "INR"
+            changed = sorted(k for k, v in changes.items() if cur.get(k) != v)
+            if changed:
+                conn.execute(
+                    update(complaints).where(complaints.c.id == complaint_id)
+                    .values(**{k: changes[k] for k in changed}, updated_at=now)
+                )  # fmt: skip
+                conn.execute(
+                    delete(complaint_entities).where(
+                        complaint_entities.c.complaint_id == complaint_id
+                    )
+                )
+                ents = extract_entities(merged)
+                if ents:
+                    conn.execute(insert(complaint_entities), [
+                        {"id": new_id(), "complaint_id": complaint_id,
+                         "entity_type": e.entity_type, "value_norm": e.value_norm,
+                         "value_hash": value_hash(e.entity_type, e.value_norm),
+                         "display": e.display, "source_field": e.source_field,
+                         "created_at": now}
+                        for e in ents
+                    ])  # fmt: skip
+                self._audit(conn, owner_id, "complaint_edit", owner_id, {},
+                            {"complaint_id": complaint_id, "fields": changed}, now)  # fmt: skip
+        out = self.get_complaint(complaint_id)
+        assert out is not None
+        return out
+
     def record_audit(
         self, actor: str | None, action: str, after: dict[str, Any], now: datetime
     ) -> None:
@@ -983,8 +1026,15 @@ class ComplaintStore:
         if summary:
             return {
                 k: d.get(k)
-                for k in ("version", "created_at", "status", "risk_score", "risk_level", "detail",
-                          "indicators")
+                for k in (
+                    "version",
+                    "created_at",
+                    "status",
+                    "risk_score",
+                    "risk_level",
+                    "detail",
+                    "indicators",
+                )
             }
         return d
 

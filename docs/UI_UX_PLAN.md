@@ -43,7 +43,7 @@ The role always comes from `/auth/session`; the frontend never sends a role.
 | Network view | **Built (Phase 9)**: `/investigator/network`, staff only. Deterministic radial SVG graph (no graph library), depth 1 or 2; line style and text distinguish observed (solid), inferred (dashed), confirmed (thick, arced) and rejected (dotted); keyboard-selectable nodes; a text list of every connection with its evidence; legend; clusters; POST identifier search. Related complaints panel on the staff complaint page with confirm/reject dialogs. "Leads, not proof" and "a confirmed link is not a finding of crime" shown wherever links are | 9 |
 | Geographic view | **Built (Phase 10)**: `/investigator/map` (staff) on the bundled d3-geo India map, not Leaflet: no tile service is contacted at all (decided for privacy and offline use). Grid cells sized by count, coloured by change when comparing periods, keyboard-selectable with category/risk breakdowns; date/category/risk/cell-size filters; list of complaints without coordinates by place; privacy note | 10 |
 | Investigation notes and case report export | **Built (Phase 12)**: notes panel and case timeline on the staff complaint page; "Download report" for owners and staff (Markdown; owner version without staff content) | 12 |
-| Complaint edit (while SUBMITTED) | Add bank details or other fields after creation | 11 |
+| Complaint edit (while SUBMITTED) | **Built (Phase 11)**: "Add or correct details" dialog on the complainant's own complaint page while SUBMITTED; only changed fields are sent; server field errors shown on their boxes | 11 |
 | Configuration view (admin) | Read-only view of effective configuration, then authorised changes | 12 |
 
 ## 4. Visual language

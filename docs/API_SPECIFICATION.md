@@ -153,6 +153,12 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
 matching are excluded from every result and count. A confirmed link is not a finding of guilt.
 
+### Complaint details edit (Phase 11)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `PATCH /complaints/{id}` | owner (CITIZEN) | only the optional details (incident time, amount and currency, payment method, UPI ID, UTR, bank name/account/IFSC, suspect phone/email/link, social platform/account, locality/city/state, coordinates as a pair); keys sent change, `null` clears; same validation as creation; category, title and description cannot change; only while `SUBMITTED` (else 409 `complaint_not_editable`); others 404; identifiers for the network are re-extracted in the same transaction; audited as `complaint_edit` with field names only and shown in the case timeline |
+
 ### Investigator case tools (Phase 12)
 
 | Method and path | Auth | Notes |
@@ -209,6 +215,5 @@ simulator output and **are not complaint intelligence**.
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
-| `PATCH /complaints/{id}` (citizen edits while `SUBMITTED`) | owner | 11 |
 
 Each will follow the same error format, ownership scoping and rate limiting.

@@ -193,6 +193,11 @@ def _opt(max_len: int, after: Any = _line) -> Any:
     ]
 
 
+# the range applies to the number only: an explicit null means "not given" (it used to raise)
+_Lat = Annotated[float, Field(ge=-90, le=90)]
+_Lon = Annotated[float, Field(ge=-180, le=180)]
+
+
 class ComplaintIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -220,10 +225,8 @@ class ComplaintIn(BaseModel):
     location_text: _opt(200) = None  # type: ignore[valid-type]
     city: _opt(100) = None  # type: ignore[valid-type]
     state: _opt(100) = None  # type: ignore[valid-type]
-    latitude: Annotated[float | None, BeforeValidator(_blank_to_none), Field(ge=-90, le=90)] = None
-    longitude: Annotated[float | None, BeforeValidator(_blank_to_none), Field(ge=-180, le=180)] = (
-        None
-    )
+    latitude: Annotated[_Lat | None, BeforeValidator(_blank_to_none)] = None
+    longitude: Annotated[_Lon | None, BeforeValidator(_blank_to_none)] = None
     social_platform: _opt(50) = None  # type: ignore[valid-type]
     social_account: _opt(100) = None  # type: ignore[valid-type]
     bank_name: _opt(100) = None  # type: ignore[valid-type]
@@ -234,6 +237,54 @@ class ComplaintIn(BaseModel):
     def _coords_together(self) -> "ComplaintIn":
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("latitude and longitude must be given together")
+        return self
+
+
+# Phase 11: what a complainant may add or correct while the complaint is SUBMITTED. Category,
+# title and description stay as filed (analyses and Fraud DNA were computed from them).
+EDITABLE_FIELDS = (
+    "incident_at", "amount", "currency", "payment_method", "upi_id", "utr_reference",
+    "suspect_phone", "suspect_email", "suspicious_url", "location_text", "city", "state",
+    "latitude", "longitude", "social_platform", "social_account", "bank_name", "bank_account",
+    "ifsc",
+)  # fmt: skip
+
+
+class ComplaintEdit(BaseModel):
+    """PATCH /complaints/{id}: only the keys sent change; ``null`` clears a field. Same rules
+    as ComplaintIn for every value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_at: Annotated[datetime | None, BeforeValidator(_blank_to_none)] = None
+    amount: Annotated[Decimal | None, BeforeValidator(_amount)] = None
+    currency: _opt(3, _currency) = None  # type: ignore[valid-type]
+    payment_method: Annotated[PaymentMethod | None, BeforeValidator(_blank_to_none)] = None
+    upi_id: _opt(320, _upi) = None  # type: ignore[valid-type]
+    utr_reference: _opt(60, _utr) = None  # type: ignore[valid-type]
+    suspect_phone: _opt(40, _phone) = None  # type: ignore[valid-type]
+    suspect_email: _opt(254, _email) = None  # type: ignore[valid-type]
+    suspicious_url: _opt(2048, _url) = None  # type: ignore[valid-type]
+    location_text: _opt(200) = None  # type: ignore[valid-type]
+    city: _opt(100) = None  # type: ignore[valid-type]
+    state: _opt(100) = None  # type: ignore[valid-type]
+    latitude: Annotated[_Lat | None, BeforeValidator(_blank_to_none)] = None
+    longitude: Annotated[_Lon | None, BeforeValidator(_blank_to_none)] = None
+    social_platform: _opt(50) = None  # type: ignore[valid-type]
+    social_account: _opt(100) = None  # type: ignore[valid-type]
+    bank_name: _opt(100) = None  # type: ignore[valid-type]
+    bank_account: _opt(40, _bank_account) = None  # type: ignore[valid-type]
+    ifsc: _opt(20, _ifsc) = None  # type: ignore[valid-type]
+
+    @model_validator(mode="after")
+    def _checks(self) -> "ComplaintEdit":
+        sent = self.model_fields_set
+        if not sent:
+            raise ValueError("send at least one field to change")
+        if ("latitude" in sent) != ("longitude" in sent) or (
+            "latitude" in sent and (self.latitude is None) != (self.longitude is None)
+        ):
+            raise ValueError("latitude and longitude must be given (or cleared) together")
         return self
 
 
