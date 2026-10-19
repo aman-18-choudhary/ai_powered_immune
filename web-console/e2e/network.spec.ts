@@ -188,9 +188,11 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
   await page.goto(`/investigator/complaints/${ids.a}`);
   const sim = page.getByTestId("similar-panel");
   await expect(sim.getByTestId("similar-disclaimer")).toContainText("not proof");
-  await expect(sim.getByTestId("similar-item")).toHaveCount(2, { timeout: 60_000 });
+  // other specs' synthetic complaints with similar wording may appear too: check by title
+  await expect(sim.getByTestId("similar-item").filter({ hasText: titles.c })).toHaveCount(1, { timeout: 60_000 });
   const simB = sim.getByTestId("similar-item").filter({ hasText: titles.b });
   const simC = sim.getByTestId("similar-item").filter({ hasText: titles.c });
+  await expect(simB).toHaveCount(1);
   await expect(simB.getByTestId("similar-identifier-link")).toContainText("observed");
   await expect(simC.getByTestId("similar-identifier-link")).toHaveCount(0);
   await expect(simC.getByTestId("similar-score")).toContainText(/similarity/i);

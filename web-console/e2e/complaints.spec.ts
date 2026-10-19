@@ -302,7 +302,9 @@ test("bootstrap admin: change a role with confirmation, last-admin refusal, audi
   await expect(page.getByTestId("admin-audit")).toContainText("Role change");
   await page.getByRole("tab", { name: "Health" }).click();
   await expect(page.getByTestId("health-row").filter({ hasText: "Db" })).toContainText("Working (ok)");
-  await expect(page.getByTestId("health-row").filter({ hasText: "Qdrant" })).toContainText("Not configured");
+  // Qdrant runs embedded for Fraud DNA (Phase 8); Neo4j is still not used
+  await expect(page.getByTestId("health-row").filter({ hasText: "Qdrant" })).toContainText("Working (local)");
+  await expect(page.getByTestId("health-row").filter({ hasText: /^Neo4j/ })).toContainText("Not configured");
 });
 
 for (const theme of ["dark", "light"] as const) {
