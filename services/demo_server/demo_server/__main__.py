@@ -16,7 +16,9 @@ def main() -> None:
     )
     logredact.install()
     port = int(os.getenv("PORT", "8080"))
-    host = os.getenv("HOST", "0.0.0.0")  # noqa: S104 - container default; set HOST=127.0.0.1 locally
+    # loopback unless HOST says otherwise (the container image sets HOST=0.0.0.0 and compose
+    # publishes the port on 127.0.0.1 only)
+    host = os.getenv("HOST", "127.0.0.1")
     uvicorn.run(
         create_app(),
         host=host,

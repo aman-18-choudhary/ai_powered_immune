@@ -1251,7 +1251,7 @@ def create_app(
     @app.get("/complaints/{complaint_id}/evidence/{evidence_id}/download")
     async def download_evidence(complaint_id: str, evidence_id: str, user: User) -> Response:
         throttle("read", user)
-        await _load(user, complaint_id)
+        c = await _load(user, complaint_id)
         ev = await asyncio.to_thread(store.get_evidence, complaint_id, evidence_id[:64])
         if ev is None:
             raise ApiError(404, "not_found", "Not found.")
@@ -1262,6 +1262,12 @@ def create_app(
         if not await asyncio.to_thread(path.is_file):
             log.error("evidence file missing on disk")
             raise ApiError(404, "evidence_file_missing", "The stored file is not available.")
+        # every download is recorded (finding 4): who, which complaint and file; never the name
+        await asyncio.to_thread(
+            store.record_audit, user.id, "evidence_download",
+            {"complaint_id": complaint_id, "evidence_id": ev["id"],
+             "owner": c["owner_user_id"] == user.id}, now(),
+        )  # fmt: skip
         safe_name = ev["original_filename"]
         return FileResponse(
             path,

@@ -106,6 +106,13 @@ def _like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# words the complainant reads in an alert (finding 9: no raw status codes)
+STATUS_TEXT = {
+    "SUBMITTED": "Submitted", "UNDER_REVIEW": "Under review",
+    "INVESTIGATING": "Being investigated", "RESOLVED": "Resolved", "REJECTED": "Rejected",
+}  # fmt: skip
+
+
 def new_id() -> str:
     return str(uuid.uuid4())
 
@@ -191,6 +198,13 @@ class ComplaintStore:
                 before=before, after=after, created_at=now,
             )
         )  # fmt: skip
+
+    def record_audit(
+        self, actor: str | None, action: str, after: dict[str, Any], now: datetime
+    ) -> None:
+        """A standalone audit row (no other change in the same transaction)."""
+        with self._tx() as conn:
+            self._audit(conn, actor, action, None, {}, after, now)
 
     @staticmethod
     def _user(row: Any) -> dict[str, Any]:
@@ -757,7 +771,7 @@ class ComplaintStore:
             )  # fmt: skip
             self._alert(
                 conn, cur["owner_user_id"], complaint_id, "STATUS_CHANGED",
-                f"Your complaint status changed to {to_status}.", now,
+                f"Your complaint is now: {STATUS_TEXT.get(to_status, to_status)}.", now,
             )  # fmt: skip
             cur.update(status=to_status, updated_at=now)
             return cur

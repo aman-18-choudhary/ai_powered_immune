@@ -62,3 +62,21 @@ jobs:
           python scripts/check_links.py
       - name: Compose config with the example env
         run: docker compose -f infra/docker-compose.yml --env-file infra/.env.example --profile core --profile stack --profile observability config -q
+  console:
+    # finding 13: the console's type-check, lint, unit tests and build run in CI too
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-console/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx eslint .
+      - run: npx vitest run
+      - run: npx vite build

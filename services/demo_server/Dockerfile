@@ -41,7 +41,7 @@ RUN pip install ./contracts ./libs/svckit ./services/sim_engine ./services/call_
 
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:$PATH \
-    PORT=8080 DEMO_STATIC_DIR=/app/console
+    PORT=8080 HOST=0.0.0.0 DEMO_STATIC_DIR=/app/console
 RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --create-home --home-dir /home/app app
 COPY --from=builder /opt/venv /opt/venv

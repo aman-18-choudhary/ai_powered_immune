@@ -5,7 +5,7 @@ import { EmptyState, Panel } from "@/components/common/Panel";
 import { Button } from "@/components/ui/button";
 import { ErrorBlock, LoadingBlock, Pager, Spinner } from "./ui";
 import { complaintsApi, messageFor } from "@/lib/complaints/api";
-import { formatDateTime, humanise } from "@/lib/complaints/format";
+import { formatDateTime, humanise, readableAlert } from "@/lib/complaints/format";
 import { useResource } from "@/lib/complaints/useResource";
 import type { Alert } from "@/lib/complaints/types";
 import { cn } from "@/lib/utils/cn";
@@ -93,7 +93,7 @@ export function AlertsPanel({ complaintBase = "/me/complaints", onChange }: { co
               <div className="min-w-0 flex-1 space-y-0.5">
                 <p className="text-sm">
                   <span className="sr-only">{a.read_at ? "Read. " : "Unread. "}</span>
-                  {a.message}
+                  {readableAlert(a.message)}
                 </p>
                 <p className="text-xs text-subtle">
                   {humanise(a.kind)} · {formatDateTime(a.created_at)}

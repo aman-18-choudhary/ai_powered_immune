@@ -156,22 +156,28 @@ Playwright and the Postgres run are still agent-only results.
    shown with its transcript in the browser): audio evidence is transcribed and
    every state has a precise reason; old analysis rows read as `not_implemented_at_analysis_time`.
    Tests and Playwright (agent runs).
-4. **Evidence storage**: local disk, random names, not encrypted, not malware-scanned; downloads not
-   audited.
+4. **Evidence storage**: local disk, random names, not encrypted, not malware-scanned. Downloads
+   are now audited (`evidence_download`, ids only; 2026-10-19).
 5. **Development sign-in**: prints email and code to the terminal; per-process, per-IP rate limits;
    demo-server falls back to local mode when Clerk is unset, and the compose `demo-server` service
-   does not set `COMPLAINTS_AUTH_MODE`; no production guard.
+   does not set `COMPLAINTS_AUTH_MODE`. **Production guard added 2026-10-19**: `COMPLAINTS_ENV=production`
+   refuses demo/local sign-in, the test outbox and non-https CORS origins at start-up.
 6. **No retention enforcement.**
-7. `python -m demo_server` binds `0.0.0.0` unless `HOST` is set.
-8. Microphone denial message is generic ("could not be started").
-9. Alerts show raw status codes (for example `UNDER_REVIEW`).
-10. The console defaults to the dark theme (light is a toggle).
+7. ~~`python -m demo_server` binds `0.0.0.0` unless `HOST` is set~~ **Fixed 2026-10-19**: loopback by
+   default; the container image sets `HOST=0.0.0.0` and compose publishes on 127.0.0.1 only.
+8. ~~Microphone denial message is generic~~ Fixed earlier (specific denied / no device / in use /
+   insecure page messages, browser-tested); the remaining fallback now says what to check (2026-10-19).
+9. ~~Alerts show raw status codes~~ **Fixed 2026-10-19**: new alerts use words; older stored alerts
+   are shown with words in the console.
+10. ~~The console defaults to the dark theme~~ **Fixed 2026-10-19**: a stored choice wins, otherwise
+    the system preference, light when there is none.
 11. All model training data is synthetic; metrics are not real-world performance.
 12. On Python 3.11, `txn_guard` test `test_confirm_block_records_pending_in_the_same_cas[redis]`
     takes about 60 s (on 3.13 it is instant). It passes; the wait happens during test teardown with
     a fake hub that never answers. The store's own shutdown was measured as instant outside pytest;
     the cause was not isolated.
-13. CI does not run the console tests (vitest, Playwright) or the Postgres-backed tests. CI also
+13. CI now runs the console's type-check, lint, unit tests and build (job `console`, 2026-10-19).
+    It does not run Playwright or the Postgres-backed tests. CI also
     skips the optional `stt` extras, so the PyAV decoding tests and all real-STT tests run locally
     only.
 14. Audio evidence transcription runs inside `POST /complaints/{id}/analysis` (bounded by the
@@ -181,8 +187,9 @@ Playwright and the Postgres run are still agent-only results.
     transcription with `base` is romanised and partly garbled; only synthetic TTS audio was tested.
 16. With qwen2.5:0.5b most LLM answers are rejected by the grounding checks (live runs:
     complaints 1 of 3 accepted, live audio 1 of 3); the 3B model was not tested (8 GB machine).
-17. Playwright `smoke.spec.ts` (simulator verify step) failed once out of three runs on 2026-10-16
-    (`verify-status` not found); not reproduced; cause not investigated.
+17. Playwright `smoke.spec.ts` (simulator verify step) failed once on 2026-10-16 and once on
+    2026-10-19, both times while other heavy jobs ran on the same machine; it passed alone and in
+    every quiet full run. Attributed to CPU contention, not proven.
 18. Seven files in `services/complaints` are not `ruff format`-clean (introduced in Phase 6; CI
     runs `ruff check` only, which passes). Formatting cleanup is tracked separately.
 

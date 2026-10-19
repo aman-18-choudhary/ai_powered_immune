@@ -97,3 +97,8 @@ export function humanise(code: string): string {
 
 /** A short, copyable form of a UUID for lists (the full id is shown on the detail page). */
 export const shortId = (id: string) => id.slice(0, 8);
+
+/** Alerts stored before 2026-10-19 say "status changed to UNDER_REVIEW": show words instead. */
+export function readableAlert(message: string): string {
+  return message.replace(/\b(SUBMITTED|UNDER_REVIEW|INVESTIGATING|RESOLVED|REJECTED)\b/g, (code) => STATUS_LABEL[code as ComplaintStatus] ?? code);
+}

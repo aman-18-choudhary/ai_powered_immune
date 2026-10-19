@@ -186,6 +186,26 @@ async def test_download_authz_and_headers(client, tok, inv, admin):
     assert r.status_code == 404
 
 
+async def test_every_download_is_audited_without_the_file_name(app, client, tok, inv):
+    import sqlalchemy as sa
+
+    from complaints.schema import admin_audit
+
+    c = await create(client, tok("a"))
+    ev = (await up(client, tok("a"), c["id"], "private name.png", PNG)).json()
+    url = f"/complaints/{c['id']}/evidence/{ev['id']}/download"
+    assert (await client.get(url, headers=tok("a"))).status_code == 200
+    assert (await client.get(url, headers=inv)).status_code == 200
+    assert (await client.get(url, headers=tok("b"))).status_code == 404  # refused: not recorded
+    with app.state.store.engine.connect() as conn:
+        rows = conn.execute(sa.select(admin_audit).where(
+            admin_audit.c.action == "evidence_download").order_by(admin_audit.c.created_at)).all()  # fmt: skip
+    assert [r.after["owner"] for r in rows] == [True, False]
+    assert all(r.after == {"complaint_id": c["id"], "evidence_id": ev["id"], "owner": r.after["owner"]}
+               for r in rows)  # fmt: skip
+    assert "private name" not in str([r.after for r in rows])
+
+
 async def test_upload_authz(client, tok, inv, admin):
     c = await create(client, tok("a"))
     assert (await up(client, tok("b"), c["id"], "a.png", PNG)).status_code == 404

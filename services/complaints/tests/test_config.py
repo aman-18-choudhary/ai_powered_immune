@@ -19,6 +19,7 @@ def env(monkeypatch, tmp_path, **kv):
         "CLERK_BACKEND_LOOKUP",
         "GATEWAY_JWT_SECRET",
         "COMPLAINTS_LOCAL_AUTH_OUTBOX",
+        "COMPLAINTS_ENV",
     ):
         monkeypatch.delenv(k, raising=False)  # fmt: skip
     monkeypatch.setenv("COMPLAINTS_DATABASE_URL", "sqlite://")
@@ -109,3 +110,33 @@ def test_local_auth_outbox_is_test_only_and_refused_in_clerk_mode(monkeypatch, t
     s = Settings.from_env()
     s.validate()
     assert s.local_auth_outbox == tmp_path / "outbox.jsonl"
+
+
+CLERK = {"CLERK_ISSUER": "https://c.example", "CLERK_JWKS_URL": "https://c.example/j"}
+
+
+def test_production_refuses_every_development_option(monkeypatch, tmp_path):
+    # finding 5: the development sign-in must not be possible in production
+    for mode in ("demo", "local"):
+        env(monkeypatch, tmp_path, COMPLAINTS_ENV="production", COMPLAINTS_AUTH_MODE=mode,
+            COMPLAINTS_DEMO_JWT_SECRET="s" * 40)  # fmt: skip
+        with pytest.raises(ConfigError, match="production requires COMPLAINTS_AUTH_MODE=clerk"):
+            Settings.from_env().validate()
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production",
+        COMPLAINTS_CORS_ORIGINS="http://localhost:5173", **CLERK)  # fmt: skip
+    with pytest.raises(ConfigError, match="https in production"):
+        Settings.from_env().validate()
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="staging", **CLERK)
+    with pytest.raises(ConfigError, match="COMPLAINTS_ENV"):
+        Settings.from_env().validate()
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production",
+        COMPLAINTS_CORS_ORIGINS="https://app.example", **CLERK)  # fmt: skip
+    s = Settings.from_env()
+    s.validate()
+    assert s.environment == "production" and s.auth_mode == "clerk"
+    # development stays the default and keeps local sign-in available
+    env(monkeypatch, tmp_path, COMPLAINTS_AUTH_MODE="local", COMPLAINTS_DEMO_JWT_SECRET="s" * 40)
+    s = Settings.from_env()
+    s.validate()
+    assert s.environment == "development" and s.local_auth_enabled
+

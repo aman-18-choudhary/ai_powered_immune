@@ -170,3 +170,19 @@ def test_seek_at_or_after_end_reports_finished(app_factory):
             assert r.json()["status"] == "finished", r.json()
             assert r.json()["t"] == r.json()["duration"]
         assert SECRET
+
+
+# ---- finding 7: the server listens on loopback unless HOST says otherwise
+@pytest.mark.parametrize("host_env, expected", [(None, "127.0.0.1"), ("0.0.0.0", "0.0.0.0")])
+def test_main_binds_loopback_by_default(monkeypatch, host_env, expected):
+    import demo_server.__main__ as entry
+
+    seen = {}
+    monkeypatch.setattr(entry.uvicorn, "run", lambda app, **kw: seen.update(kw))
+    monkeypatch.setattr(entry, "create_app", lambda: object())
+    if host_env is None:
+        monkeypatch.delenv("HOST", raising=False)
+    else:
+        monkeypatch.setenv("HOST", host_env)
+    entry.main()
+    assert seen["host"] == expected

@@ -3,11 +3,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 export type Theme = "dark" | "light";
 const Ctx = createContext<{ theme: Theme; toggle: () => void }>({ theme: "dark", toggle: () => {} });
 
+/** A stored choice wins; otherwise the system preference, light when there is none. */
 function initial(): Theme {
   try {
-    return localStorage.getItem("ssi.theme") === "light" ? "light" : "dark";
+    const saved = localStorage.getItem("ssi.theme");
+    if (saved === "light" || saved === "dark") return saved;
   } catch {
-    return "dark";
+    /* storage unavailable: fall through to the system preference */
+  }
+  try {
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
   }
 }
 

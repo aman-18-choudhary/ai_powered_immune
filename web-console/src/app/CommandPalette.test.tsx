@@ -74,11 +74,19 @@ describe("CommandPalette", () => {
   });
 
   it("toggles the theme", async () => {
+    localStorage.setItem("ssi.theme", "dark"); // a stored choice wins over the system default
     const user = userEvent.setup();
     renderApp(<Harness />);
     await user.keyboard("{Control>}k{/Control}");
     await user.type(await screen.findByTestId("palette-input"), "light theme");
     await user.keyboard("{Enter}");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    localStorage.removeItem("ssi.theme");
+  });
+
+  it("without a stored choice the theme follows the system and defaults to light (finding 10)", () => {
+    localStorage.removeItem("ssi.theme");
+    renderApp(<Harness />);
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 });

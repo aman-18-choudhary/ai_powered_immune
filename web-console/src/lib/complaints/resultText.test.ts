@@ -26,3 +26,11 @@ describe("resultText", () => {
     expect(resultText("LOW", 0, undefined)).toBe("Weak or no indicators · 0/100");
   });
 });
+
+describe("readable alerts (finding 9)", () => {
+  it("replaces status codes in older alert messages with words", async () => {
+    const { readableAlert } = await import("./format");
+    expect(readableAlert("Your complaint status changed to UNDER_REVIEW.")).toBe("Your complaint status changed to Under review.");
+    expect(readableAlert("Your complaint is now: Rejected.")).toBe("Your complaint is now: Rejected.");
+  });
+});

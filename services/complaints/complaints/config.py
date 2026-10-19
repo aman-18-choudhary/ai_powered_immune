@@ -97,6 +97,8 @@ class Settings:
     dna_enabled: bool = True
     dna_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     dna_dir: Path | None = None
+    # "production" refuses every development-only option at start-up (see validate)
+    environment: str = "development"
     # TEST ONLY: also append local sign-in codes to this file (end-to-end tests read it). Refused
     # in clerk mode; never set it outside an automated test run.
     local_auth_outbox: Path | None = None
@@ -158,6 +160,7 @@ class Settings:
                 if (os.getenv("COMPLAINTS_DNA_DIR") or "").strip()
                 else None
             ),
+            environment=(os.getenv("COMPLAINTS_ENV") or "development").strip().lower(),
             local_auth_outbox=(
                 Path(os.environ["COMPLAINTS_LOCAL_AUTH_OUTBOX"].strip())
                 if (os.getenv("COMPLAINTS_LOCAL_AUTH_OUTBOX") or "").strip()
@@ -197,6 +200,19 @@ class Settings:
                 )
         else:
             raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk', 'demo' or 'local'")
+        if self.environment not in ("development", "production"):
+            raise ConfigError("COMPLAINTS_ENV must be 'development' or 'production'")
+        if self.environment == "production":
+            # the development sign-in prints codes to the terminal: never in production
+            if self.auth_mode != "clerk":
+                raise ConfigError(
+                    "COMPLAINTS_ENV=production requires COMPLAINTS_AUTH_MODE=clerk "
+                    "(demo/local sign-in is development-only)"
+                )
+            if self.local_auth_outbox is not None:
+                raise ConfigError("COMPLAINTS_LOCAL_AUTH_OUTBOX is not allowed in production")
+            if any(not o.startswith("https://") for o in self.cors_origins):
+                raise ConfigError("COMPLAINTS_CORS_ORIGINS must use https in production")
         if self.local_auth_outbox is not None and not self.local_auth_enabled:
             raise ConfigError(
                 "COMPLAINTS_LOCAL_AUTH_OUTBOX is a test-only option for local/demo mode"

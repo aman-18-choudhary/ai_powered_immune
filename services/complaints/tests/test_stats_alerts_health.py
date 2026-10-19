@@ -74,6 +74,7 @@ async def test_alert_message_has_no_user_text(client, tok, inv):
     )
     al = (await client.get("/alerts", headers=tok("a"))).json()["items"][0]
     assert "secret" not in al["message"] and "internal" not in al["message"]
+    assert al["message"] == "Your complaint is now: Rejected."  # words, not a status code
 
 
 async def test_health_endpoints(client, tok, admin):

@@ -169,6 +169,9 @@ function UsersTab() {
 const AUDIT_LABEL: Record<string, string> = {
   link_confirm: "Complaint link confirmed (same case; not a finding of crime)",
   link_reject: "Complaint link rejected",
+  evidence_download: "Evidence file downloaded",
+  case_note_add: "Investigation note added",
+  case_report_export: "Case report downloaded",
 };
 
 function AuditTab() {
