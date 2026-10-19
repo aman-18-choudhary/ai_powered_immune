@@ -305,6 +305,11 @@ test("bootstrap admin: change a role with confirmation, last-admin refusal, audi
   // Qdrant runs embedded for Fraud DNA (Phase 8); Neo4j is still not used
   await expect(page.getByTestId("health-row").filter({ hasText: "Qdrant" })).toContainText("Working (local)");
   await expect(page.getByTestId("health-row").filter({ hasText: /^Neo4j/ })).toContainText("Not configured");
+  // Phase 12 configuration view: effective settings, nothing secret or personal
+  await page.getByRole("tab", { name: "Configuration" }).click();
+  const cfg = page.getByTestId("admin-config");
+  await expect(cfg.getByTestId("config-row").filter({ hasText: "Auth · Mode" })).toContainText("local");
+  await expect(cfg).not.toContainText(ADMIN);
 });
 
 for (const theme of ["dark", "light"] as const) {

@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -1562,6 +1563,51 @@ def create_app(
             store.set_active, user.id, user_id[:64], body.is_active, now()
         )
         return _admin_user_view(row)
+
+    @app.get("/admin/config")
+    async def admin_config(user: AdminUser) -> dict[str, Any]:
+        """Phase 12 configuration view: the effective settings that are neither secret nor
+        personal (allowlists as counts, the database as its type, no keys, URLs, or paths)."""
+        throttle("read", user)
+        s = settings
+
+        def host(url: str | None) -> str | None:
+            return urlsplit(url).hostname if url else None
+
+        db = s.database_url.split(":", 1)[0].split("+", 1)[0] if s.database_url else None
+        return {
+            "environment": s.environment,
+            "auth": {
+                "mode": s.auth_mode, "local_sign_in": s.local_auth_enabled,
+                "clerk_issuer_host": host(s.clerk_issuer),
+                "clerk_backend_lookup": s.clerk_backend_lookup,
+                "investigator_allowlist_size": len(s.investigator_allowlist),
+                "admin_bootstrap_size": len(s.admin_bootstrap_emails),
+                "test_outbox_enabled": s.local_auth_outbox is not None,
+            },
+            "storage": {"database": db, "evidence_dir_configured": s.evidence_dir is not None},
+            "limits": {
+                "max_image_bytes": s.max_image_bytes, "max_audio_bytes": s.max_audio_bytes,
+                "max_evidence_per_complaint": s.max_evidence_per_complaint,
+                "max_json_bytes": s.max_json_bytes,
+            },
+            "rate_limits_per_min": {
+                "write": s.rate_write_per_min, "upload": s.rate_upload_per_min,
+                "analysis": s.rate_analysis_per_min, "analyze": s.rate_analyze_per_min,
+                "read": s.rate_read_per_min,
+            },
+            "cors_origins": list(s.cors_origins),
+            "llm": {"configured": s.ollama_url is not None, "host": host(s.ollama_url),
+                    "model": s.ollama_model, "timeout_s": s.ollama_timeout_s},
+            "speech_to_text": {"enabled": s.stt_enabled,
+                               "max_seconds_per_file": s.stt_max_seconds_per_file,
+                               "max_files_per_run": s.stt_max_files_per_run,
+                               "run_budget_s": s.stt_run_budget_s},
+            "fraud_dna": {"enabled": s.dna_enabled, "model": s.dna_model,
+                          "index_on_disk": s.dna_dir is not None},
+            "note": "Read-only. Settings come from environment variables at start-up; secrets "
+            "(keys, the database URL, email lists) are never shown.",
+        }  # fmt: skip
 
     @app.get("/admin/health")
     async def admin_health(user: AdminUser) -> dict[str, Any]:

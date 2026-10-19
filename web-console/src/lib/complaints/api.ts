@@ -225,6 +225,8 @@ export const complaintsApi = {
   adminSetActive: (id: string, isActive: boolean) => request<AdminUser>("PUT", `/admin/users/${enc(id)}/active`, { body: { is_active: isActive } }),
   adminAudit: (p: { limit: number; offset: number }, signal?: AbortSignal) => request<Page<AuditRow>>("GET", `/admin/audit${qs(p)}`, { signal }),
   adminHealth: (signal?: AbortSignal) => request<AdminHealth>("GET", "/admin/health", { signal }),
+  /** Phase 12: effective non-secret settings (read-only). */
+  adminConfig: (signal?: AbortSignal) => request<Record<string, unknown>>("GET", "/admin/config", { signal }),
 };
 
 /** Save a Blob as a file through a temporary object URL (the download itself was authorised). */

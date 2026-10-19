@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, CheckCircle2, CircleSlash, ScrollText, ServerCrash, Users, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, CircleSlash, ScrollText, ServerCrash, SlidersHorizontal, Users, XCircle } from "lucide-react";
 import { EmptyState, Panel } from "@/components/common/Panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -253,16 +253,58 @@ function HealthTab() {
   );
 }
 
+function show(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "not set";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (Array.isArray(v)) return v.length ? v.join(", ") : "none";
+  return String(v);
+}
+
+/** Phase 12: read-only view of the effective, non-secret settings. */
+function ConfigTab() {
+  const res = useResource((s) => complaintsApi.adminConfig(s), "config");
+  const d = res.data;
+  return (
+    <Panel title="Configuration" icon={<SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />} data-testid="admin-config">
+      {res.loading && !d ? (
+        <LoadingBlock label="Loading configuration" />
+      ) : res.error && !d ? (
+        <ErrorBlock message={res.error} onRetry={res.reload} unavailable={res.unavailable} />
+      ) : d ? (
+        <div className="space-y-4 p-4">
+          <p className="text-xs text-muted">{show(d.note)}</p>
+          <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[200px_minmax(0,1fr)]" data-testid="config-list">
+            {Object.entries(d)
+              .filter(([k]) => k !== "note")
+              .flatMap(([section, v]) =>
+                v !== null && typeof v === "object" && !Array.isArray(v)
+                  ? Object.entries(v as Record<string, unknown>).map(([k, x]) => [`${humanise(section)} · ${humanise(k)}`, x] as const)
+                  : [[humanise(section), v] as const],
+              )
+              .map(([k, v]) => (
+                <div key={k} className="contents" data-testid="config-row">
+                  <dt className="text-xs text-subtle">{k}</dt>
+                  <dd className="mono break-words text-sm">{show(v)}</dd>
+                </div>
+              ))}
+          </dl>
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
 export default function Admin() {
   usePageTitle("Administration");
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-6 md:px-6">
-      <PageHeader title="Administration" subtitle="Users and roles, the audit log and service health. Every change is checked and recorded by the complaints service." />
+      <PageHeader title="Administration" subtitle="Users and roles, the audit log, service health and configuration. Every change is checked and recorded by the complaints service." />
       <Tabs defaultValue="users" className="space-y-4">
         <TabsList aria-label="Administration sections">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="audit">Audit log</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
+          <TabsTrigger value="config">Configuration</TabsTrigger>
         </TabsList>
         <TabsContent value="users">
           <UsersTab />
@@ -272,6 +314,9 @@ export default function Admin() {
         </TabsContent>
         <TabsContent value="health">
           <HealthTab />
+        </TabsContent>
+        <TabsContent value="config">
+          <ConfigTab />
         </TabsContent>
       </Tabs>
     </div>

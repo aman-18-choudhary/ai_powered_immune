@@ -253,3 +253,23 @@ describe("admin", () => {
     expect(rows[1]).toHaveTextContent("Complaint link rejected");
   });
 });
+
+describe("admin configuration", () => {
+  it("lists the effective settings read-only", async () => {
+    useAccount.setState({ method: "local", token: "tok", status: "ready", session: SESSION("ADMIN") as never });
+    mockFetch({
+      "GET /admin/users*": json(200, { items: [], total: 0, limit: 20, offset: 0 }),
+      "GET /admin/config": json(200, { environment: "production", auth: { mode: "clerk", local_sign_in: false, investigator_allowlist_size: 2 }, cors_origins: [], note: "Read-only. Secrets are never shown." }),
+    });
+    const user = userEvent.setup();
+    renderApp(<Admin />);
+    await user.click(screen.getByRole("tab", { name: "Configuration" }));
+    const rows = await screen.findAllByTestId("config-row");
+    const text = rows.map((r) => r.textContent).join("|");
+    expect(text).toContain("Environmentproduction");
+    expect(text).toContain("Auth · Local sign inno");
+    expect(text).toContain("Auth · Investigator allowlist size2");
+    expect(text).toContain("Cors originsnone");
+    expect(screen.getByTestId("admin-config")).toHaveTextContent("Secrets are never shown.");
+  });
+});
