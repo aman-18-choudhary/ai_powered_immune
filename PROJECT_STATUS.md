@@ -164,7 +164,9 @@ Playwright and the Postgres run are still agent-only results.
    demo-server falls back to local mode when Clerk is unset, and the compose `demo-server` service
    does not set `COMPLAINTS_AUTH_MODE`. **Production guard added 2026-10-19**: `COMPLAINTS_ENV=production`
    refuses demo/local sign-in, the test outbox and non-https CORS origins at start-up.
-6. **No retention enforcement.**
+6. **Retention**: an erasure command for complaints deleted by their owners exists
+   (`python -m complaints.retention --older-than-days N`, dry run unless `--apply`, 2026-10-19); the
+   period and a schedule are policy decisions not yet made, so nothing runs it automatically.
 7. ~~`python -m demo_server` binds `0.0.0.0` unless `HOST` is set~~ **Fixed 2026-10-19**: loopback by
    default; the container image sets `HOST=0.0.0.0` and compose publishes on 127.0.0.1 only.
 8. ~~Microphone denial message is generic~~ Fixed earlier (specific denied / no device / in use /

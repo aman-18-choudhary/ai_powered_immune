@@ -349,6 +349,16 @@ read, 500 cells, 100 places, each with a `truncated` flag.
   request time. Similar wording is **not** proof that the same person or crime is involved.
 * Variables: `COMPLAINTS_DNA_ENABLED` (default 1), `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR`.
 
+## Retention (Phase 14)
+
+`python -m complaints.retention --older-than-days N` (with `COMPLAINTS_DATABASE_URL` and
+`COMPLAINTS_EVIDENCE_DIR`) lists complaints their owners deleted more than N days ago; add
+`--apply` to erase them: evidence files are removed from disk and the complaint's text,
+identifiers, transcripts, OCR text, notes and quoted analysis text are erased. The complaint id,
+category, status and timestamps stay so references and the audit trail remain consistent; each
+erasure is audited (`retention_purge`, counts only). There is no default period: choosing N is a
+policy decision. It is idempotent and prints counts only.
+
 ## Schema migrations
 
 Versioned and additive (`complaints/migrations.py`, table `schema_migrations(version, name,

@@ -261,7 +261,7 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Complaint text and identifiers | Stored in plain columns (needed for review and matching) | Implemented; **not encrypted at column level** |
 | Evidence files | Local disk, random names, outside the web root | Implemented; **not encrypted, not malware-scanned** |
 | Deletion | Soft delete (`deleted_at`); evidence file removed on evidence delete | Implemented |
-| Retention schedule | None | **Not implemented** |
+| Retention schedule | `python -m complaints.retention --older-than-days N [--apply]` erases complaints their owners deleted more than N days ago (files, text, identifiers, transcripts, OCR text, notes, quoted analysis text; ids, status and timestamps kept; audited `retention_purge`); dry run by default; **no period is chosen: N is a policy decision** and nothing runs it on a schedule | Mechanism implemented 2026-10-19; schedule and period not decided |
 | Logs | Request logs carry hashed user ids, no bodies; transcripts and tokens not logged | Implemented (tests) |
 
 ## 7. Planned structures (not implemented)
