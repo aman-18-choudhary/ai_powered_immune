@@ -447,6 +447,18 @@ export interface ModelsInfo {
     limits?: { max_seconds_per_file: number; max_files_per_run: number; run_budget_s: number };
     decoders?: { wav: string; mp3_ogg_m4a: string };
   };
+  /** Fraud DNA embeddings (Phase 8). */
+  dna?: {
+    status: "ready" | "loading" | "unavailable" | string;
+    reason: string | null;
+    message: string | null;
+    model: string | null;
+    revision?: string | null;
+    dimensions?: number | null;
+    thresholds?: { similar: number; strong: number };
+    index?: { backend: string; mode: string; collection: string | null };
+    used_for: string;
+  };
 }
 
 export interface Analysis {

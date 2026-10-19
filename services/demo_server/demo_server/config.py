@@ -64,6 +64,7 @@ class Settings:
     # work_dir (tests); from_env defaults to ./.data/complaints (gitignored).
     complaints_database_url: str | None = None
     complaints_evidence_dir: Path | None = None
+    complaints_dna_dir: Path | None = None
     complaints_auth_mode: str | None = None  # None = clerk if configured, else local
 
     @classmethod
@@ -93,6 +94,7 @@ class Settings:
             f"sqlite:///{data / 'complaints.db'}"
         )
         evidence = (e.get("COMPLAINTS_EVIDENCE_DIR") or "").strip()
+        dna = (e.get("COMPLAINTS_DNA_DIR") or "").strip()
         mode = (e.get("COMPLAINTS_AUTH_MODE") or "").strip().lower() or None
         return cls(
             jwt_secret=secret,
@@ -107,6 +109,8 @@ class Settings:
             trust_proxy=e.get("DEMO_TRUST_PROXY") == "1",
             complaints_database_url=db_url,
             complaints_evidence_dir=Path(evidence) if evidence else data / "evidence",
+            # Fraud DNA index (Qdrant embedded) next to the complaints database
+            complaints_dna_dir=Path(dna) if dna else data / "dna",
             complaints_auth_mode=mode,
         )
 

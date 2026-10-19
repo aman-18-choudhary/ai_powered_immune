@@ -70,7 +70,7 @@ async function report(page: Page, title: string, upi: string): Promise<string> {
 const run = Date.now().toString(36);
 const SHARED = `synthetic.${run}@okaxis`;
 const OTHER = `unrelated.${run}@okicici`;
-const ids = { a: "", b: "", c: "", d: "" };
+const ids = { a: "", b: "", c: "", d: "", deleted: "" };
 const titles = { a: `E2E net A ${run}`, b: `E2E net B ${run}`, c: `E2E net C ${run}`, d: `E2E net D ${run}` };
 
 /** A citizen sees no Network entry, is refused the page, and gets 403 from the network API. */
@@ -85,9 +85,10 @@ async function citizenHasNoNetwork(page: Page) {
     const r1 = await fetch(`/api/complaints/complaints/${id}/related`, { headers: h });
     const r2 = await fetch(`/api/complaints/entities/search`, { method: "POST", headers: h, body: JSON.stringify({ type: "upi", value: "x@okaxis" }) });
     const r3 = await fetch(`/api/complaints/graph/clusters`, { headers: h });
-    return [r1.status, r2.status, r3.status];
+    const r4 = await fetch(`/api/complaints/complaints/${id}/similar`, { headers: h });
+    return [r1.status, r2.status, r3.status, r4.status];
   }, ids.a);
-  expect(status).toEqual([403, 403, 403]);
+  expect(status).toEqual([403, 403, 403, 403]);
 }
 
 test.describe.configure({ mode: "serial" });
@@ -112,6 +113,16 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
     // B types the same UPI ID differently: normalisation must still match it
     ids[k] = await report(page, titles[k], k === "c" ? OTHER : k === "b" ? `  ${SHARED.toUpperCase()} ` : SHARED);
     if (k === "a") await citizenHasNoNetwork(page);
+    if (k === "c") {
+      // a complaint with the same wording, deleted by its owner: must never be suggested
+      ids.deleted = await report(page, `E2E net deleted ${run}`, OTHER);
+      const status = await page.evaluate(async (id) => {
+        const raw = sessionStorage.getItem("ssi.account");
+        const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
+        return (await fetch(`/api/complaints/complaints/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } })).status;
+      }, ids.deleted);
+      expect(status).toBe(204);
+    }
     await ctx.close();
   }
 });
@@ -170,6 +181,25 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
   await expect(page.getByTestId("search-result")).toContainText("2 complaints");
   await expect(page.getByTestId("search-item")).toHaveCount(2);
   await expect(page.getByTestId("search-result")).not.toContainText(titles.d);
+
+  // Fraud DNA (Phase 8): every citizen used the same wording, so B and C are similar to A, while
+  // only B also shares an identifier; D (opted out) and the deleted complaint never appear. The
+  // real embedding model loads in the background after the server starts: the panel re-checks.
+  await page.goto(`/investigator/complaints/${ids.a}`);
+  const sim = page.getByTestId("similar-panel");
+  await expect(sim.getByTestId("similar-disclaimer")).toContainText("not proof");
+  await expect(sim.getByTestId("similar-item")).toHaveCount(2, { timeout: 60_000 });
+  const simB = sim.getByTestId("similar-item").filter({ hasText: titles.b });
+  const simC = sim.getByTestId("similar-item").filter({ hasText: titles.c });
+  await expect(simB.getByTestId("similar-identifier-link")).toContainText("observed");
+  await expect(simC.getByTestId("similar-identifier-link")).toHaveCount(0);
+  await expect(simC.getByTestId("similar-score")).toContainText(/similarity/i);
+  await expect(sim).not.toContainText(titles.d);
+  await expect(sim).not.toContainText(`E2E net deleted ${run}`);
+  // C is similar but not related: the two features stay distinct
+  await expect(page.getByTestId("related-panel")).not.toContainText(titles.c);
+  await page.goto(`/investigator/complaints/${ids.d}`);
+  await expect(page.getByTestId("similar-disabled")).toBeVisible();
   expect(page.url()).not.toContain("synthetic");
 
   // accessibility: axe (no serious/critical) and no horizontal overflow at 360 px, both themes

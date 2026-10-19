@@ -214,8 +214,8 @@ function AuditTab() {
   );
 }
 
-const GOOD = new Set(["ok", "importable", "reachable", "available", "loaded", "configured"]);
-const OFF = new Set(["not_configured", "demo_mode"]);
+const GOOD = new Set(["ok", "importable", "reachable", "available", "loaded", "configured", "ready", "sql", "local"]);
+const OFF = new Set(["not_configured", "demo_mode", "not_started", "loading", "not_loaded"]);
 
 function HealthTab() {
   const res = useResource((s) => complaintsApi.adminHealth(s), "health");
@@ -238,7 +238,7 @@ function HealthTab() {
                 <Icon className={cn("h-4 w-4 shrink-0", good ? "text-safe" : off ? "text-subtle" : "text-danger-text")} aria-hidden />
                 <span className="min-w-[140px] font-medium">{humanise(name)}</span>
                 <span className={cn("text-xs", good ? "text-safe" : off ? "text-muted" : "text-danger-text")}>
-                  {good ? "Working" : s === "not_configured" ? "Not configured" : s === "demo_mode" ? "Demo / local sign-in mode" : "Unavailable"} ({s})
+                  {good ? "Working" : s === "not_configured" ? "Not configured" : s === "demo_mode" ? "Demo / local sign-in mode" : off ? "Not started yet" : "Unavailable"} ({s})
                 </span>
                 {extra.length > 0 && <span className="text-xs text-subtle">{extra.map(([k, v]) => `${humanise(k)}: ${String(v)}`).join(" · ")}</span>}
               </li>

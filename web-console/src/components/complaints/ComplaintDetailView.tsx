@@ -4,6 +4,7 @@ import { Panel } from "@/components/common/Panel";
 import { Button } from "@/components/ui/button";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { RelatedPanel } from "./RelatedPanel";
+import { SimilarPanel } from "./SimilarPanel";
 import { EvidenceManager } from "./EvidenceManager";
 import { Field, RiskBadge, Spinner, StatusChip, inputCls } from "./ui";
 import { complaintsApi, messageFor } from "@/lib/complaints/api";
@@ -172,6 +173,7 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
           <EvidenceManager complaintId={c.id} status={c.status} items={c.evidence} role={role} onChanged={onReload} />
           <AnalysisPanel complaintId={c.id} hasAnalysis={c.latest_analysis !== null} onRan={onReload} />
           {staff && <RelatedPanel complaintId={c.id} />}
+          {staff && <SimilarPanel complaintId={c.id} />}
         </div>
         <div className="space-y-5">
           {staff && <StatusUpdate c={c} onUpdated={onReplace} />}

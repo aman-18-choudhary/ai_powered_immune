@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, AudioLines, BrainCircuit, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, AudioLines, BrainCircuit, Dna, CheckCircle2, CircleHelp, Cpu, Sparkles, XCircle } from "lucide-react";
 import { Panel } from "@/components/common/Panel";
 import { ErrorBlock, LoadingBlock, PageHeader } from "@/components/complaints/ui";
 import { SourceBadge } from "@/components/complaints/AnalysisResultView";
@@ -201,6 +201,30 @@ function Stt({ stt }: { stt: NonNullable<ModelsInfo["stt"]> }) {
   );
 }
 
+function FraudDna({ dna }: { dna: NonNullable<ModelsInfo["dna"]> }) {
+  return (
+    <Panel title="Fraud DNA (similar complaints)" icon={<Dna className="h-3.5 w-3.5" aria-hidden />} actions={<Runtime status={dna.status} reason={dna.reason} />} data-testid="model-dna">
+      <div className="space-y-1 p-4 text-sm">
+        <p>
+          Model <span className="mono">{dna.model ?? "none"}</span>
+          {dna.revision ? (
+            <>
+              {" "}
+              · revision <span className="mono">{dna.revision.slice(0, 12)}</span>
+            </>
+          ) : null}
+          {dna.dimensions ? ` · ${dna.dimensions} dimensions` : ""}. Used for {dna.used_for}.
+        </p>
+        <p className="text-xs text-muted" data-testid="dna-state">
+          {dna.message ?? (dna.status === "ready" ? "The model is loaded." : humanise(dna.status))} Runs on this server only, from the local model cache; nothing is downloaded.
+          {dna.thresholds && ` Thresholds ${dna.thresholds.similar} (similar) and ${dna.thresholds.strong} (strong) were chosen on synthetic data only.`}
+          {dna.index && ` Index: ${dna.index.backend} (${dna.index.mode}).`}
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
 export default function Models() {
   usePageTitle("Models");
   const res = useResource((s) => complaintsApi.models(s), "models");
@@ -226,6 +250,7 @@ export default function Models() {
           ))}
           <Llm llm={res.data.llm} />
           {res.data.stt && <Stt stt={res.data.stt} />}
+          {res.data.dna && <FraudDna dna={res.data.dna} />}
           <p className="flex items-center gap-1.5 text-xs text-subtle">
             <BrainCircuit className="h-3.5 w-3.5" aria-hidden /> Rule components (call-guard cue rules, link and format checks) are not trained models and are not listed here.
           </p>
