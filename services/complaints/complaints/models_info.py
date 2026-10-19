@@ -121,6 +121,48 @@ def category_entry(runtime: dict[str, Any]) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _call_guard_metrics() -> dict[str, Any]:
+    """Headline = the independent hand-written set v2 (call_guard.evaluate, Phase 5); the split
+    from the training generators is shown only as 'not the headline'."""
+    try:
+        from call_guard.model import ARTIFACT_PATH
+
+        m = json.loads(ARTIFACT_PATH.with_name("clf-v1.metrics.json").read_text("utf-8"))
+        v2 = m["independent_accuracy_sets"]["accuracy_probes_v2.jsonl"]
+        at = next(x for x in v2["at"] if x["threshold"] == 0.5)
+        rep = m["report_split_same_generators"]
+        rep_at = next(x for x in rep["at"] if x["threshold"] == 0.5)
+        held = m["held_out_hand_written_benign"]
+    except Exception:
+        return {
+            "metrics": None,
+            "metrics_unavailable_reason": "the clf-v1 metrics file is missing or unreadable",
+            "leaky_random_split": None,
+        }
+    n = v2["n"]
+    return {
+        "metrics": {
+            "basis": "Independent hand-written SYNTHETIC set accuracy_probes_v2 (scam vs "
+            "legitimate messages, not call chunks; written by the rule author); the classifier "
+            "alone at probability >= 0.5",
+            "n": n, "macro_f1": None, "accuracy": round((at["tp"] + at["tn"]) / n, 4),
+            "abstention_rate": None, "abstention_threshold": None,
+            "binary": {"threshold": 0.5, "precision": at["precision"], "recall": at["recall"],
+                       "f1": at["f1"], "roc_auc": v2["roc_auc"],
+                       "false_positive_rate": at["false_positive_rate"]},
+            "held_out_benign": f"{held['flagged_at_0.5']} of {held['n']} held-out hand-written "
+            "benign lines and hard negatives flagged",
+        },
+        "leaky_random_split": {
+            "is_headline": False, "metric_label": "F1", "macro_f1": rep_at["f1"],
+            "accuracy": round((rep_at["tp"] + rep_at["tn"]) / rep["n"], 4),
+            "note": "Held-out seeds from the SAME simulator and authored templates as training "
+            f"(ROC-AUC {rep['roc_auc']}): optimistic, it measures the templates, not scams in "
+            "general.",
+        },
+    }  # fmt: skip
+
+
 def call_guard_entry(runtime: dict[str, Any]) -> dict[str, Any]:
     try:
         from call_guard import artifact_pin as cg_pin
@@ -143,11 +185,7 @@ def call_guard_entry(runtime: dict[str, Any]) -> dict[str, Any]:
             "description": "100% synthetic: simulator call transcripts and hand-authored scam and "
             "benign text (no real call or complaint was used)",
         },
-        "metrics": None,
-        "metrics_unavailable_reason": "no held-out metrics file ships with clf-v1 (training "
-        "prints a calibration table that is not stored); the call-guard test suite gates it on "
-        "dev and independent synthetic sets instead",
-        "leaky_random_split": None,
+        **_call_guard_metrics(),
         "limitations": CALL_GUARD_LIMITATIONS,
         "runtime": runtime,
     }  # fmt: skip

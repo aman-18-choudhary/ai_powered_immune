@@ -421,9 +421,12 @@ export interface ModelEntry {
     abstention_threshold: number | null;
     metric_basis?: string;
     per_class?: Record<string, { precision: number; recall: number; f1: number; support: number }>;
+    /** Binary classifiers (call-guard clf-v1): metrics at one probability threshold. */
+    binary?: { threshold: number; precision: number | null; recall: number | null; f1: number | null; roc_auc: number | null; false_positive_rate: number | null };
+    held_out_benign?: string;
   } | null;
   metrics_unavailable_reason?: string;
-  leaky_random_split: { is_headline: false; macro_f1: number | null; accuracy?: number | null; note: string } | null;
+  leaky_random_split: { is_headline: false; macro_f1: number | null; accuracy?: number | null; note: string; metric_label?: string } | null;
   disclaimer?: string | null;
   limitations: string[];
   confidence_meaning?: string;

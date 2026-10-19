@@ -54,7 +54,22 @@ async def test_call_guard_classifier_entry_is_honest(make_app, tok):
     assert cg["source"] == "ml" and cg["version"] == "clf-v1"
     assert len(cg["artifact"]["sha256"]) == 64
     assert cg["training_data"]["synthetic"] is True
-    assert cg["metrics"] is None and cg["metrics_unavailable_reason"]
+    # Phase 5: metrics from call_guard.evaluate; the headline is the INDEPENDENT hand-written set,
+    # the split from the training generators is shown only as "not the headline"
+    h = cg["metrics"]
+    assert "Independent hand-written SYNTHETIC" in h["basis"] and h["n"] > 0
+    b = h["binary"]
+    assert b["threshold"] == 0.5 and 0 <= b["recall"] <= 1 and 0 <= b["roc_auc"] <= 1
+    leaky = cg["leaky_random_split"]
+    assert leaky["is_headline"] is False and "SAME simulator" in leaky["note"]
+    import json
+
+    from call_guard import artifact_pin
+    from call_guard.model import ARTIFACT_PATH
+
+    shipped = json.loads(ARTIFACT_PATH.with_name("clf-v1.metrics.json").read_text("utf-8"))
+    assert shipped["artifact"]["sha256"] == artifact_pin.ARTIFACT_SHA256  # metrics of THIS artifact
+    assert shipped["DATA_IS_100_PERCENT_SYNTHETIC"] is True
     assert cg["limitations"] and cg["runtime"]["status"] in ("loaded", "fallback_rules_only")
     cat = next(x for x in m["models"] if x["id"] == "category-v1")
     assert cat["runtime"] == {"status": "unavailable", "reason": "load_failed"}

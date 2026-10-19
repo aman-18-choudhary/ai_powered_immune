@@ -64,6 +64,7 @@ dependency missing), **Limitation**.
 | Feature | Status |
 |---|---|
 | Rules + call-guard classifier + category model; score 0-100 labelled uncalibrated | Verified (tests; `/check` by hand 2026-10-15: CRITICAL 100 on a test message) |
+| call-guard clf-v1 held-out metrics (synthetic): 0.999 recall on its own generators but ROC-AUC 0.59 / recall 0.17 on independent hand-written messages; rules carry the detections | Measured 2026-10-19 ([report](docs/reports/PHASE_5_CLF_METRICS.md)); shown on the Models page |
 | Provenance per item (rule / ml / llm / static_guidance) with evidence spans | Verified (tests; by hand) |
 | Failure semantics (INSUFFICIENT_INPUT, PARTIAL, UNAVAILABLE; no silent LOW) | Verified (tests) |
 | Stateless `/analyze` and the Check page | Verified (by hand) |

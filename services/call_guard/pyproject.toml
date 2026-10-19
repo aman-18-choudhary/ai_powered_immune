@@ -20,7 +20,7 @@ train = ["sim-engine"]
 include = ["call_guard*"]
 
 [tool.setuptools.package-data]
-call_guard = ["artifacts/*.joblib"]
+call_guard = ["artifacts/*.joblib", "artifacts/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

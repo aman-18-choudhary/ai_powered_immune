@@ -1,0 +1,133 @@
+{
+  "model_version": "clf-v1",
+  "DATA_IS_100_PERCENT_SYNTHETIC": true,
+  "disclaimer": "Synthetic data only. The report split shares generators and templates with the training data, so it is optimistic; the independent sets are small and hand-written by the rule author. None of these numbers is real-world performance.",
+  "artifact": {
+    "file": "clf-v1.joblib",
+    "sha256": "f28772674f11b81428a80be33b6c24d08d3db5764b0c05cf1d50376b15689b2f"
+  },
+  "measured": "the calibrated classifier probability alone (chunks under 4 words score 0); in the service it is capped unless rules corroborate it",
+  "report_split_same_generators": {
+    "is_headline": false,
+    "seed": 3000,
+    "n": 5292,
+    "scam": 2562,
+    "benign": 2730,
+    "roc_auc": 0.9994,
+    "ece": 0.0007,
+    "reliability": [
+      {
+        "bin": "0.0-0.1",
+        "n": 2732,
+        "predicted": 0.0,
+        "observed": 0.0010980966325036604
+      },
+      {
+        "bin": "0.4-0.5",
+        "n": 3,
+        "predicted": 0.4000000059604645,
+        "observed": 0.6666666666666666
+      },
+      {
+        "bin": "0.9-1.0",
+        "n": 2557,
+        "predicted": 1.0,
+        "observed": 1.0
+      }
+    ],
+    "at": [
+      {
+        "threshold": 0.5,
+        "tp": 2557,
+        "fp": 0,
+        "fn": 5,
+        "tn": 2730,
+        "precision": 1.0,
+        "recall": 0.998,
+        "f1": 0.999,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.7,
+        "tp": 2557,
+        "fp": 0,
+        "fn": 5,
+        "tn": 2730,
+        "precision": 1.0,
+        "recall": 0.998,
+        "f1": 0.999,
+        "false_positive_rate": 0.0
+      }
+    ]
+  },
+  "held_out_hand_written_benign": {
+    "n": 29,
+    "flagged_at_0.5": 0,
+    "flagged_at_0.7": 0,
+    "false_positive_rate_at_0.5": 0.0
+  },
+  "independent_accuracy_sets": {
+    "accuracy_probes_v1.jsonl": {
+      "dataset_sha256": "c17a6209a3fbde447664ccb55d817bef3cefcb695d14e8c608be3162a8d7e863",
+      "n": 18,
+      "scam": 10,
+      "legit": 8,
+      "roc_auc": 0.7,
+      "at": [
+        {
+          "threshold": 0.5,
+          "tp": 2,
+          "fp": 0,
+          "fn": 8,
+          "tn": 8,
+          "precision": 1.0,
+          "recall": 0.2,
+          "f1": 0.3333,
+          "false_positive_rate": 0.0
+        },
+        {
+          "threshold": 0.7,
+          "tp": 2,
+          "fp": 0,
+          "fn": 8,
+          "tn": 8,
+          "precision": 1.0,
+          "recall": 0.2,
+          "f1": 0.3333,
+          "false_positive_rate": 0.0
+        }
+      ]
+    },
+    "accuracy_probes_v2.jsonl": {
+      "dataset_sha256": "d2966d6e357530c1aa7cc32db55d621092d1bef894d1018165c27d3b72ec5d15",
+      "n": 64,
+      "scam": 36,
+      "legit": 28,
+      "roc_auc": 0.5923,
+      "at": [
+        {
+          "threshold": 0.5,
+          "tp": 6,
+          "fp": 1,
+          "fn": 30,
+          "tn": 27,
+          "precision": 0.8571,
+          "recall": 0.1667,
+          "f1": 0.2791,
+          "false_positive_rate": 0.0357
+        },
+        {
+          "threshold": 0.7,
+          "tp": 6,
+          "fp": 1,
+          "fn": 30,
+          "tn": 27,
+          "precision": 0.8571,
+          "recall": 0.1667,
+          "f1": 0.2791,
+          "false_positive_rate": 0.0357
+        }
+      ]
+    }
+  }
+}

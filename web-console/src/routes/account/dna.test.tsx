@@ -150,4 +150,31 @@ describe("health and models", () => {
     expect(within(card).getByTestId("dna-state")).toHaveTextContent("chosen on synthetic data only");
     await waitFor(() => expect(within(card).getByTestId("runtime-status")).toHaveTextContent("Ready"));
   });
+
+  it("a binary classifier shows precision, recall, ROC-AUC and the not-the-headline split", async () => {
+    as("INVESTIGATOR");
+    mockFetch({
+      "GET /models": json(200, {
+        synthetic_data_warning: "w",
+        score_semantics: "s",
+        llm: { provider: "ollama", status: "not_configured", model: null, reason: null, used_for: "x" },
+        models: [
+          {
+            id: "call_guard.clf-v1", kind: "scam_script_classifier", source: "ml", version: "clf-v1",
+            artifact: { file: "clf-v1.joblib", bytes: 1, sha256: "a".repeat(64) },
+            training_data: { synthetic: true, description: "synthetic" },
+            metrics: { basis: "Independent hand-written SYNTHETIC set", n: 64, macro_f1: null, accuracy: 0.52, abstention_rate: null, abstention_threshold: null, binary: { threshold: 0.5, precision: 0.8571, recall: 0.1667, f1: 0.2791, roc_auc: 0.5923, false_positive_rate: 0.0357 }, held_out_benign: "0 of 29 held-out hand-written benign lines and hard negatives flagged" },
+            leaky_random_split: { is_headline: false, metric_label: "F1", macro_f1: 0.999, accuracy: 0.999, note: "Held-out seeds from the SAME simulator and authored templates." },
+            limitations: [], runtime: { status: "loaded", reason: null },
+          },
+        ],
+      }),
+    });
+    renderApp(<Models />);
+    const head = await screen.findByTestId("headline-metrics");
+    expect(head).toHaveTextContent("Recall0.167");
+    expect(head).toHaveTextContent("ROC-AUC0.592");
+    expect(screen.getByTestId("binary-note")).toHaveTextContent("0 of 29 held-out");
+    expect(screen.getByText(/a split from the training generators gives F1/)).toBeInTheDocument();
+  });
 });

@@ -70,18 +70,31 @@ function ModelCard({ m }: { m: ModelEntry }) {
             <>
               <p className="mt-1 text-xs text-muted">{m.metrics.basis}. n = {m.metrics.n ?? "?"}.</p>
               <dl className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="headline-metrics">
-                {[
-                  ["Macro-F1", num(m.metrics.macro_f1)],
-                  ["Accuracy", num(m.metrics.accuracy)],
-                  ["Abstention rate", pct(m.metrics.abstention_rate)],
-                  ["Abstention threshold", num(m.metrics.abstention_threshold, 2)],
-                ].map(([k, val]) => (
+                {(m.metrics.binary
+                  ? [
+                      ["Precision", num(m.metrics.binary.precision)],
+                      ["Recall", num(m.metrics.binary.recall)],
+                      ["ROC-AUC", num(m.metrics.binary.roc_auc)],
+                      ["False-positive rate", pct(m.metrics.binary.false_positive_rate)],
+                    ]
+                  : [
+                      ["Macro-F1", num(m.metrics.macro_f1)],
+                      ["Accuracy", num(m.metrics.accuracy)],
+                      ["Abstention rate", pct(m.metrics.abstention_rate)],
+                      ["Abstention threshold", num(m.metrics.abstention_threshold, 2)],
+                    ]
+                ).map(([k, val]) => (
                   <div key={k} className="rounded-lg border border-line bg-chip p-2">
                     <dt className="text-[11px] text-subtle">{k}</dt>
                     <dd className="tnum text-base font-semibold">{val}</dd>
                   </div>
                 ))}
               </dl>
+              {m.metrics.binary && (
+                <p className="mt-1 text-xs text-muted" data-testid="binary-note">
+                  At probability ≥ {m.metrics.binary.threshold}; F1 {num(m.metrics.binary.f1)}. {m.metrics.held_out_benign ? `${m.metrics.held_out_benign}.` : ""}
+                </p>
+              )}
               {typeof m.metrics.accuracy_on_answered === "number" && (
                 <p className="mt-1 text-xs text-muted">Accuracy on the answers it did not abstain on: {num(m.metrics.accuracy_on_answered)}.</p>
               )}
@@ -122,7 +135,7 @@ function ModelCard({ m }: { m: ModelEntry }) {
           )}
           {m.leaky_random_split && (
             <p className="mt-2 rounded-lg border border-line p-2 text-xs text-muted" data-testid="leaky-split">
-              <strong>Not the headline:</strong> a leaky random split gives macro-F1 {num(m.leaky_random_split.macro_f1)}. {m.leaky_random_split.note}
+              <strong>Not the headline:</strong> {m.leaky_random_split.metric_label ? `a split from the training generators gives ${m.leaky_random_split.metric_label}` : "a leaky random split gives macro-F1"} {num(m.leaky_random_split.macro_f1)}. {m.leaky_random_split.note}
             </p>
           )}
           {m.confidence_meaning && <p className="mt-2 text-xs text-muted">Confidence: {m.confidence_meaning}.</p>}
