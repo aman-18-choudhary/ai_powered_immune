@@ -292,6 +292,10 @@ Every query applies the same filter: the complaint is not deleted and its owner 
 matching. Opted-out or deleted complaints cannot appear, be counted, or connect other complaints.
 Shared identifiers are leads, not proof that the same person is involved.
 
+Since Phase 11 a complainant can change optional details (and so identifiers) while the complaint
+is SUBMITTED. Links are always computed from the current identifiers; a review made earlier stays
+in the history but is only shown where a shared identifier still exists.
+
 ## Investigator case tools (Phase 12)
 
 Investigation notes (`GET/POST /complaints/{id}/notes`, staff, append-only, never shown to the
