@@ -297,6 +297,12 @@ def _complaint_network(conn: Connection) -> None:
         backfill_entities(conn)
 
 
+def _investigation_notes(conn: Connection) -> None:
+    """Table ``investigation_notes`` (Phase 12): staff working notes, append-only."""
+    metadata.tables["investigation_notes"].create(conn, checkfirst=True)
+    ensure_index(conn, "investigation_notes", "ix_notes_complaint")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -308,6 +314,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(8, "alerts_risk_level", _alerts_risk_level),
     Migration(9, "evidence_transcripts", _evidence_transcripts),
     Migration(NETWORK_VERSION, "complaint_network", _complaint_network),
+    Migration(11, "investigation_notes", _investigation_notes),
 )
 LATEST = MIGRATIONS[-1].version
 

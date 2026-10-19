@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { AxeBuilder } from "@axe-core/playwright";
 import { test as base, expect, type Page } from "@playwright/test";
 
@@ -123,7 +124,20 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
     }
     // B types the same UPI ID differently: normalisation must still match it
     ids[k] = await report(page, titles[k], k === "c" ? OTHER : k === "b" ? `  ${SHARED.toUpperCase()} ` : SHARED, k === "a" ? "button" : "typed");
-    if (k === "a") await citizenHasNoNetwork(page);
+    if (k === "a") {
+      // Phase 12: the complainant can download their own report (no staff content in it)
+      await page.goto(`/me/complaints/${ids.a}`);
+      const dl = page.waitForEvent("download");
+      await page.getByTestId("report-download").click();
+      const file = await dl;
+      expect(file.suggestedFilename()).toBe(`complaint-${ids.a.slice(0, 8)}-report.md`);
+      const md = await readFile((await file.path())!, "utf8");
+      expect(md).toContain("complainant version");
+      expect(md).toContain(titles.a);
+      expect(md).not.toContain("(by `");
+      await expect(page.getByTestId("notes-panel")).toHaveCount(0);
+      await citizenHasNoNetwork(page);
+    }
     if (k === "c") {
       // a complaint with the same wording, deleted by its owner: must never be suggested
       ids.deleted = await report(page, `E2E net deleted ${run}`, OTHER);
@@ -162,6 +176,19 @@ test("investigator: linked complaints with evidence, opted-out and unrelated abs
   expect((await reviewed).status()).toBe(201);
   await expect(items.first().getByTestId("link-badge")).toHaveAttribute("data-link", "confirmed");
   await expect(items.first().getByTestId("related-review")).toContainText("SYNTHETIC e2e review");
+
+  // Phase 12 case tools: a staff note, the timeline (with the link review) and the staff report
+  await page.getByTestId("note-text").fill(`SYNTHETIC e2e note ${run}`);
+  await page.getByTestId("note-save").click();
+  await expect(page.getByTestId("note-item").first()).toContainText(`SYNTHETIC e2e note ${run}`);
+  await page.getByTestId("timeline-panel").getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator('[data-testid="timeline-item"][data-kind="investigation_note"]')).toContainText(`SYNTHETIC e2e note ${run}`);
+  await expect(page.locator('[data-testid="timeline-item"][data-kind="link_review"]')).toContainText("not a finding of crime");
+  const sdl = page.waitForEvent("download");
+  await page.getByTestId("report-download").click();
+  const staffMd = await readFile((await (await sdl).path())!, "utf8");
+  expect(staffMd).toContain("staff version");
+  expect(staffMd).toContain(`SYNTHETIC e2e note ${run}`);
 
   // the unrelated complaint has no related complaints; the opted-out one says linking is off
   await page.goto(`/investigator/complaints/${ids.c}`);

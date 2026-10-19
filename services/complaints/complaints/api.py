@@ -40,6 +40,8 @@ from .analysis import (
     confidence_interpretation,
     stored_level,
 )
+from .case_api import register_case_routes
+from .case_store import CaseStore
 from .config import ConfigError, Settings
 from .dna import Embedder, FraudDna, SentenceTransformerEmbedder
 from .dna_api import register_dna_routes
@@ -1016,6 +1018,12 @@ def create_app(
             latest_analysis=_analysis_summary(latest),
             evidence=await _evidence_views(c["id"], evidence, latest),
         )  # fmt: skip
+
+    # investigator case tools (Phase 12): notes, timeline, report (case_api.py)
+    register_case_routes(
+        app, cases=CaseStore(store), user_type=User, staff=StaffUser, load=_load, detail=_detail,
+        throttle=throttle, now=now,
+    )  # fmt: skip
 
     def _time_checks(body: ComplaintIn) -> tuple[datetime | None, datetime | None]:
         def norm(v: datetime | None, field: str) -> datetime | None:

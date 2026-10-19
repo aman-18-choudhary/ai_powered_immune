@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { RelatedPanel } from "./RelatedPanel";
 import { SimilarPanel } from "./SimilarPanel";
+import { CaseTimeline, InvestigationNotes, ReportDownload } from "./CaseTools";
 import { EvidenceManager } from "./EvidenceManager";
 import { Field, RiskBadge, Spinner, StatusChip, inputCls } from "./ui";
 import { complaintsApi, messageFor } from "@/lib/complaints/api";
@@ -118,6 +119,7 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
         <p className="text-xs text-muted">
           Complaint ID <span className="mono text-fg" data-testid="complaint-id">{c.id}</span> · reported {formatDateTime(c.reported_at)} (set by the server)
         </p>
+        <ReportDownload complaintId={c.id} staff={staff} />
       </header>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
@@ -177,6 +179,8 @@ export function ComplaintDetailView({ complaint, role, onReload, onReplace }: { 
         </div>
         <div className="space-y-5">
           {staff && <StatusUpdate c={c} onUpdated={onReplace} />}
+          {staff && <InvestigationNotes complaintId={c.id} />}
+          {staff && <CaseTimeline complaintId={c.id} refreshKey={c.updated_at ?? ""} />}
           <Panel title="Status history" icon={<History className="h-3.5 w-3.5" aria-hidden />} data-testid="status-history">
             <ol className="relative space-y-4 p-4">
               {[...c.status_history].reverse().map((h, i) => (

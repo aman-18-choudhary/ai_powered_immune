@@ -349,6 +349,21 @@ link_reviews = Table(
     Index("ix_link_reviews_high", "complaint_high"),
 )  # fmt: skip
 
+# migration 11 (Phase 12): investigators' working notes on a complaint. Staff only (never shown
+# to the complainant, unlike status-history notes); append-only; the text is user content and is
+# never logged or put in the audit log.
+investigation_notes = Table(
+    "investigation_notes", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("complaint_id", String(36), ForeignKey("complaints.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("author_user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("body", Text, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    Index("ix_notes_complaint", "complaint_id", "created_at"),
+)  # fmt: skip
+
 # POST /complaints replay protection (24 h). Only a hash of the client key is stored.
 idempotency_keys = Table(
     "idempotency_keys", metadata,
