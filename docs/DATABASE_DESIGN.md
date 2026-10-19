@@ -171,6 +171,16 @@ time), `reviewer_user_id`, optional `note` (≤ 500), `created_at`. The latest `
 decision. Links themselves are not stored; observed and inferred links are computed from
 `complaint_entities` at query time, so they never go stale.
 
+### Fraud DNA index (Qdrant embedded mode, Phase 8; not a SQL table)
+
+One collection per model, dimension and text version
+(`complaint_dna__dna_text_v1__<model>__384`), cosine distance. One point per matchable complaint:
+id = complaint id, vector = embedding of the redacted title + description, payload =
+`{complaint_id, text_hash}` only (no text, no identifiers). Stored under `COMPLAINTS_DNA_DIR` (the
+demo server uses `<COMPLAINTS_DATA_DIR>/dna`), or in memory when unset. Derived data: rebuilt from
+`complaints` by the service's sync (start-up, after create/delete/opt-out, before a query when
+stale); deleting the directory is a safe recovery step. A model change starts a new collection.
+
 ### `admin_audit`
 id, actor_user_id, action (40), target_user_id, before (JSON), after (JSON), created_at. Indexes
 `ix_audit_created`, `ix_audit_target (target_user_id, action)`. Actions written today include
@@ -244,7 +254,6 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Structure | Purpose | Phase |
 |---|---|---|
 | `investigation_notes` | Investigator notes separate from status history | 12 |
-| Vector collection (Qdrant) | Privacy-filtered embeddings keyed by complaint/analysis id, minimal metadata | 8 |
 | Geographic aggregation | SQL grid over `latitude/longitude` first; PostGIS geometry column optional | 10 |
 | Report exports | Generated complaint/case reports with access control | 12 |
 | Evidence-access audit | Audit rows for downloads | 14 |

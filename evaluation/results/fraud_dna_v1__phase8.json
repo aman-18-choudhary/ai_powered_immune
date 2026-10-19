@@ -1,0 +1,326 @@
+{
+  "synthetic": true,
+  "dataset": "evaluation/datasets/fraud_dna_v1.jsonl",
+  "dataset_sha256": "bc3158d28ee71b2b31f40ebd49179cf53670453e585a959fcd8454421ce37383",
+  "code_revision": "154e594",
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "model_revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
+  "rule": "dev precision >= 0.90 (similar) / >= 0.98 (strong), grid 0.40-0.95",
+  "chosen": {
+    "similar": 0.58,
+    "strong": 0.62
+  },
+  "dev": {
+    "similar": {
+      "threshold": 0.58,
+      "tp": 26,
+      "fp": 2,
+      "fn": 34,
+      "tn": 533,
+      "precision": 0.929,
+      "recall": 0.433,
+      "false_positive_rate": 0.0037,
+      "ambiguous_pairs_above": 1
+    },
+    "strong": {
+      "threshold": 0.62,
+      "tp": 21,
+      "fp": 0,
+      "fn": 39,
+      "tn": 535,
+      "precision": 1.0,
+      "recall": 0.35,
+      "false_positive_rate": 0.0,
+      "ambiguous_pairs_above": 1
+    },
+    "retrieval": {
+      "queries": 30,
+      "top1_same_family": 22,
+      "top1_other_family": 3,
+      "no_match_above_threshold": 5
+    }
+  },
+  "test": {
+    "similar": {
+      "threshold": 0.58,
+      "tp": 31,
+      "fp": 7,
+      "fn": 29,
+      "tn": 528,
+      "precision": 0.816,
+      "recall": 0.517,
+      "false_positive_rate": 0.0131,
+      "ambiguous_pairs_above": 3
+    },
+    "strong": {
+      "threshold": 0.62,
+      "tp": 21,
+      "fp": 2,
+      "fn": 39,
+      "tn": 533,
+      "precision": 0.913,
+      "recall": 0.35,
+      "false_positive_rate": 0.0037,
+      "ambiguous_pairs_above": 2
+    },
+    "retrieval": {
+      "queries": 30,
+      "top1_same_family": 25,
+      "top1_other_family": 2,
+      "no_match_above_threshold": 3
+    },
+    "by_language_pair": {
+      "en-en": {
+        "threshold": 0.58,
+        "tp": 16,
+        "fp": 2,
+        "fn": 2,
+        "tn": 190,
+        "precision": 0.889,
+        "recall": 0.889,
+        "false_positive_rate": 0.0104,
+        "ambiguous_pairs_above": 1
+      },
+      "en-hi": {
+        "threshold": 0.58,
+        "tp": 13,
+        "fp": 3,
+        "fn": 5,
+        "tn": 126,
+        "precision": 0.812,
+        "recall": 0.722,
+        "false_positive_rate": 0.0233,
+        "ambiguous_pairs_above": 1
+      },
+      "en-hinglish": {
+        "threshold": 0.58,
+        "tp": 2,
+        "fp": 0,
+        "fn": 16,
+        "tn": 129,
+        "precision": 1.0,
+        "recall": 0.111,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      "hi-hinglish": {
+        "threshold": 0.58,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6,
+        "tn": 43,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      }
+    },
+    "curve": [
+      {
+        "threshold": 0.4,
+        "tp": 51,
+        "fp": 89,
+        "fn": 9,
+        "tn": 446,
+        "precision": 0.364,
+        "recall": 0.85,
+        "false_positive_rate": 0.1664,
+        "ambiguous_pairs_above": 16
+      },
+      {
+        "threshold": 0.45,
+        "tp": 47,
+        "fp": 56,
+        "fn": 13,
+        "tn": 479,
+        "precision": 0.456,
+        "recall": 0.783,
+        "false_positive_rate": 0.1047,
+        "ambiguous_pairs_above": 11
+      },
+      {
+        "threshold": 0.5,
+        "tp": 39,
+        "fp": 29,
+        "fn": 21,
+        "tn": 506,
+        "precision": 0.574,
+        "recall": 0.65,
+        "false_positive_rate": 0.0542,
+        "ambiguous_pairs_above": 8
+      },
+      {
+        "threshold": 0.55,
+        "tp": 37,
+        "fp": 17,
+        "fn": 23,
+        "tn": 518,
+        "precision": 0.685,
+        "recall": 0.617,
+        "false_positive_rate": 0.0318,
+        "ambiguous_pairs_above": 3
+      },
+      {
+        "threshold": 0.6,
+        "tp": 30,
+        "fp": 4,
+        "fn": 30,
+        "tn": 531,
+        "precision": 0.882,
+        "recall": 0.5,
+        "false_positive_rate": 0.0075,
+        "ambiguous_pairs_above": 3
+      },
+      {
+        "threshold": 0.65,
+        "tp": 19,
+        "fp": 1,
+        "fn": 41,
+        "tn": 534,
+        "precision": 0.95,
+        "recall": 0.317,
+        "false_positive_rate": 0.0019,
+        "ambiguous_pairs_above": 1
+      },
+      {
+        "threshold": 0.7,
+        "tp": 12,
+        "fp": 0,
+        "fn": 48,
+        "tn": 535,
+        "precision": 1.0,
+        "recall": 0.2,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      {
+        "threshold": 0.75,
+        "tp": 6,
+        "fp": 0,
+        "fn": 54,
+        "tn": 535,
+        "precision": 1.0,
+        "recall": 0.1,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      {
+        "threshold": 0.8,
+        "tp": 1,
+        "fp": 0,
+        "fn": 59,
+        "tn": 535,
+        "precision": 1.0,
+        "recall": 0.017,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      {
+        "threshold": 0.85,
+        "tp": 0,
+        "fp": 0,
+        "fn": 60,
+        "tn": 535,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      {
+        "threshold": 0.9,
+        "tp": 0,
+        "fp": 0,
+        "fn": 60,
+        "tn": 535,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      },
+      {
+        "threshold": 0.95,
+        "tp": 0,
+        "fp": 0,
+        "fn": 60,
+        "tn": 535,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "ambiguous_pairs_above": 0
+      }
+    ]
+  },
+  "legitimate_pairs_above_threshold": [],
+  "highest_unrelated_test_pairs": [
+    {
+      "pair": [
+        "upi_collect_refund_4",
+        "otp_bank_call_4"
+      ],
+      "similarity": 0.669
+    },
+    {
+      "pair": [
+        "sextortion_call_5",
+        "loan_app_harassment_5"
+      ],
+      "similarity": 0.641
+    },
+    {
+      "pair": [
+        "sextortion_call_2",
+        "loan_app_harassment_1"
+      ],
+      "similarity": 0.609
+    },
+    {
+      "pair": [
+        "sextortion_call_3",
+        "loan_app_harassment_3"
+      ],
+      "similarity": 0.607
+    },
+    {
+      "pair": [
+        "upi_collect_refund_2",
+        "otp_bank_call_4"
+      ],
+      "similarity": 0.598
+    },
+    {
+      "pair": [
+        "sextortion_call_4",
+        "loan_app_harassment_3"
+      ],
+      "similarity": 0.594
+    },
+    {
+      "pair": [
+        "sextortion_call_4",
+        "loan_app_harassment_1"
+      ],
+      "similarity": 0.583
+    },
+    {
+      "pair": [
+        "task_job_5",
+        "loan_app_harassment_5"
+      ],
+      "similarity": 0.573
+    },
+    {
+      "pair": [
+        "upi_collect_refund_3",
+        "otp_bank_call_1"
+      ],
+      "similarity": 0.571
+    },
+    {
+      "pair": [
+        "sextortion_call_2",
+        "loan_app_harassment_4"
+      ],
+      "similarity": 0.564
+    }
+  ]
+}

@@ -190,7 +190,7 @@ blocked. Project-level criteria:
 | Ollama + qwen2.5:0.5b | Installed and running at 127.0.0.1:11434 (started from a session, not a login service) | Optional explanations; quality is weak (section 9) |
 | faster-whisper (tiny/base cached) | Installed in the venv | Live Protection STT works offline |
 | Tesseract | Not installed | OCR blocked |
-| Qdrant, sentence-transformers, torch | Not installed (the multilingual MiniLM model is cached, 458 MB, Apache-2.0) | Fraud DNA needs installation |
+| Qdrant, sentence-transformers, torch | Installed 2026-10-19 (qdrant-client 1.19.1, sentence-transformers 6.1.0, torch 2.14.1 CPU); the cached multilingual MiniLM model is used offline | Fraud DNA (Phase 8) |
 | Neo4j | Not installed | Optional |
 | PostGIS | Not available in local Postgres 14 | Optional; the Docker image `postgis/postgis:16-3.4` has it but is untested here |
 | Docker daemon | Not available | Compose stack untested |

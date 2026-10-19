@@ -39,7 +39,7 @@ The role always comes from `/auth/session`; the frontend never sends a role.
 | Screen | Purpose | Phase |
 |---|---|---|
 | Evidence analysis states | Show audio transcription and OCR results (or "unavailable" with the reason) per evidence file | 6 |
-| Similar cases panel | Fraud DNA matches with similarity score, matched traits, links to authorised cases; "similarity is not proof" notice | 8 |
+| Similar cases panel | **Built (Phase 8)**: on the staff complaint page under Related complaints; band + cosine score bar (not a probability), explanation with shared rule indicators and category, a separate badge when an identifier is also shared, loading/unavailable/opted-out/empty states, "not proof" notice; Fraud DNA card on the Models page | 8 |
 | Network view | **Built (Phase 9)**: `/investigator/network`, staff only. Deterministic radial SVG graph (no graph library), depth 1 or 2; line style and text distinguish observed (solid), inferred (dashed), confirmed (thick, arced) and rejected (dotted); keyboard-selectable nodes; a text list of every connection with its evidence; legend; clusters; POST identifier search. Related complaints panel on the staff complaint page with confirm/reject dialogs. "Leads, not proof" and "a confirmed link is not a finding of crime" shown wherever links are | 9 |
 | Geographic view | Leaflet map of complaints with valid coordinates; date/category/risk filters; cluster counts; time comparison. OpenStreetMap tiles only receive tile coordinates, never complaint data; a privacy note on the page; offline fallback to the existing d3-geo map when tiles are unreachable | 10 |
 | Investigation notes and case report export | Notes timeline; report download with access control | 12 |

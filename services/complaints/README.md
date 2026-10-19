@@ -15,7 +15,8 @@ stack), plain Postgres only.
 | Clerk Backend API email lookup | defined, OFF by default, tested only against a mock transport |
 | Analysis (pipeline v2) | call-guard text scorer + category classifier trained on SYNTHETIC data only + offline URL/format heuristics + rule-based explanation, with per-item provenance (rule / ml / llm / static_guidance). Optional GROUNDED local-Ollama wording (default `qwen2.5:0.5b`; checks in the shared `svckit.llm_grounding`); exercised live on 2026-10-15 and 2026-10-16 only through the opt-in `OLLAMA_LIVE_TESTS=1` test (a small model: its text is usually rejected by the grounding checks and is labelled "may be imprecise" when shown). Score is an UNCALIBRATED heuristic. **Uploaded audio evidence is transcribed locally** (faster-whisper through live-audio's engine, optional extra `stt`; see "Audio evidence transcription") and scored like the description. Screenshot OCR and document text: `unavailable` (listed as unanalysed attachments; no OCR engine installed) |
 | Malware scanning of uploads | **not implemented** |
-| Qdrant, Neo4j, PostGIS, Redis | not used; reported as `not_configured` by `/admin/health` |
+| Qdrant | embedded (local) mode for Fraud DNA only (`qdrant-client`, no server) |
+| Neo4j, PostGIS, Redis | not used; reported as `not_configured` by `/admin/health` |
 | Ollama | optional, local hosts only, explanation wording only; `/models` and `/admin/health` report its state |
 
 ## Auth flow
@@ -264,7 +265,8 @@ then analyses the complaint (`complaints/transcribe.py`).
   excluded, server-side and from the next request on, from every complaint-network result:
   related complaints, graphs (as nodes and as bridges between other complaints), clusters,
   identifier search results and counts, and new link reviews (409 `link_matching_disabled`). Staff
-  can still read the complaint itself. Fraud DNA (Phase 8, not built) must honour it too.
+  can still read the complaint itself. Fraud DNA honours it the same way (not indexed, not returned,
+  not counted).
 
 ## Complaint network (Phase 9)
 
@@ -286,6 +288,28 @@ the complaint, and compared by a SHA-256 of type and value. Responses show maske
 Every query applies the same filter: the complaint is not deleted and its owner allows case
 matching. Opted-out or deleted complaints cannot appear, be counted, or connect other complaints.
 Shared identifiers are leads, not proof that the same person is involved.
+
+## Fraud DNA (Phase 8)
+
+`GET /complaints/{id}/similar` (staff): complaints whose **descriptions** are worded alike, from
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions, cached revision
+`e8f8c211`, loaded with `local_files_only=True`; nothing is downloaded). Install the optional extra
+`pip install -e "services/complaints[dna]"`; without it the endpoint answers `status:
+"unavailable"`, `reason: "engine_not_installed"`.
+
+* Text: title + description; links, email/UPI addresses, IFSC and 8+ digit numbers are replaced by
+  placeholders first (identifiers are the network's job, Phase 9); fewer than 20 letters left =
+  `insufficient_text`.
+* Index: Qdrant embedded mode, `COMPLAINTS_DNA_DIR` (memory when unset), payload = complaint id +
+  text hash. A background task loads the model and syncs at start-up; create, delete and
+  case-matching changes mark the index stale and the next query syncs first.
+* Results: cosine >= 0.58 (`moderate`), >= 0.62 (`strong`), chosen by a fixed rule on the dev
+  families of the SYNTHETIC set `evaluation/datasets/fraud_dna_v1.jsonl`; held-out test families:
+  precision 0.82 / recall 0.52 (0.91 / 0.35 for strong). Each item explains itself (shared
+  rule indicators, category) and says separately if an identifier is shared.
+* Privacy: only matchable complaints are indexed, and every candidate is re-checked in SQL at
+  request time. Similar wording is **not** proof that the same person or crime is involved.
+* Variables: `COMPLAINTS_DNA_ENABLED` (default 1), `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR`.
 
 ## Schema migrations
 
@@ -480,6 +504,7 @@ metrics file.
 | `CLERK_BACKEND_LOOKUP`, `CLERK_SECRET_KEY` | optional primary-email lookup (off; never logged) |
 | `COMPLAINTS_DEMO_JWT_SECRET` (falls back to `GATEWAY_JWT_SECRET`) | demo/local modes only (signs and verifies local sign-in tokens) |
 | `INVESTIGATOR_ALLOWLIST` | verified emails allowed to enter as investigator |
+| `COMPLAINTS_DNA_ENABLED`, `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR` | Fraud DNA on/off (default on), embedding model id (must be in the local Hugging Face cache), Qdrant embedded index directory (memory when unset) |
 | `ADMIN_BOOTSTRAP_EMAILS` | verified emails promoted to ADMIN at first sign-in |
 | `COMPLAINTS_CORS_ORIGINS` | explicit origins (`*` is refused) |
 | `COMPLAINTS_MAX_IMAGE_BYTES`, `COMPLAINTS_MAX_AUDIO_BYTES`, `COMPLAINTS_MAX_EVIDENCE_PER_COMPLAINT`, `COMPLAINTS_MAX_JSON_BYTES` | limits |

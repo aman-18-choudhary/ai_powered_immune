@@ -86,7 +86,7 @@ dependency missing), **Limitation**.
 ### Intelligence
 | Feature | Status |
 |---|---|
-| Fraud DNA (similar complaints, Qdrant) | Planned (Qdrant, embedding libraries not installed) |
+| Fraud DNA (similar complaints): cached multilingual MiniLM offline, Qdrant embedded, redacted text, staff-only API and panel, opt-out/deletion excluded at index and query time | Verified (tests incl. a real-model offline test; agent Playwright against a real server); **EXPERIMENTAL**: thresholds from SYNTHETIC data (held-out precision 0.82 / recall 0.52); weak on Hinglish |
 | Complaint network: identifiers from structured fields, observed (exact) and inferred (same domain) links, investigator confirm/reject with audit, related panel, graph (depth ≤ 2, size caps), clusters, POST-only identifier search; staff only; opted-out and deleted complaints excluded everywhere | Verified (tests incl. Postgres; agent Playwright against a real server with SYNTHETIC complaints); **EXPERIMENTAL**: a shared identifier is a lead, not proof |
 | Complaint hotspots and map | Planned |
 | Ring graph, takedown simulation, city hotspots | Verified, **simulator data only** (not complaint intelligence) |

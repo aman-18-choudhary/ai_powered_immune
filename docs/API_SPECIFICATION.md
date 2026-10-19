@@ -138,7 +138,7 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 | `PUT /admin/users/{id}/role` | admin | `{role, expected_role}`; INVESTIGATOR/ADMIN need a verified email; last-admin guard; audited |
 | `PUT /admin/users/{id}/active` | admin | `{is_active}`; audited |
 | `GET /admin/audit` | admin | Paginated audit log |
-| `GET /admin/health` | admin | Database, identity keys (JWKS), evidence directory, call-guard scorer, category model, Ollama, `stt` (same object as in `/models`, without `used_for`), and `not_configured` for Qdrant, Neo4j, PostGIS, Redis |
+| `GET /admin/health` | admin | Database, identity keys (JWKS), evidence directory, call-guard scorer, category model, Ollama, `stt` (same object as in `/models`, without `used_for`), `dna` (Fraud DNA status), `qdrant` (embedded index: `local` / `not_started`), `graph` (`sql`), and `not_configured` for Neo4j, PostGIS, Redis |
 
 ### Complaint network (Phase 9, staff only)
 
@@ -152,6 +152,15 @@ file is not transcribed. Untranscribed audio is listed in `unanalysed_attachment
 
 Citizens get 403 on all of them. Complaints that are deleted or whose owner turned off case
 matching are excluded from every result and count. A confirmed link is not a finding of guilt.
+
+### Fraud DNA (Phase 8, staff only)
+
+| Method and path | Auth | Notes |
+|---|---|---|
+| `GET /complaints/{id}/similar?limit=1..50` | INVESTIGATOR, ADMIN | complaints whose title and description (identifiers redacted) are worded alike: `items[]` with `similarity` (cosine, not a probability), `band` (`strong` >= 0.62, `moderate` >= 0.58), `shared_indicators` (rule-based codes of both latest analyses), `same_category`, `identifier_link` (`observed` / `inferred` / null, from the network), `explanation`; `status` `ok` / `loading` / `unavailable` (`reason`: `engine_not_installed`, `model_not_available_offline`, `load_failed`, `index_unavailable`, `embedding_failed`, `disabled`) / `insufficient_text`; `matching: "disabled"` when the owner opted out. Rate bucket: analysis |
+
+Unknown or deleted complaint: 404. Excluded (deleted or opted-out) complaints are never returned or
+counted; candidates are re-checked against the database at request time. Similarity is not proof.
 
 ## 5. Live audio API (`/api/live-audio`, demo-server)
 
@@ -183,7 +192,6 @@ simulator output and **are not complaint intelligence**.
 | Endpoint (proposed) | Auth | Phase |
 |---|---|---|
 | OCR of screenshot evidence | owner, staff | 6 (blocked until an OCR engine is installed) |
-| `GET /complaints/{id}/similar` (Fraud DNA) | staff | 8 |
 | `GET /geo/complaints/hotspots?from&to&category&risk&bbox` | staff | 10 |
 | `GET/POST /complaints/{id}/notes` | staff | 12 |
 | `GET /complaints/{id}/report` (export) | owner (own complaint), staff | 12 |
