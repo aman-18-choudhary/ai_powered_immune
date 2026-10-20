@@ -360,6 +360,17 @@ read, 500 cells, 100 places, each with a `truncated` flag.
   request time. Similar wording is **not** proof that the same person or crime is involved.
 * Variables: `COMPLAINTS_DNA_ENABLED` (default 1), `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR`.
 
+## Backups (Phase 14)
+
+`python -m complaints.backup --out DIR` (with `COMPLAINTS_DATABASE_URL` and
+`COMPLAINTS_EVIDENCE_DIR`) writes `DIR/<timestamp>/`: a consistent database snapshot (SQLite
+online backup API while the service runs, or `pg_dump --format=custom`), the evidence files as
+stored (still encrypted when encryption at rest is on) and `manifest.json` with SHA-256 of every
+file (no connection string). `--verify BACKUP` checks it (changed, missing and unexpected files).
+`--restore BACKUP --to-database-url URL --to-evidence-dir PATH` restores into an EMPTY target
+only, after verifying. The evidence key and the Fraud DNA index (rebuilt at start-up) are not in
+the backup: keep the key separately. Nothing schedules backups; run it from cron or a timer.
+
 ## Retention (Phase 14)
 
 `python -m complaints.retention --older-than-days N` (with `COMPLAINTS_DATABASE_URL` and
