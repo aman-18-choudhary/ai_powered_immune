@@ -236,6 +236,7 @@ run holds an advisory lock so replicas starting together serialise.
 | 10 | complaint_network | Tables `complaint_entities`, `link_reviews` + indexes; backfill of the identifiers of existing complaints (Phase 9) |
 | 11 | investigation_notes | Table `investigation_notes` + index (Phase 12) |
 | 12 | evidence_ocr | Table `evidence_ocr` + index (Phase 6 OCR) |
+| 13 | evidence_scan_status | `complaint_evidence.scan_status` (Phase 14 malware scanning) |
 
 Migrations 6-8 came with Phase B (pushed 2026-10-16); migration 9 with Phase 6 (2026-10-16, not
 pushed). Migration 9 was tested on a fresh database, on a database at version 8 with data, and on a
@@ -259,7 +260,7 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Live transcripts | Server memory only, deleted on Stop or after 10 idle minutes | Implemented |
 | Evidence transcripts | Stored in `evidence_transcripts` (plain text segments), same access as the evidence, deleted with it; never logged | Implemented (Phase 6); **not encrypted**; kept with a soft-deleted complaint like its files |
 | Complaint text and identifiers | Stored in plain columns (needed for review and matching) | Implemented; **not encrypted at column level** |
-| Evidence files | Local disk, random names, outside the web root; **encrypted at rest with AES-256-GCM when `COMPLAINTS_EVIDENCE_KEY` is set** (required in production; the storage name is bound as associated data; `python -m complaints.encrypt_evidence --apply` encrypts files stored before) | Encryption implemented 2026-10-19; **not malware-scanned**; transcripts and OCR text in the database are not encrypted |
+| Evidence files | Local disk, random names, outside the web root; **encrypted at rest with AES-256-GCM when `COMPLAINTS_EVIDENCE_KEY` is set** (required in production; the storage name is bound as associated data; `python -m complaints.encrypt_evidence --apply` encrypts files stored before) | Encryption implemented 2026-10-19; **malware-scanned before storing when `COMPLAINTS_CLAMD` is set** (`complaint_evidence.scan_status`, migration 13); transcripts and OCR text in the database are not encrypted |
 | Deletion | Soft delete (`deleted_at`); evidence file removed on evidence delete | Implemented |
 | Backups | `python -m complaints.backup` (snapshot + evidence + SHA-256 manifest; verify; restore into empty targets only); SQLite and Postgres round trips tested | Implemented 2026-10-20; not scheduled; the evidence key is kept separately |
 | Retention schedule | `python -m complaints.retention --older-than-days N [--apply]` erases complaints their owners deleted more than N days ago (files, text, identifiers, transcripts, OCR text, notes, quoted analysis text; ids, status and timestamps kept; audited `retention_purge`); dry run by default; **no period is chosen: N is a policy decision** and nothing runs it on a schedule | Mechanism implemented 2026-10-19; schedule and period not decided |

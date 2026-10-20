@@ -9,7 +9,9 @@ becomes part of a path. There is NO malware scanning.
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -91,7 +93,12 @@ class StoredFile:
     mime_type: str
     original_filename: str
     kind: str
+    # malware scan before storing: clean, not_scanned (scanner unreachable, not required) or
+    # None when no scanner is configured
+    scan_status: str | None = None
 
+
+log = logging.getLogger("complaints.evidence")
 
 MAGIC = b"SSEV1\x00"  # encrypted evidence file: MAGIC + 12-byte nonce + AES-256-GCM ciphertext
 NONCE_BYTES = 12
@@ -365,9 +372,33 @@ class _Sink:
         )
 
 
+async def _scan(sink: "_Sink", scanner: Any, required: bool) -> str | None:
+    """Scan the received (plaintext) temp file before it is stored."""
+    if scanner is None:
+        return None
+    from .av import ScanUnavailable
+
+    assert sink.tmp_path is not None
+    try:
+        verdict, sig = await asyncio.to_thread(scanner.scan_file, sink.tmp_path)
+    except ScanUnavailable:
+        if required:
+            raise UploadError(
+                503, "evidence_scan_unavailable",
+                "The malware scanner is not available; try again later.",
+            ) from None  # fmt: skip
+        log.warning("malware scanner unavailable; upload stored as not scanned")
+        return "not_scanned"
+    if verdict == "infected":
+        log.warning("upload rejected by the malware scanner: %s", sig)
+        raise UploadError(422, "evidence_rejected_malware",
+                          "The file was rejected by the malware scanner.")  # fmt: skip
+    return "clean"
+
+
 async def receive_upload(
     chunks: AsyncIterator[bytes], content_type: str, storage: EvidenceStorage,
-    max_image: int, max_audio: int,
+    max_image: int, max_audio: int, scanner: Any = None, scan_required: bool = False,
 ) -> StoredFile:  # fmt: skip
     """Parse a multipart body incrementally; exactly one part named ``file`` is accepted."""
     ctype, params = parse_options_header(content_type.encode("latin-1", "replace"))
@@ -426,7 +457,9 @@ async def receive_upload(
         await asyncio.to_thread(parser.finalize)
         if state["files"] != 1 or sink.decided is None:
             raise UploadError(422, "no_file", "Send one file in the field 'file'.")
-        return await asyncio.to_thread(sink.commit)
+        scan_status = await _scan(sink, scanner, scan_required)
+        stored = await asyncio.to_thread(sink.commit)
+        return dataclasses.replace(stored, scan_status=scan_status)
     except MultipartParseError as exc:
         sink.abort()
         raise UploadError(422, "malformed_multipart", "The upload body is malformed.") from exc

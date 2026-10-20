@@ -152,6 +152,8 @@ export function EvidenceManager({
                   <p className="truncate text-sm font-medium">{e.original_filename}</p>
                   <p className="text-xs text-subtle">
                     {e.mime_type} · {formatBytes(e.size_bytes)} · added {formatDateTime(e.created_at)} · <span className="mono" title={e.sha256}>sha256 {e.sha256.slice(0, 12)}…</span>
+                    {e.scan === "clean" && <span data-testid="scan-status"> · malware scan: nothing found</span>}
+                    {e.scan === "not_scanned" && <span className="text-warn" data-testid="scan-status"> · not scanned for malware (scanner unavailable)</span>}
                   </p>
                   {e.transcription && <TranscriptionLine t={e.transcription} />}
                   {e.transcription?.transcript_available && (

@@ -140,6 +140,8 @@ test("citizens report: two share a UPI ID, one unrelated, one opted out; citizen
       await expect(page.getByTestId("notes-panel")).toHaveCount(0);
       // Phase 6 OCR: a screenshot's text is read on this server when the analysis runs
       await page.getByTestId("add-evidence").setInputFiles(SHOT);
+      // Phase 14: with a malware scanner on the server (E2E_CLAMD=1) every upload is scanned first
+      if (process.env.E2E_CLAMD === "1") await expect(page.getByTestId("scan-status").first()).toContainText("nothing found");
       await expect(page.getByTestId("ocr-status")).toHaveAttribute("data-status", "not_read_yet");
       const ran = page.waitForResponse((r) => /\/analysis$/.test(r.url()) && r.request().method() === "POST");
       await page.getByTestId("run-analysis").click();

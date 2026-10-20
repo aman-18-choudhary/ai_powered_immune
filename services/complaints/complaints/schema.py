@@ -215,6 +215,8 @@ complaint_evidence = Table(
     Column("status", String(16), nullable=False),
     Column("created_at", UTCDateTime, nullable=False),
     Column("deleted_at", UTCDateTime),  # migration 5
+    # migration 13: malware scan before storing (clean / not_scanned); NULL = no scanner then
+    Column("scan_status", String(16)),
     CheckConstraint(_in("status", EVIDENCE_STATUSES), name="ck_evidence_status"),
     CheckConstraint("size_bytes >= 0", name="ck_evidence_size"),
     Index("ix_evidence_complaint", "complaint_id", "status"),

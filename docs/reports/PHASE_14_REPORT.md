@@ -10,6 +10,7 @@ validation (Python 3.13 suite, Python 3.11 CI equivalent from a clean clone, Pos
 | Production guard | `COMPLAINTS_ENV=production` refuses demo/local sign-in, the test code outbox, non-https CORS origins and a missing evidence key at start-up | config tests |
 | Loopback default | `python -m demo_server` listens on 127.0.0.1 unless `HOST` is set (the image sets 0.0.0.0; compose publishes on 127.0.0.1) | test; server seen on 127.0.0.1 only |
 | Evidence encryption at rest | AES-256-GCM with `COMPLAINTS_EVIDENCE_KEY`, the storage name bound as associated data; downloads decrypt in memory; transcription/OCR use a 0600 temporary copy removed after the analysis; old plaintext files stay readable; `python -m complaints.encrypt_evidence` encrypts them in place with hash checks | unit tests (swap and missing key refused, legacy files, migration, audio and OCR through temp copies); full Playwright suite on a server with encryption on: 26/26, every stored file ciphertext, no plaintext left in `.tmp` |
+| Malware scanning | uploads scanned by a local ClamAV daemon (clamd INSTREAM) before storing: infected refused (422), clean marked `scan: clean`; scanner down: stored as `not_scanned` or refused (503) with `COMPLAINTS_AV_REQUIRED=1` | fake-clamd tests; real ClamAV 1.5.4 (3.6 M signatures) detected the EICAR test file; full Playwright 26/26 on a server with scanning required, encryption and OCR on |
 | Download audit | every evidence download recorded (`evidence_download`, ids only) | test |
 | Backups | `python -m complaints.backup --out / --verify / --restore`: consistent snapshot (SQLite online backup, `pg_dump`), evidence as stored, SHA-256 manifest without the connection string; restore only into empty targets | SQLite and Postgres round trips, tampering detected; a live backup of the running :8080 data verified |
 | Retention | `python -m complaints.retention --older-than-days N [--apply]` erases complaints their owners deleted more than N days ago; dry run by default; N required | tests incl. idempotence and untouched recent/active complaints |
@@ -35,8 +36,8 @@ validation (Python 3.13 suite, Python 3.11 CI equivalent from a clean clone, Pos
 
 * **Docker build of the stack:** no Docker daemon on this machine.
 * **Clerk sign-in with real keys:** no keys.
-* **Malware scanning of evidence:** no scanner installed. ClamAV would need its signature download
-  and an owner decision.
+* **Malware scanning runs only where clamd runs:** about 1 GB of memory, and the signatures need
+  `freshclam` updates. It is not started by default on this laptop.
 * **Retention:** the period and schedule are policy; nothing runs the command automatically.
 * **Backups:** nothing schedules them; run from cron or a timer.
 * **Shared rate limiting across processes (Redis):** not built; the limits are per process.

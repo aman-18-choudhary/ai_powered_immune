@@ -41,6 +41,7 @@ from .analysis import (
     confidence_interpretation,
     stored_level,
 )
+from .av import ClamdScanner, NoScanner
 from .case_api import register_case_routes
 from .case_store import CaseStore
 from .config import ConfigError, Settings
@@ -592,6 +593,8 @@ def _evidence_view(
             (latest or {}).get("created_at"),
         ),
         "ocr": _ocr_view(e, (ocr or {}).get(e["id"]), latest),
+        # malware scan before storing: clean / not_scanned / not_configured (older: unknown)
+        "scan": e.get("scan_status") or "not_configured",
     }  # fmt: skip
 
 
@@ -676,6 +679,7 @@ def create_app(
             enabled=settings.stt_enabled,
         )  # fmt: skip
     stt = transcriber
+    scanner: Any = ClamdScanner(settings.clamd_address) if settings.clamd_address else NoScanner()
     ocr_svc = OcrService(
         ocr_engine if ocr_engine is not None else ocr_engine_from_env(settings.ocr_enabled),
         enabled=settings.ocr_enabled,
@@ -1234,6 +1238,8 @@ def create_app(
             stored = await receive_upload(
                 request.stream(), request.headers.get("content-type", ""), storage,
                 settings.max_image_bytes, settings.max_audio_bytes,
+                scanner=None if isinstance(scanner, NoScanner) else scanner,
+                scan_required=settings.av_required,
             )  # fmt: skip
         except OSError:
             log.error("evidence write failed")
@@ -1245,7 +1251,7 @@ def create_app(
                 {
                     "original_filename": stored.original_filename, "mime_type": stored.mime_type,
                     "size_bytes": stored.size_bytes, "sha256": stored.sha256,
-                    "storage_key": stored.storage_key,
+                    "storage_key": stored.storage_key, "scan_status": stored.scan_status,
                 },
                 settings.max_evidence_per_complaint, now(),
             )  # fmt: skip
@@ -1673,6 +1679,8 @@ def create_app(
                 "admin_bootstrap_size": len(s.admin_bootstrap_emails),
                 "test_outbox_enabled": s.local_auth_outbox is not None,
             },
+            "malware_scanning": {"configured": s.clamd_address is not None,
+                                 "required": s.av_required},
             "storage": {"database": db, "evidence_dir_configured": s.evidence_dir is not None,
                         "evidence_encrypted_at_rest": s.evidence_key is not None},
             "limits": {
@@ -1736,6 +1744,8 @@ def create_app(
         }
         out["stt"] = await stt.health()
         out["ocr"] = await ocr_svc.health()
+        out["malware_scanner"] = {**await asyncio.to_thread(scanner.status),
+                                  "required": settings.av_required}  # fmt: skip
         out["dna"] = fraud_dna.status()
         out["qdrant"] = {
             "status": "local" if fraud_dna.index.ready else "not_started",

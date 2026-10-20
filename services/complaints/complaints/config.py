@@ -112,6 +112,9 @@ class Settings:
     stt_run_budget_s: float = 120.0
     # Fraud DNA (complaints.dna): the cached embedding model (optional 'dna' extra) and the
     # Qdrant embedded index directory (None = in memory, rebuilt from the database at start-up)
+    # malware scanning of uploads with a local clamd (complaints.av): "unix:/path" or "host:port"
+    clamd_address: str | None = None
+    av_required: bool = False
     # screenshot text (OCR, complaints.ocr) with the local tesseract program when installed
     ocr_enabled: bool = True
     dna_enabled: bool = True
@@ -172,6 +175,9 @@ class Settings:
             ),
             stt_max_files_per_run=_int("COMPLAINTS_STT_MAX_FILES_PER_RUN", 2, 0, 10),
             stt_run_budget_s=_float("COMPLAINTS_STT_RUN_BUDGET_S", 120.0, 5.0, 900.0),
+            clamd_address=(os.getenv("COMPLAINTS_CLAMD") or "").strip() or None,
+            av_required=(os.getenv("COMPLAINTS_AV_REQUIRED") or "0").strip().lower()
+            in ("1", "true", "yes", "on"),
             ocr_enabled=(os.getenv("COMPLAINTS_OCR_ENABLED") or "1").strip().lower()
             not in ("0", "false", "no", "off"),
             dna_enabled=(os.getenv("COMPLAINTS_DNA_ENABLED") or "1").strip().lower()
@@ -223,6 +229,8 @@ class Settings:
                 )
         else:
             raise ConfigError("COMPLAINTS_AUTH_MODE must be 'clerk', 'demo' or 'local'")
+        if self.av_required and not self.clamd_address:
+            raise ConfigError("COMPLAINTS_AV_REQUIRED=1 needs COMPLAINTS_CLAMD")
         if self.environment not in ("development", "production"):
             raise ConfigError("COMPLAINTS_ENV must be 'development' or 'production'")
         if self.environment == "production":

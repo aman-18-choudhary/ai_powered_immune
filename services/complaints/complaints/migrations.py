@@ -309,6 +309,11 @@ def _evidence_ocr(conn: Connection) -> None:
     ensure_index(conn, "evidence_ocr", "ix_ocr_complaint")
 
 
+def _evidence_scan_status(conn: Connection) -> None:
+    """``complaint_evidence.scan_status`` (Phase 14 malware scanning); NULL for older rows."""
+    add_column(conn, "complaint_evidence", "scan_status")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -322,6 +327,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(NETWORK_VERSION, "complaint_network", _complaint_network),
     Migration(11, "investigation_notes", _investigation_notes),
     Migration(12, "evidence_ocr", _evidence_ocr),
+    Migration(13, "evidence_scan_status", _evidence_scan_status),
 )
 LATEST = MIGRATIONS[-1].version
 

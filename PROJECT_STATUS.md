@@ -158,9 +158,10 @@ Playwright and the Postgres run are still agent-only results.
    shown with its transcript in the browser): audio evidence is transcribed and
    every state has a precise reason; old analysis rows read as `not_implemented_at_analysis_time`.
    Tests and Playwright (agent runs).
-4. **Evidence storage**: local disk, random names, not malware-scanned. Since 2026-10-19 files are
-   encrypted at rest (AES-256-GCM) when `COMPLAINTS_EVIDENCE_KEY` is set, which production requires;
-   downloads are audited. Transcripts and OCR text in the database are not encrypted.
+4. **Evidence storage**: local disk, random names. Since 2026-10-19/20 files are encrypted at rest
+   (AES-256-GCM) when `COMPLAINTS_EVIDENCE_KEY` is set, which production requires; uploads are
+   scanned by ClamAV before storing when `COMPLAINTS_CLAMD` is set (EICAR detection verified with
+   a real clamd); downloads are audited. Transcripts and OCR text in the database are not encrypted.
 5. **Development sign-in**: prints email and code to the terminal; per-process, per-IP rate limits;
    demo-server falls back to local mode when Clerk is unset, and the compose `demo-server` service
    does not set `COMPLAINTS_AUTH_MODE`. **Production guard added 2026-10-19**: `COMPLAINTS_ENV=production`

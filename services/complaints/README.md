@@ -210,6 +210,17 @@ deleted.
   same bytes again creates a new record. An audio file's transcript row is deleted in the same
   transaction.
 
+### Malware scanning (Phase 14)
+
+With `COMPLAINTS_CLAMD` (`host:port` or `unix:/path` of a local ClamAV daemon) every upload is
+scanned through clamd's INSTREAM protocol **before** it is stored: an infected file is refused
+(422 `evidence_rejected_malware`, the signature name logged, nothing stored), a clean one is
+stored with `scan: "clean"`. If clamd cannot be reached the file is stored as `not_scanned`, or
+refused with 503 `evidence_scan_unavailable` when `COMPLAINTS_AV_REQUIRED=1`. Without
+`COMPLAINTS_CLAMD` nothing is scanned (`scan: "not_configured"`). Setup on macOS: `brew install
+clamav`, `freshclam` for the signatures, then run `clamd` (TCP `127.0.0.1:3310` avoids the
+104-character Unix socket path limit). clamd needs about 1 GB of memory.
+
 ### Encryption at rest (Phase 14)
 
 With `COMPLAINTS_EVIDENCE_KEY` (32 random bytes, urlsafe base64; `python -m
@@ -574,6 +585,7 @@ metrics file.
 | `CLERK_BACKEND_LOOKUP`, `CLERK_SECRET_KEY` | optional primary-email lookup (off; never logged) |
 | `COMPLAINTS_DEMO_JWT_SECRET` (falls back to `GATEWAY_JWT_SECRET`) | demo/local modes only (signs and verifies local sign-in tokens) |
 | `INVESTIGATOR_ALLOWLIST` | verified emails allowed to enter as investigator |
+| `COMPLAINTS_CLAMD`, `COMPLAINTS_AV_REQUIRED` | malware scanning of uploads with a local clamd; refuse uploads while it is unreachable |
 | `COMPLAINTS_EVIDENCE_KEY` | evidence encryption key (urlsafe base64 of 32 bytes); required with `COMPLAINTS_ENV=production`; never logged |
 | `COMPLAINTS_DNA_ENABLED`, `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR` | Fraud DNA on/off (default on), embedding model id (must be in the local Hugging Face cache), Qdrant embedded index directory (memory when unset) |
 | `ADMIN_BOOTSTRAP_EMAILS` | verified emails promoted to ADMIN at first sign-in |

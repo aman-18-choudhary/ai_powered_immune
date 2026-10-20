@@ -158,6 +158,8 @@ export interface Evidence {
   kind?: "audio" | "image" | "document" | "other";
   /** Audio files only; null for other kinds. */
   transcription?: EvidenceTranscription | null;
+  /** Malware scan before storing (Phase 14): clean, not_scanned (scanner unreachable) or not_configured. */
+  scan?: "clean" | "not_scanned" | "not_configured" | string;
   /** Images only (Phase 6 OCR): whether text was read; the text itself comes from .../ocr. */
   ocr?: EvidenceOcr | null;
 }
