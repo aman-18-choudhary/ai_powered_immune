@@ -14,6 +14,8 @@ Configuration (environment; COMPLAINTS_DATABASE_URL and COMPLAINTS_EVIDENCE_DIR 
   no default period; it is a policy decision.
 * ``COMPLAINTS_RETENTION_APPLY=1``: actually erase. Unset or 0: DRY RUN, only a summary is
   logged. Do not enable before the retention policy is approved.
+* ``COMPLAINTS_RETENTION_POLICY_REF``: the reference of the APPROVED policy; required when
+  applying (the configuration is refused without it) and recorded in every run's audit row.
 * ``COMPLAINTS_RETENTION_MAX_ERASE`` (default 100), ``COMPLAINTS_RETENTION_INTERVAL_HOURS``
   (default 24).
 
@@ -52,6 +54,7 @@ class JobConfig:
     backup_interval_h: float = 24.0
     retention_days: int | None = None
     retention_apply: bool = False
+    retention_policy_ref: str | None = None
     retention_max_erase: int = retention.DEFAULT_MAX_ERASE
     retention_interval_h: float = 24.0
 
@@ -89,12 +92,20 @@ class JobConfig:
             backup_interval_h=number("COMPLAINTS_BACKUP_INTERVAL_HOURS", float, 0.1) or 24.0,
             retention_days=number("COMPLAINTS_RETENTION_DAYS", int, 1),
             retention_apply=apply_raw in ("1", "true"),
+            retention_policy_ref=get("COMPLAINTS_RETENTION_POLICY_REF") or None,
             retention_max_erase=number("COMPLAINTS_RETENTION_MAX_ERASE", int, 1)
             or retention.DEFAULT_MAX_ERASE,
             retention_interval_h=number("COMPLAINTS_RETENTION_INTERVAL_HOURS", float, 0.1) or 24.0,
         )  # fmt: skip
         if cfg.retention_apply and cfg.retention_days is None:
             raise JobConfigError("COMPLAINTS_RETENTION_APPLY needs COMPLAINTS_RETENTION_DAYS")
+        if cfg.retention_apply and not (
+            cfg.retention_policy_ref and retention.POLICY_REF_RE.fullmatch(cfg.retention_policy_ref)
+        ):
+            raise JobConfigError(
+                "COMPLAINTS_RETENTION_APPLY needs COMPLAINTS_RETENTION_POLICY_REF (the approved "
+                "policy's reference)"
+            )
         return cfg
 
 
@@ -121,6 +132,7 @@ def retention_job(cfg: JobConfig) -> dict[str, Any]:
             res = retention.run(
                 store, EvidenceStorage(cfg.evidence_dir), cfg.retention_days,
                 apply=cfg.retention_apply, max_erase=cfg.retention_max_erase,
+                policy_ref=cfg.retention_policy_ref,
             )  # fmt: skip
         finally:
             store.close()

@@ -22,6 +22,9 @@ PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08
        b"\x00\x00IEND\xaeB`\x82")  # fmt: skip
 
 
+REF = "TEST-POLICY-1"  # a synthetic approved-policy reference
+
+
 def citizen(tok, who):
     return tok("a", sub=f"user_{who}", email=f"citizen.{who}@example.org")
 
@@ -83,7 +86,7 @@ async def test_dry_run_then_erase_only_old_deleted_complaints(app, client, tok, 
             admin_audit.c.action.like("retention%"))).all() == []  # fmt: skip
     assert "DRY RUN" in retention.summary_line(dry)
 
-    done = retention.run(store, storage, 30, apply=True)
+    done = retention.run(store, storage, 30, apply=True, policy_ref=REF)
     assert done["erased"] == 1 and done["failed"] == 0 and done["files_removed"] == 1
     assert done["files_failed"] == 0
     r = row(store, old)
@@ -105,12 +108,13 @@ async def test_dry_run_then_erase_only_old_deleted_complaints(app, client, tok, 
         assert "Private" not in str(audit.after)
         run_audit = c.execute(sa.select(admin_audit).where(admin_audit.c.action == "retention_run")).one()
         assert run_audit.after["erased"] == 1 and "ids" not in run_audit.after
+        assert run_audit.after["policy_ref"] == REF
     # the recent deleted one and the active one are untouched
     for cid in (recent, active):
         assert row(store, cid).description.startswith("Private story")
         assert row(store, cid).purged_at is None
     # idempotent: nothing left to erase, and a second apply changes nothing
-    again = retention.run(store, storage, 30, apply=True)
+    again = retention.run(store, storage, 30, apply=True, policy_ref=REF)
     assert again["due"] == 0 and again["erased"] == 0 and again["files_failed"] == 0
 
 
@@ -120,7 +124,7 @@ async def test_a_complaint_containing_the_marker_text_is_still_erased(app, clien
     store = app.state.store
     cid = await make_deleted(client, tok, inv, "marker", 40, app, description=retention.PURGED
                              + " but also my account 123456789012 and the caller's story.")  # fmt: skip
-    res = retention.run(store, EvidenceStorage(settings.evidence_dir), 30, apply=True)
+    res = retention.run(store, EvidenceStorage(settings.evidence_dir), 30, apply=True, policy_ref=REF)
     assert res["erased"] == 1 and row(store, cid).bank_account is None
 
 
@@ -138,14 +142,14 @@ async def test_a_file_that_cannot_be_deleted_is_reported_and_retried(app, client
     cid = await make_deleted(client, tok, inv, "stuck", 40, app)
     storage = EvidenceStorage(settings.evidence_dir)
     monkeypatch.setattr(storage, "remove_checked", lambda key: False)  # e.g. a read-only volume
-    first = retention.run(store, storage, 30, apply=True)
+    first = retention.run(store, storage, 30, apply=True, policy_ref=REF)
     assert first["erased"] == 1 and first["files_failed"] == 1
     assert row(store, cid).purged_at is not None  # the database part is done and committed
     key = evidence_keys(store, cid)[0]
     assert storage.path_for(key).exists()
     assert retention.run(store, storage, 30, apply=False)["leftover_files"] == 1
     monkeypatch.undo()
-    second = retention.run(store, storage, 30, apply=True)
+    second = retention.run(store, storage, 30, apply=True, policy_ref=REF)
     assert second["due"] == 0 and second["files_removed"] == 1 and second["files_failed"] == 0
     assert not storage.path_for(key).exists()
 
@@ -164,14 +168,14 @@ async def test_a_failing_complaint_is_rolled_back_and_the_others_continue(app, c
 
     monkeypatch.setattr(store, "_audit", failing_audit)
     storage = EvidenceStorage(settings.evidence_dir)
-    res = retention.run(store, storage, 30, apply=True)
+    res = retention.run(store, storage, 30, apply=True, policy_ref=REF)
     assert res["failed"] == 1 and res["erased"] == 1
     b = row(store, bad)  # rolled back as a whole: text kept, not marked, file kept
     assert b.purged_at is None and b.description.startswith("Private story")
     assert storage.path_for(evidence_keys(store, bad)[0]).exists()
     assert row(store, good).purged_at is not None
     monkeypatch.undo()
-    assert retention.run(store, storage, 30, apply=True)["erased"] == 1  # retried next run
+    assert retention.run(store, storage, 30, apply=True, policy_ref=REF)["erased"] == 1  # retried next run
 
 
 async def test_max_erase_refuses_an_unexpectedly_large_run(app, client, tok, inv, settings):
@@ -179,7 +183,7 @@ async def test_max_erase_refuses_an_unexpectedly_large_run(app, client, tok, inv
     ids = [await make_deleted(client, tok, inv, f"bulk{i}", 40, app) for i in range(3)]
     storage = EvidenceStorage(settings.evidence_dir)
     with pytest.raises(retention.TooMany):
-        retention.run(store, storage, 30, apply=True, max_erase=2)
+        retention.run(store, storage, 30, apply=True, max_erase=2, policy_ref=REF)
     assert all(row(store, c).purged_at is None for c in ids)  # nothing was touched
     assert retention.run(store, storage, 30, apply=False, max_erase=2)["due"] == 3  # dry run ok
 
@@ -205,9 +209,10 @@ async def test_cli_dry_run_by_default_and_refuses_while_locked(app, client, tok,
     assert "DRY RUN" in out and "1 complaint(s) due" in out and "Private" not in out
     assert row(app.state.store, cid).purged_at is None
     with job_lock(settings.database_url, "retention"):
-        assert retention.main(["--older-than-days", "30", "--apply"]) == 3
+        assert retention.main(["--older-than-days", "30", "--apply", "--policy-ref", REF]) == 3
     assert row(app.state.store, cid).purged_at is None
-    assert retention.main(["--older-than-days", "30", "--apply", "--max-erase", "5"]) == 0
+    assert retention.main(["--older-than-days", "30", "--apply", "--max-erase", "5",
+                           "--policy-ref", REF]) == 0
     assert row(app.state.store, cid).purged_at is not None
 
 
@@ -229,3 +234,21 @@ async def test_migration_marks_complaints_erased_before_purged_at_existed(app, c
     with store.engine.begin() as c:
         migrations.run(c)  # every start re-checks the steps (idempotent)
     assert row(store, cid).purged_at is not None
+
+
+async def test_nothing_is_erased_without_an_approved_policy_reference(app, client, tok, inv,
+                                                                     settings, monkeypatch,
+                                                                     capsys):  # fmt: skip
+    store = app.state.store
+    cid = await make_deleted(client, tok, inv, "nopolicy", 40, app)
+    storage = EvidenceStorage(settings.evidence_dir)
+    for ref in (None, "", "   ", "bad ref with spaces", "x" * 65):
+        with pytest.raises(ValueError, match="policy"):
+            retention.run(store, storage, 30, apply=True, policy_ref=ref)
+    assert retention.run(store, storage, 30, apply=False)["due"] == 1  # a dry run needs none
+    monkeypatch.setenv("COMPLAINTS_DATABASE_URL", settings.database_url)
+    monkeypatch.setenv("COMPLAINTS_EVIDENCE_DIR", str(settings.evidence_dir))
+    assert retention.main(["--older-than-days", "30", "--apply"]) == 2
+    assert "policy" in capsys.readouterr().err
+    assert row(store, cid).purged_at is None
+    assert storage.path_for(evidence_keys(store, cid)[0]).exists()

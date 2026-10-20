@@ -1,7 +1,7 @@
 """Erase complaints their owners deleted, after a retention period (Phase 14).
 
     python -m complaints.retention --older-than-days N            # dry run: summary only
-    python -m complaints.retention --older-than-days N --apply    # erase
+    python -m complaints.retention --older-than-days N --apply --policy-ref REF   # erase
 
 Uses COMPLAINTS_DATABASE_URL and COMPLAINTS_EVIDENCE_DIR. The retention period is a policy
 decision: there is no default, ``N`` must be given (minimum 1). Only complaints that were
@@ -23,6 +23,9 @@ the data until they expire (see docs/OPERATIONS.md).
 
 Safety
 * Dry run by default: prints what WOULD be erased (counts per kind) and changes nothing.
+* An apply run needs ``--policy-ref``: the reference of the APPROVED retention policy (for
+  example a decision or ticket id). It is recorded in the ``retention_run`` audit row; without it
+  nothing is erased. The period itself is never defaulted.
 * ``--max-erase`` (default 100): an apply run that finds more due complaints refuses to start,
   so a wrong clock or period cannot erase everything at once. Raise it deliberately.
 * Overlapping runs are refused (``complaints.joblock``); exit code 3.
@@ -37,6 +40,7 @@ Safety
 import argparse
 import logging
 import os
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -63,6 +67,7 @@ log = logging.getLogger("complaints.retention")
 
 PURGED = "[erased under the retention policy]"
 DEFAULT_MAX_ERASE = 100
+POLICY_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:-]{0,63}")
 OPTIONAL_FIELDS = (
     "incident_at", "amount", "currency", "payment_method", "upi_id", "utr_reference",
     "suspect_phone", "suspect_email", "suspicious_url", "location_text", "city", "state",
@@ -199,15 +204,23 @@ def _remove_files(storage: EvidenceStorage | None, keys: list[str]) -> tuple[int
 
 def run(store: ComplaintStore, storage: EvidenceStorage | None, older_than_days: int,
         apply: bool, now: datetime | None = None,
-        max_erase: int = DEFAULT_MAX_ERASE) -> dict[str, Any]:  # fmt: skip
+        max_erase: int = DEFAULT_MAX_ERASE,
+        policy_ref: str | None = None) -> dict[str, Any]:  # fmt: skip
     if older_than_days < 1:
         raise ValueError("older_than_days must be at least 1")
     if max_erase < 1:
         raise ValueError("max_erase must be at least 1")
+    policy_ref = (policy_ref or "").strip() or None
+    if apply and (policy_ref is None or not POLICY_REF_RE.fullmatch(policy_ref)):
+        raise ValueError(
+            "erasing needs the reference of the approved retention policy "
+            "(--policy-ref, letters, digits and . _ / : - only, up to 64)"
+        )
     now = now or datetime.now(UTC)
     p = plan(store, storage, older_than_days, now)
     out: dict[str, Any] = {
-        "applied": apply, "older_than_days": older_than_days, "cutoff": p["cutoff"],
+        "applied": apply, "policy_ref": policy_ref, "older_than_days": older_than_days,
+        "cutoff": p["cutoff"],
         "due": len(p["ids"]), "ids": p["ids"], "would_erase": p["counts"],
         "leftover_files": p["leftover_files"],
         "erased": 0, "skipped": 0, "failed": 0, "files_removed": 0, "files_failed": 0,
@@ -236,7 +249,8 @@ def run(store: ComplaintStore, storage: EvidenceStorage | None, older_than_days:
     out["files_removed"] += removed
     out["files_failed"] = failed  # what is still on disk now
     store.record_audit(None, "retention_run", {
-        k: out[k] for k in ("older_than_days", "cutoff", "due", "erased", "skipped", "failed",
+        k: out[k] for k in ("policy_ref", "older_than_days", "cutoff", "due", "erased",
+                            "skipped", "failed",
                             "files_removed", "files_failed")}, now)  # fmt: skip
     return out
 
@@ -259,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--older-than-days", type=int, required=True)
     ap.add_argument("--apply", action="store_true", help="erase (default: dry run)")
+    ap.add_argument("--policy-ref", help="with --apply: reference of the approved policy")
     ap.add_argument("--max-erase", type=int, default=DEFAULT_MAX_ERASE,
                     help="refuse an apply run with more complaints due (default 100)")  # fmt: skip
     ap.add_argument("--list-ids", action="store_true", help="also print the due complaint ids")
@@ -273,7 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with job_lock(url, "retention"):
             storage = EvidenceStorage(Path(ev_dir))
-            res = run(store, storage, a.older_than_days, a.apply, max_erase=a.max_erase)
+            res = run(store, storage, a.older_than_days, a.apply, max_erase=a.max_erase,
+                      policy_ref=a.policy_ref)  # fmt: skip
     except JobLocked:
         print("retention: another run is in progress; nothing done", file=sys.stderr)
         return 3

@@ -152,6 +152,10 @@ async def test_files_are_private_and_prune_keeps_the_newest_verified(app, client
     assert (root / "notes" / "readme.txt").exists()
     with pytest.raises(backup.BackupError):
         backup.prune(root, keep=0, apply=True)
+    # order comes from the manifest, not the directory name: a renamed old backup stays old
+    made[1].rename(root / "zzz-renamed")
+    again = backup.prune(root, keep=1, apply=False)
+    assert again["kept"] == [made[2].name] and again["would_delete"] == ["zzz-renamed"]
 
 
 def test_overlapping_backups_are_refused(settings, monkeypatch, tmp_path, capsys):

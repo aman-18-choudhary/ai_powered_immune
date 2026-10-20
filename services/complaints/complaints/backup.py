@@ -162,12 +162,15 @@ def verify(path: Path) -> dict[str, Any]:
     return m
 
 
-def _is_backup(path: Path) -> bool:
+def _created_at(path: Path) -> str | None:
+    """The manifest's ``created_at`` when ``path`` is a backup of this format, else None."""
     try:
         m = json.loads((path / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return isinstance(m, dict) and m.get("format") == FORMAT
+        return None
+    if not isinstance(m, dict) or m.get("format") != FORMAT:
+        return None
+    return str(m.get("created_at") or "")
 
 
 def prune(root: Path, keep: int, apply: bool) -> dict[str, Any]:
@@ -175,8 +178,10 @@ def prune(root: Path, keep: int, apply: bool) -> dict[str, Any]:
     the older ones. Only directories carrying a manifest of this format are ever deleted."""
     if keep < 1:
         raise BackupError("--keep must be at least 1")
-    backups = sorted((d for d in root.iterdir() if d.is_dir() and _is_backup(d)),
-                     key=lambda d: d.name, reverse=True) if root.is_dir() else []  # fmt: skip
+    found = [(c, d) for d in (root.iterdir() if root.is_dir() else []) if d.is_dir()
+             and (c := _created_at(d)) is not None]  # fmt: skip
+    # newest first by the manifest's own timestamp (a renamed directory keeps its age)
+    backups = [d for _, d in sorted(found, key=lambda x: (x[0], x[1].name), reverse=True)]
     kept: list[str] = []
     unverified: list[str] = []
     delete: list[Path] = []

@@ -40,6 +40,9 @@ def test_configuration_is_explicit(settings):
     assert cfg.backup_dir is None and cfg.retention_days is None and not cfg.retention_apply
     with pytest.raises(jobs.JobConfigError, match="COMPLAINTS_RETENTION_DAYS"):
         jobs.JobConfig.from_env(env(settings, COMPLAINTS_RETENTION_APPLY="1"))
+    with pytest.raises(jobs.JobConfigError, match="COMPLAINTS_RETENTION_POLICY_REF"):
+        jobs.JobConfig.from_env(env(settings, COMPLAINTS_RETENTION_DAYS="30",
+                                    COMPLAINTS_RETENTION_APPLY="1"))  # fmt: skip
     for bad in ({"COMPLAINTS_RETENTION_DAYS": "0"}, {"COMPLAINTS_RETENTION_DAYS": "ten"},
                 {"COMPLAINTS_BACKUP_KEEP": "0"}, {"COMPLAINTS_RETENTION_APPLY": "yes"}):  # fmt: skip
         with pytest.raises(jobs.JobConfigError):
@@ -54,8 +57,10 @@ async def test_scheduled_retention_is_a_dry_run_unless_applied(app, client, tok,
     assert dry["retention"]["ok"] and dry["retention"]["applied"] is False
     assert dry["retention"]["due"] == 1 and purged(app, cid) is None
     done = jobs.run_once(jobs.JobConfig.from_env(env(
-        settings, COMPLAINTS_RETENTION_DAYS="30", COMPLAINTS_RETENTION_APPLY="1")))  # fmt: skip
+        settings, COMPLAINTS_RETENTION_DAYS="30", COMPLAINTS_RETENTION_APPLY="1",
+        COMPLAINTS_RETENTION_POLICY_REF="TEST-POLICY-1")))  # fmt: skip
     assert done["retention"]["erased"] == 1 and purged(app, cid) is not None
+    assert done["retention"]["policy_ref"] == "TEST-POLICY-1"
 
 
 async def test_a_locked_job_is_skipped_and_the_others_run(app, client, tok, settings, tmp_path):
@@ -64,6 +69,7 @@ async def test_a_locked_job_is_skipped_and_the_others_run(app, client, tok, sett
     cid = await deleted_complaint(app, client, tok)
     cfg = jobs.JobConfig.from_env(env(settings, COMPLAINTS_RETENTION_DAYS="30",
                                       COMPLAINTS_RETENTION_APPLY="1",
+                                      COMPLAINTS_RETENTION_POLICY_REF="TEST-POLICY-1",
                                       COMPLAINTS_BACKUP_DIR=str(tmp_path / "b"),
                                       COMPLAINTS_BACKUP_KEEP="2"))  # fmt: skip
     with job_lock(settings.database_url, "retention"):  # e.g. a manual run in progress

@@ -201,9 +201,11 @@ deleted.
 * Storage key is random; the client filename is sanitised and stored for display only. Files are
   mode 0600 in a 0700 directory (`COMPLAINTS_EVIDENCE_DIR`) that nothing serves statically.
 * Re-sending the same bytes for a complaint returns the existing record (retry safe).
-* **No malware or content scanning is performed.** A file that has a valid PNG/PDF header can
-  still be malicious; downloads are attachments with `nosniff` and a fixed type, which limits but
-  does not remove that risk. Soft-deleted complaints keep their files; there is no retention job.
+* Malware scanning happens only when `COMPLAINTS_CLAMD` points to a running ClamAV daemon (see
+  "Malware scanning"); otherwise evidence is stored as `not_configured`. Signatures miss new
+  malware, and a file with a valid PNG/PDF header can still be malicious; downloads are
+  attachments with `nosniff` and a fixed type, which limits but does not remove that risk.
+  Soft-deleted complaints keep their files until the retention command erases them (below).
 * Removal (`DELETE .../evidence/{eid}`): the row becomes `deleted` (with `deleted_at`) and stays
   for the audit trail; the file is unlinked. Deleted evidence is excluded from lists, detail,
   downloads, counts, the `has_evidence` filter, the per-complaint cap and analysis; uploading the
@@ -380,7 +382,14 @@ stored (still encrypted when encryption at rest is on) and `manifest.json` with 
 file (no connection string). `--verify BACKUP` checks it (changed, missing and unexpected files).
 `--restore BACKUP --to-database-url URL --to-evidence-dir PATH` restores into an EMPTY target
 only, after verifying. The evidence key and the Fraud DNA index (rebuilt at start-up) are not in
-the backup: keep the key separately. Nothing schedules backups; run it from cron or a timer.
+the backup: keep the key separately. Files are 0600 in 0700 directories; the database snapshot
+itself is NOT encrypted (it holds complaint text and bank details), so keep backups on encrypted
+storage. Two backups of one database never overlap (exit code 3).
+
+`--prune DIR --keep N` lists the backups beyond the newest N that verify; add `--apply` to delete
+them. Age comes from each manifest, only directories with a manifest of this format are ever
+deleted, and a newer backup that does not verify is kept but does not count towards N. Backups
+taken before a retention erasure still hold the erased data until they are pruned.
 
 ## Retention (Phase 14)
 
@@ -391,6 +400,26 @@ identifiers, transcripts, OCR text, notes and quoted analysis text are erased. T
 category, status and timestamps stay so references and the audit trail remain consistent; each
 erasure is audited (`retention_purge`, counts only). There is no default period: choosing N is a
 policy decision. It is idempotent and prints counts only.
+
+Safeguards: the dry run prints counts per kind of data; `--apply` also needs `--policy-ref REF`,
+the reference of the APPROVED retention policy, recorded in the `retention_run` audit row;
+`--max-erase` (default 100) refuses an apply run with more complaints due; each complaint is
+re-checked inside its own transaction (owners can only delete SUBMITTED complaints, so a
+complaint under investigation is never erased); erased complaints are marked `purged_at`
+(migration 14); a file that cannot be deleted is reported (exit code 1) and retried by the next
+apply run; overlapping runs are refused (exit code 3).
+
+## Scheduled jobs
+
+`python -m complaints.jobs` (or `--once` from cron or a systemd timer) runs backups and the
+retention command, configured by environment: `COMPLAINTS_BACKUP_DIR` (enables backups, each
+verified), `COMPLAINTS_BACKUP_KEEP` (prune beyond N; unset: never delete backups),
+`COMPLAINTS_BACKUP_INTERVAL_HOURS` (24), `COMPLAINTS_RETENTION_DAYS` (enables retention),
+`COMPLAINTS_RETENTION_APPLY=1` with `COMPLAINTS_RETENTION_POLICY_REF` (erase; otherwise a dry run
+that only logs counts), `COMPLAINTS_RETENTION_MAX_ERASE` (100),
+`COMPLAINTS_RETENTION_INTERVAL_HOURS` (24). Jobs share the command-line locks, so they never
+overlap a manual run. Nothing in this repository starts the scheduler: no compose service or
+timer is defined, and no retention period has been approved.
 
 ## Schema migrations
 
