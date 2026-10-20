@@ -166,6 +166,7 @@ complaints = Table(
     Column("created_at", UTCDateTime, nullable=False),
     Column("updated_at", UTCDateTime, nullable=False),
     Column("deleted_at", UTCDateTime),
+    Column("purged_at", UTCDateTime),  # migration 14: erased under the retention policy
     CheckConstraint(_in("category", CATEGORIES), name="ck_complaints_category"),
     CheckConstraint(_in("status", STATUSES), name="ck_complaints_status"),
     CheckConstraint(

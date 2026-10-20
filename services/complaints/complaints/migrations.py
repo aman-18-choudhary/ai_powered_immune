@@ -314,6 +314,20 @@ def _evidence_scan_status(conn: Connection) -> None:
     add_column(conn, "complaint_evidence", "scan_status")
 
 
+def _complaints_purged_at(conn: Connection) -> None:
+    """``complaints.purged_at`` (Phase 14 retention): set when a complaint is erased. Rows erased
+    before this column existed (text replaced by the retention marker) are back-filled."""
+    from .schema import complaints
+
+    add_column(conn, "complaints", "purged_at")
+    conn.execute(
+        update(complaints)
+        .where(complaints.c.purged_at.is_(None), complaints.c.deleted_at.is_not(None),
+               complaints.c.description == "[erased under the retention policy]")
+        .values(purged_at=complaints.c.updated_at)
+    )  # fmt: skip
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _baseline),
     Migration(2, "analyses_detail_column", _analyses_detail),
@@ -328,6 +342,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(11, "investigation_notes", _investigation_notes),
     Migration(12, "evidence_ocr", _evidence_ocr),
     Migration(13, "evidence_scan_status", _evidence_scan_status),
+    Migration(14, "complaints_purged_at", _complaints_purged_at),
 )
 LATEST = MIGRATIONS[-1].version
 

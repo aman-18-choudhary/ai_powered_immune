@@ -120,3 +120,45 @@ def test_cli_needs_configuration(monkeypatch, tmp_path, capsys):
     assert backup.main(["--restore", str(tmp_path)]) == 2
     with pytest.raises(SystemExit):
         backup.main([])  # one of --out / --verify / --restore is required
+
+
+async def test_files_are_private_and_prune_keeps_the_newest_verified(app, client, tok, settings,
+                                                                    tmp_path):  # fmt: skip
+    if not shutil.which("pg_dump") and not settings.database_url.startswith("sqlite"):
+        pytest.skip("pg_dump not installed")
+    from datetime import UTC, datetime, timedelta
+
+    await populate(client, tok)
+    root = tmp_path / "backups"
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    made = [backup.backup(settings.database_url, settings.evidence_dir, root,
+                          now=t0 + timedelta(days=i)) for i in range(4)]  # fmt: skip
+    for p in made[0].rglob("*"):
+        assert (p.stat().st_mode & 0o077) == 0, p  # nothing readable by group or others
+    (root / "notes").mkdir()  # not a backup: never touched
+    (root / "notes" / "readme.txt").write_text("operator notes")
+    db_file = made[3] / backup.verify(made[3])["database_file"]
+    with open(db_file, "ab") as f:  # the newest backup is damaged
+        f.write(b"x")
+
+    dry = backup.prune(root, keep=2, apply=False)
+    assert dry["unverified_kept"] == [made[3].name]  # the damaged newest is kept, not counted
+    assert dry["kept"] == [made[2].name, made[1].name]
+    assert dry["would_delete"] == [made[0].name] and made[0].exists()
+
+    done = backup.prune(root, keep=2, apply=True)
+    assert done["deleted"] == [made[0].name]
+    assert not made[0].exists() and all(m.exists() for m in made[1:])
+    assert (root / "notes" / "readme.txt").exists()
+    with pytest.raises(backup.BackupError):
+        backup.prune(root, keep=0, apply=True)
+
+
+def test_overlapping_backups_are_refused(settings, monkeypatch, tmp_path, capsys):
+    from complaints.joblock import job_lock
+
+    monkeypatch.setenv("COMPLAINTS_DATABASE_URL", settings.database_url)
+    monkeypatch.setenv("COMPLAINTS_EVIDENCE_DIR", str(settings.evidence_dir))
+    with job_lock(settings.database_url, "backup"):
+        assert backup.main(["--out", str(tmp_path / "b")]) == 3
+    assert not (tmp_path / "b").exists()

@@ -4,6 +4,7 @@ files, with a SHA-256 manifest.
     python -m complaints.backup --out DIR            # write a new backup under DIR/<timestamp>
     python -m complaints.backup --verify BACKUP      # check every file against the manifest
     python -m complaints.backup --restore BACKUP --to-database-url URL --to-evidence-dir PATH
+    python -m complaints.backup --prune DIR --keep N [--apply]   # delete older backups
 
 Backup uses COMPLAINTS_DATABASE_URL and COMPLAINTS_EVIDENCE_DIR.
 
@@ -13,6 +14,13 @@ Backup uses COMPLAINTS_DATABASE_URL and COMPLAINTS_EVIDENCE_DIR.
 * Evidence: files copied as stored, so they stay encrypted when encryption at rest is on. The
   evidence key is NOT part of the backup: keep it separately, or the files cannot be read.
 * The Fraud DNA index is not backed up: it is rebuilt from the database at start-up.
+* The database snapshot is NOT encrypted by this tool (it holds complaint text and bank
+  details): keep backups on encrypted storage readable only by the operator. Files are 0600 in
+  0700 directories.
+* Pruning keeps the newest N backups that verify; older ones are deleted only with ``--apply``.
+  A directory without a valid manifest of this format is never deleted; a newer backup that does
+  not verify is kept and reported, and does not count towards N.
+* Two backup or prune runs on the same database never overlap (``complaints.joblock``).
 * Restore only into an EMPTY target (a new SQLite file / a database without tables, an empty or
   missing evidence directory), after the manifest verifies. It never overwrites data.
 
@@ -33,6 +41,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import create_engine, inspect
+
+from .joblock import JobLocked, job_lock
 
 MANIFEST = "manifest.json"
 FORMAT = "complaints-backup-v1"
@@ -90,8 +100,9 @@ def _schema_version(url: str) -> int | None:
 
 def backup(db_url: str, evidence_dir: Path, out_root: Path, now: datetime | None = None) -> Path:
     now = now or datetime.now(UTC)
+    out_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     out = out_root / now.strftime("%Y%m%dT%H%M%S%fZ")
-    out.mkdir(parents=True, mode=0o700)
+    out.mkdir(mode=0o700)
     kind = _kind(db_url)
     if kind == "sqlite":
         db_file = out / "complaints.sqlite"
@@ -131,6 +142,8 @@ def backup(db_url: str, evidence_dir: Path, out_root: Path, now: datetime | None
         "evidence_key_included": False, "files": files,
     }  # fmt: skip
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    for p in out.rglob("*"):
+        os.chmod(p, 0o700 if p.is_dir() else 0o600)
     return out
 
 
@@ -147,6 +160,40 @@ def verify(path: Path) -> dict[str, Any]:
         raise BackupError(f"backup does not verify: {len(bad)} changed or missing, "
                           f"{len(extra)} unexpected file(s)")  # fmt: skip
     return m
+
+
+def _is_backup(path: Path) -> bool:
+    try:
+        m = json.loads((path / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(m, dict) and m.get("format") == FORMAT
+
+
+def prune(root: Path, keep: int, apply: bool) -> dict[str, Any]:
+    """Keep the newest ``keep`` backups under ``root`` that verify; delete (``apply``) or list
+    the older ones. Only directories carrying a manifest of this format are ever deleted."""
+    if keep < 1:
+        raise BackupError("--keep must be at least 1")
+    backups = sorted((d for d in root.iterdir() if d.is_dir() and _is_backup(d)),
+                     key=lambda d: d.name, reverse=True) if root.is_dir() else []  # fmt: skip
+    kept: list[str] = []
+    unverified: list[str] = []
+    delete: list[Path] = []
+    for d in backups:
+        if len(kept) >= keep:
+            delete.append(d)
+            continue
+        try:
+            verify(d)
+            kept.append(d.name)
+        except BackupError:
+            unverified.append(d.name)  # kept, but does not count as a good backup
+    if apply:
+        for d in delete:
+            shutil.rmtree(d)
+    return {"kept": kept, "unverified_kept": unverified, "deleted" if apply else "would_delete":
+            [d.name for d in delete]}  # fmt: skip
 
 
 def restore(path: Path, db_url: str, evidence_dir: Path) -> dict[str, Any]:
@@ -200,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--out", type=Path, help="directory to write a new backup under")
     g.add_argument("--verify", type=Path, help="a backup directory to check")
     g.add_argument("--restore", type=Path, help="a backup directory to restore")
+    g.add_argument("--prune", type=Path, help="a directory of backups to prune")
+    ap.add_argument("--keep", type=int, help="with --prune: how many verified backups to keep")
+    ap.add_argument("--apply", action="store_true", help="with --prune: delete (default: list)")
     ap.add_argument("--to-database-url")
     ap.add_argument("--to-evidence-dir", type=Path)
     a = ap.parse_args(argv)
@@ -217,13 +267,29 @@ def main(argv: list[str] | None = None) -> int:
             print(f"restored schema {r['schema_version']} and "
                   f"{r['evidence_files']} evidence file(s)")  # fmt: skip
             return 0
+        if a.prune:
+            if a.keep is None:
+                print("--prune needs --keep N", file=sys.stderr)
+                return 2
+            r = prune(a.prune, a.keep, a.apply)
+            gone = r.get("deleted", r.get("would_delete"))
+            print(f"backups kept {len(r['kept'])}, kept but not verifying "
+                  f"{len(r['unverified_kept'])}, "
+                  f"{'deleted' if a.apply else 'would delete (add --apply)'} "
+                  f"{len(gone)}")  # fmt: skip
+            return 0
         url = os.environ.get("COMPLAINTS_DATABASE_URL", "").strip()
         ev = os.environ.get("COMPLAINTS_EVIDENCE_DIR", "").strip()
         if not url or not ev:
             print("COMPLAINTS_DATABASE_URL and COMPLAINTS_EVIDENCE_DIR must be set",
                   file=sys.stderr)  # fmt: skip
             return 2
-        out = backup(url, Path(ev), a.out)
+        try:
+            with job_lock(url, "backup"):
+                out = backup(url, Path(ev), a.out)
+        except JobLocked:
+            print("backup: another backup is in progress; nothing done", file=sys.stderr)
+            return 3
         m = json.loads((out / MANIFEST).read_text(encoding="utf-8"))
         print(f"backup written to {out}: schema {m['schema_version']}, "
               f"{m['evidence_files']} evidence file(s); key not included")  # fmt: skip

@@ -1,0 +1,175 @@
+{
+  "synthetic": true,
+  "diagnostic_only": true,
+  "dataset": "evaluation/datasets/fraud_dna_v1.jsonl",
+  "dataset_sha256": "bc3158d28ee71b2b31f40ebd49179cf53670453e585a959fcd8454421ce37383",
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "model_revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
+  "deployed_threshold": 0.58,
+  "pooled_splits": [
+    "dev",
+    "test"
+  ],
+  "as_deployed_dna_text": {
+    "en-en": {
+      "related": {
+        "n": 36,
+        "mean": 0.635,
+        "min": 0.424,
+        "median": 0.643,
+        "max": 0.828
+      },
+      "unrelated": {
+        "n": 384,
+        "mean": 0.297,
+        "min": -0.126,
+        "median": 0.298,
+        "max": 0.609
+      },
+      "auc": 0.988,
+      "related_at_or_above_deployed": 26,
+      "unrelated_at_or_above_deployed": 2
+    },
+    "hi-hi": {
+      "related": {
+        "n": 0
+      },
+      "unrelated": {
+        "n": 42,
+        "mean": 0.285,
+        "min": -0.077,
+        "median": 0.299,
+        "max": 0.669
+      },
+      "auc": null,
+      "related_at_or_above_deployed": 0,
+      "unrelated_at_or_above_deployed": 2
+    },
+    "hinglish-hinglish": {
+      "related": {
+        "n": 0
+      },
+      "unrelated": {
+        "n": 42,
+        "mean": 0.415,
+        "min": 0.075,
+        "median": 0.414,
+        "max": 0.641
+      },
+      "auc": null,
+      "related_at_or_above_deployed": 0,
+      "unrelated_at_or_above_deployed": 2
+    },
+    "en-hi": {
+      "related": {
+        "n": 36,
+        "mean": 0.651,
+        "min": 0.331,
+        "median": 0.658,
+        "max": 0.849
+      },
+      "unrelated": {
+        "n": 258,
+        "mean": 0.273,
+        "min": -0.105,
+        "median": 0.285,
+        "max": 0.598
+      },
+      "auc": 0.977,
+      "related_at_or_above_deployed": 26,
+      "unrelated_at_or_above_deployed": 3
+    },
+    "en-hinglish": {
+      "related": {
+        "n": 36,
+        "mean": 0.453,
+        "min": 0.275,
+        "median": 0.45,
+        "max": 0.612
+      },
+      "unrelated": {
+        "n": 258,
+        "mean": 0.147,
+        "min": -0.087,
+        "median": 0.144,
+        "max": 0.437
+      },
+      "auc": 0.99,
+      "related_at_or_above_deployed": 5,
+      "unrelated_at_or_above_deployed": 0
+    },
+    "hi-hinglish": {
+      "related": {
+        "n": 12,
+        "mean": 0.425,
+        "min": 0.23,
+        "median": 0.448,
+        "max": 0.576
+      },
+      "unrelated": {
+        "n": 86,
+        "mean": 0.126,
+        "min": -0.142,
+        "median": 0.133,
+        "max": 0.42
+      },
+      "auc": 0.983,
+      "related_at_or_above_deployed": 0,
+      "unrelated_at_or_above_deployed": 0
+    }
+  },
+  "raw_text_without_redaction": {
+    "en-en": {
+      "auc": 0.987,
+      "related": {
+        "n": 36,
+        "mean": 0.635,
+        "min": 0.406,
+        "median": 0.651,
+        "max": 0.817
+      }
+    },
+    "hi-hi": {
+      "auc": null,
+      "related": {
+        "n": 0
+      }
+    },
+    "hinglish-hinglish": {
+      "auc": null,
+      "related": {
+        "n": 0
+      }
+    },
+    "en-hi": {
+      "auc": 0.976,
+      "related": {
+        "n": 36,
+        "mean": 0.643,
+        "min": 0.327,
+        "median": 0.655,
+        "max": 0.839
+      }
+    },
+    "en-hinglish": {
+      "auc": 0.987,
+      "related": {
+        "n": 36,
+        "mean": 0.449,
+        "min": 0.246,
+        "median": 0.447,
+        "max": 0.615
+      }
+    },
+    "hi-hinglish": {
+      "auc": 0.98,
+      "related": {
+        "n": 12,
+        "mean": 0.421,
+        "min": 0.215,
+        "median": 0.439,
+        "max": 0.546
+      }
+    }
+  }
+}
