@@ -31,6 +31,38 @@ citizen policy. Metric definitions are in the docstring of `run_accuracy_eval.py
 | `results/accuracy_probes_v1__final-batch2.json` | `74dbf9b` | v1 after accuracy batch 2 ([report](../docs/reports/ACCURACY_BATCH_2_REPORT.md)) |
 | `results/accuracy_probes_v2__final-batch2.json` | `74dbf9b` | v2 after accuracy batch 2 |
 
+### Complaint narratives (release hardening, 2026-10-20)
+
+Running the app end to end showed that a complaint written as the victim's story ("he asked me to
+approve a collect request and share the OTP; after I entered my UPI PIN, Rs 25,000 was
+debited") scored 0/100 with no indicators. The call-guard rules score what a scammer says and
+ignore relayed speech on purpose, and the probe sets above are mostly scammer messages, so they
+did not show it. `complaints.narrative` adds deterministic cues for the fraud mechanism as victims
+describe it.
+
+`run_narrative_eval.py` runs the real pipeline (category OTHER, no LLM) on the 76 synthetic
+reports of `datasets/fraud_dna_v1.jsonl` (sha256 `bc3158d2…`). The cues were written while
+looking at the **dev** split only; the **test** split was not used to change them. Caveat: some
+Hinglish test texts had been read earlier the same day during the Fraud DNA similarity diagnosis.
+
+| Split | Scam reports flagged (MEDIUM+) | Legitimate flagged | Ambiguous HIGH+ | File |
+|---|---|---|---|---|
+| dev, before | 10 / 30 | 0 / 5 | 0 / 3 | `results/narrative_v1__baseline.json` (`42b2dbd`) |
+| dev, after | 29 / 30 | 0 / 5 | 0 / 3 | `results/narrative_v1__narrative-v1.json` (`e269f1f`) |
+| **test, before** | **16 / 30** | 0 / 5 | 0 / 3 | as above |
+| **test, after** | **20 / 30** | 0 / 5 | 0 / 3 | as above |
+
+The dev figure is fitted and says little. On test, the families the cues were not written for
+(task jobs, sextortion, loan-app harassment, some OTP calls) are still mostly missed. The
+accuracy probe sets v1 and v2 give identical results before and after (no new false positives).
+Thirty test reports in six families are far too few for a recall estimate.
+
+`diagnose_dna_hinglish.py` (result `results/fraud_dna_v1__hinglish_diagnosis.json`) explains the
+weak Hinglish similarity matching: ranking is good (AUC 0.99 for English-Hinglish pairs) but the
+scores sit lower (related pairs mean 0.45 vs 0.64 for English-English), and unrelated
+Hinglish-Hinglish pairs reach 0.64, so lowering the threshold would add false links. The set has
+no Hinglish-Hinglish related pairs at all. Thresholds were not changed.
+
 The first two files were recorded on `build/implementation` (which also holds paused Phase 9
 commits); their `stack_label` column used an approximation (`policy.label_for`) and is superseded
 by the clean-branch files. Their complaints-pipeline rows are identical to the clean-branch runs.

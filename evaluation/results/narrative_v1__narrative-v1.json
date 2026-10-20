@@ -1,0 +1,1097 @@
+{
+  "WARNING": "SYNTHETIC hand-written reports; not real-world accuracy.",
+  "label": "narrative-v1",
+  "dataset": "evaluation/datasets/fraud_dna_v1.jsonl",
+  "dataset_sha256": "bc3158d28ee71b2b31f40ebd49179cf53670453e585a959fcd8454421ce37383",
+  "code_revision": "e269f1f",
+  "summary": {
+    "dev": {
+      "all": {
+        "scam_n": 30,
+        "scam_flagged": 29,
+        "scam_with_rule_indicator": 30,
+        "legitimate_n": 5,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0,
+        "ambiguous_n": 3,
+        "ambiguous_strong_flag": 0
+      },
+      "en": {
+        "scam_n": 18,
+        "scam_flagged": 17,
+        "scam_with_rule_indicator": 18,
+        "legitimate_n": 3,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0,
+        "ambiguous_n": 2,
+        "ambiguous_strong_flag": 0
+      },
+      "hi": {
+        "scam_n": 6,
+        "scam_flagged": 6,
+        "scam_with_rule_indicator": 6,
+        "legitimate_n": 1,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0
+      },
+      "hinglish": {
+        "scam_n": 6,
+        "scam_flagged": 6,
+        "scam_with_rule_indicator": 6,
+        "legitimate_n": 1,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0,
+        "ambiguous_n": 1,
+        "ambiguous_strong_flag": 0
+      }
+    },
+    "test": {
+      "all": {
+        "scam_n": 30,
+        "scam_flagged": 20,
+        "scam_with_rule_indicator": 22,
+        "legitimate_n": 5,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 1,
+        "ambiguous_n": 3,
+        "ambiguous_strong_flag": 0
+      },
+      "en": {
+        "scam_n": 18,
+        "scam_flagged": 12,
+        "scam_with_rule_indicator": 14,
+        "legitimate_n": 3,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0,
+        "ambiguous_n": 2,
+        "ambiguous_strong_flag": 0
+      },
+      "hi": {
+        "scam_n": 6,
+        "scam_flagged": 4,
+        "scam_with_rule_indicator": 4,
+        "legitimate_n": 1,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 0,
+        "ambiguous_n": 1,
+        "ambiguous_strong_flag": 0
+      },
+      "hinglish": {
+        "scam_n": 6,
+        "scam_flagged": 4,
+        "scam_with_rule_indicator": 4,
+        "legitimate_n": 1,
+        "legit_flagged": 0,
+        "legit_with_rule_indicator": 1
+      }
+    }
+  },
+  "missed_scams": [
+    "task_job_3",
+    "task_job_4",
+    "task_job_5",
+    "sextortion_call_2",
+    "sextortion_call_3",
+    "otp_bank_call_2",
+    "otp_bank_call_4",
+    "olx_army_buyer_2",
+    "loan_app_harassment_1",
+    "loan_app_harassment_2",
+    "loan_app_harassment_5"
+  ],
+  "false_alarms": [],
+  "ambiguous_strong": [],
+  "cases": [
+    {
+      "id": "digital_arrest_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "ACCOUNT_VERIFICATION_ASK",
+        "ISOLATION_DEMAND",
+        "REPORTED_SCAM_ENCOUNTER",
+        "SAFE_ACCOUNT_TRANSFER"
+      ]
+    },
+    {
+      "id": "digital_arrest_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "LEGAL_THREAT",
+        "REPORTED_SCAM_ENCOUNTER"
+      ]
+    },
+    {
+      "id": "digital_arrest_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "LEGAL_THREAT",
+        "REPORTED_SCAM_ENCOUNTER"
+      ]
+    },
+    {
+      "id": "digital_arrest_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "DIGITAL_ARREST_PHRASE",
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "digital_arrest_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "ACCOUNT_VERIFICATION_ASK",
+        "AUTHORITY_IMPERSONATION",
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "ISOLATION_DEMAND",
+        "LEGAL_THREAT",
+        "REPORTED_SCAM_ENCOUNTER",
+        "SAFE_ACCOUNT_TRANSFER"
+      ]
+    },
+    {
+      "id": "upi_collect_refund_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 86,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE",
+        "CREDENTIALS_HANDED_OVER",
+        "REPORTED_SCAM_ENCOUNTER",
+        "UPI_PIN_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "upi_collect_refund_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 65,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE",
+        "UPI_PIN_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "upi_collect_refund_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 65,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE",
+        "UPI_PIN_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "upi_collect_refund_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 65,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "UPI_PIN_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "upi_collect_refund_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 65,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CREDENTIALS_HANDED_OVER",
+        "UPI_PIN_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "kyc_block_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "ACCOUNT_BLOCK_THREAT",
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "kyc_block_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "kyc_block_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "ACCOUNT_BLOCK_THREAT",
+        "CREDENTIALS_HANDED_OVER",
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "kyc_block_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "ACCOUNT_BLOCK_THREAT",
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "kyc_block_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "ACCOUNT_BLOCK_THREAT",
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "task_job_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 84,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "ADVANCE_FEE_DEMAND",
+        "FEE_TO_RELEASE_MONEY",
+        "REPORTED_SCAM_ENCOUNTER"
+      ]
+    },
+    {
+      "id": "task_job_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "task_job_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "task_job_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "task_job_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "investment_app_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "FAKE_PROFIT_NO_WITHDRAWAL",
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "investment_app_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "FAKE_PROFIT_NO_WITHDRAWAL",
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "investment_app_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FAKE_PROFIT_NO_WITHDRAWAL"
+      ]
+    },
+    {
+      "id": "investment_app_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "FAKE_PROFIT_NO_WITHDRAWAL",
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "investment_app_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "FAKE_PROFIT_NO_WITHDRAWAL",
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "sextortion_call_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 65,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "SEXTORTION_THREAT"
+      ]
+    },
+    {
+      "id": "sextortion_call_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "sextortion_call_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 20,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY"
+      ]
+    },
+    {
+      "id": "sextortion_call_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 69,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "sextortion_call_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "electricity_bill_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP",
+        "UTILITY_DISCONNECTION_THREAT"
+      ]
+    },
+    {
+      "id": "electricity_bill_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP",
+        "UTILITY_DISCONNECTION_THREAT"
+      ]
+    },
+    {
+      "id": "electricity_bill_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP",
+        "UTILITY_DISCONNECTION_THREAT"
+      ]
+    },
+    {
+      "id": "electricity_bill_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP",
+        "UTILITY_DISCONNECTION_THREAT"
+      ]
+    },
+    {
+      "id": "electricity_bill_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 75,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP",
+        "UTILITY_DISCONNECTION_THREAT"
+      ]
+    },
+    {
+      "id": "courier_drugs_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 69,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "courier_drugs_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "courier_drugs_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "PAYMENT_DEMAND"
+      ]
+    },
+    {
+      "id": "courier_drugs_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 73,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "AUTHORITY_IMPERSONATION",
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "courier_drugs_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "CRITICAL",
+      "risk_score": 100,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "LEGAL_THREAT",
+        "PAYMENT_DEMAND"
+      ]
+    },
+    {
+      "id": "lottery_fee_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "lottery_fee_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "lottery_fee_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 80,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "ADVANCE_FEE_DEMAND",
+        "FEE_TO_RELEASE_MONEY",
+        "PAYMENT_DEMAND"
+      ]
+    },
+    {
+      "id": "lottery_fee_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "lottery_fee_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 50,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "FEE_TO_RELEASE_MONEY"
+      ]
+    },
+    {
+      "id": "otp_bank_call_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "otp_bank_call_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 20,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY"
+      ]
+    },
+    {
+      "id": "otp_bank_call_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CREDENTIALS_HANDED_OVER",
+        "CREDENTIAL_ASK"
+      ]
+    },
+    {
+      "id": "otp_bank_call_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "otp_bank_call_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CREDENTIALS_HANDED_OVER",
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "olx_army_buyer_1",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 68,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "olx_army_buyer_2",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 20,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY"
+      ]
+    },
+    {
+      "id": "olx_army_buyer_3",
+      "split": "dev",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 68,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "olx_army_buyer_4",
+      "split": "dev",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 68,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE"
+      ]
+    },
+    {
+      "id": "olx_army_buyer_5",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "HIGH",
+      "risk_score": 86,
+      "flagged": true,
+      "strong": true,
+      "rule_codes": [
+        "CLAIMED_OFFICIAL_IDENTITY",
+        "COLLECT_REQUEST_OR_QR_TO_RECEIVE",
+        "CREDENTIALS_HANDED_OVER"
+      ]
+    },
+    {
+      "id": "loan_app_harassment_1",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "loan_app_harassment_2",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "loan_app_harassment_3",
+      "split": "test",
+      "language": "en",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "REMOTE_ACCESS_APP"
+      ]
+    },
+    {
+      "id": "loan_app_harassment_4",
+      "split": "test",
+      "language": "hi",
+      "kind": "scam",
+      "risk_level": "MEDIUM",
+      "risk_score": 55,
+      "flagged": true,
+      "strong": false,
+      "rule_codes": [
+        "LEGAL_THREAT"
+      ]
+    },
+    {
+      "id": "loan_app_harassment_5",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "scam",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_01",
+      "split": "dev",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_02",
+      "split": "dev",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_03",
+      "split": "dev",
+      "language": "hi",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_04",
+      "split": "dev",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_05",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_06",
+      "split": "test",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_07",
+      "split": "test",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_08",
+      "split": "test",
+      "language": "hi",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_09",
+      "split": "test",
+      "language": "en",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "legit_10",
+      "split": "test",
+      "language": "hinglish",
+      "kind": "legitimate",
+      "risk_level": "LOW",
+      "risk_score": 15,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": [
+        "URGENCY"
+      ]
+    },
+    {
+      "id": "ambiguous_01",
+      "split": "dev",
+      "language": "en",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "ambiguous_02",
+      "split": "dev",
+      "language": "en",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "ambiguous_03",
+      "split": "dev",
+      "language": "hinglish",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "ambiguous_04",
+      "split": "test",
+      "language": "en",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "ambiguous_05",
+      "split": "test",
+      "language": "en",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    },
+    {
+      "id": "ambiguous_06",
+      "split": "test",
+      "language": "hi",
+      "kind": "ambiguous",
+      "risk_level": "LOW",
+      "risk_score": 0,
+      "flagged": false,
+      "strong": false,
+      "rule_codes": []
+    }
+  ]
+}
