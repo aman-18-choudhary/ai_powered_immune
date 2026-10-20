@@ -207,6 +207,9 @@ the live test complaint moved from OTHER 0.41 to DIGITAL_ARREST 0.65.
 Fixed in Phase 6 (2026-10-16): findings 1-3 above. Fixed on 2026-10-16 (no longer open): CI never passing; the graph-twin single-flight race and the
 txn-guard duplicate hub submission on Python 3.11; the flaky demo-server seek test.
 
+Phase 14 (2026-10-19/20): production guard, encryption at rest, download audit, backups,
+retention command and a load check; see [docs/reports/PHASE_14_REPORT.md](docs/reports/PHASE_14_REPORT.md).
+
 ## 4. External setup still required
 
 Clerk keys; Tesseract for OCR on any other machine (`brew install tesseract`, plus `hin.traineddata` from tesseract-ocr/tessdata_fast; installed on this machine 2026-10-19, not in the Docker images); the optional `stt` extra and a cached faster-whisper model on any
