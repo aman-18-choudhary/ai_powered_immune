@@ -32,6 +32,12 @@ validation (Python 3.13 suite, Python 3.11 CI equivalent from a clean clone, Pos
 * **These are not capacity figures.** Production would use Postgres, several workers, and Qdrant
   as a server.
 
+**Observed once, not reproduced.** In the first full Playwright run with ClamAV running, the
+live-audio spec failed: speech-to-text heard no speech in 21 consecutive chunks of the fake
+microphone. It passed on an immediate rerun and in a second full run with ClamAV, and the
+live-audio code was not changed. The cause is unconfirmed; memory pressure (about 1 GB clamd on
+an 8 GB laptop) is a plausible factor.
+
 ## 3. Not done (blocked or a decision)
 
 * **Docker build of the stack:** no Docker daemon on this machine.
