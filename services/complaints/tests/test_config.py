@@ -20,6 +20,7 @@ def env(monkeypatch, tmp_path, **kv):
         "GATEWAY_JWT_SECRET",
         "COMPLAINTS_LOCAL_AUTH_OUTBOX",
         "COMPLAINTS_ENV",
+        "COMPLAINTS_EVIDENCE_KEY",
     ):
         monkeypatch.delenv(k, raising=False)  # fmt: skip
     monkeypatch.setenv("COMPLAINTS_DATABASE_URL", "sqlite://")
@@ -113,6 +114,7 @@ def test_local_auth_outbox_is_test_only_and_refused_in_clerk_mode(monkeypatch, t
 
 
 CLERK = {"CLERK_ISSUER": "https://c.example", "CLERK_JWKS_URL": "https://c.example/j"}
+KEY = "A" * 43 + "="  # urlsafe base64 of 32 bytes (test value)
 
 
 def test_production_refuses_every_development_option(monkeypatch, tmp_path):
@@ -122,14 +124,17 @@ def test_production_refuses_every_development_option(monkeypatch, tmp_path):
             COMPLAINTS_DEMO_JWT_SECRET="s" * 40)  # fmt: skip
         with pytest.raises(ConfigError, match="production requires COMPLAINTS_AUTH_MODE=clerk"):
             Settings.from_env().validate()
-    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production",
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production", **CLERK)
+    with pytest.raises(ConfigError, match="requires COMPLAINTS_EVIDENCE_KEY"):
+        Settings.from_env().validate()  # evidence must be encrypted at rest in production
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production", COMPLAINTS_EVIDENCE_KEY=KEY,
         COMPLAINTS_CORS_ORIGINS="http://localhost:5173", **CLERK)  # fmt: skip
     with pytest.raises(ConfigError, match="https in production"):
         Settings.from_env().validate()
     env(monkeypatch, tmp_path, COMPLAINTS_ENV="staging", **CLERK)
     with pytest.raises(ConfigError, match="COMPLAINTS_ENV"):
         Settings.from_env().validate()
-    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production",
+    env(monkeypatch, tmp_path, COMPLAINTS_ENV="production", COMPLAINTS_EVIDENCE_KEY=KEY,
         COMPLAINTS_CORS_ORIGINS="https://app.example", **CLERK)  # fmt: skip
     s = Settings.from_env()
     s.validate()
@@ -139,4 +144,16 @@ def test_production_refuses_every_development_option(monkeypatch, tmp_path):
     s = Settings.from_env()
     s.validate()
     assert s.environment == "development" and s.local_auth_enabled
+
+
+def test_evidence_key_format(monkeypatch, tmp_path):
+    env(monkeypatch, tmp_path, COMPLAINTS_EVIDENCE_KEY="not base64 !!", **CLERK)
+    with pytest.raises(ConfigError, match="urlsafe base64"):
+        Settings.from_env()
+    env(monkeypatch, tmp_path, COMPLAINTS_EVIDENCE_KEY="AAAA", **CLERK)
+    with pytest.raises(ConfigError, match="32 bytes"):
+        Settings.from_env()
+    env(monkeypatch, tmp_path, COMPLAINTS_EVIDENCE_KEY=KEY, **CLERK)
+    s = Settings.from_env()
+    assert s.evidence_key == bytes(32) and "AAAA" not in repr(s)
 

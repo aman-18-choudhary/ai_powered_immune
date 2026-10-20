@@ -438,3 +438,22 @@ async def test_category_model_sees_only_the_description_without_audio():
     out = await pipe(StubScorer(0.1), cat).analyse({**BENIGN, "evidence": []})
     assert cat.seen[-1] == f"{BENIGN['title']}\n{BENIGN['description']}"
     assert out.extra["category_model"]["evidence"]["audio_transcripts_included"] == 0
+
+
+async def test_encrypted_audio_evidence_is_still_transcribed(make_app, settings, tok):
+    # Phase 14: with an evidence key the recording is ciphertext on disk; the decoder gets a
+    # temporary plaintext copy that is removed after the analysis
+    s = dataclasses.replace(settings, evidence_key=bytes(range(32)))
+    eng = FakeStt()
+    app = make_app(settings=s, analysis=stub_pipe(), stt_engine=eng)
+    c = cl(app)
+    comp = await create(c, tok("a"), **BENIGN)
+    await up(c, tok("a"), comp["id"])
+    from complaints.evidence import MAGIC
+
+    stored = [p for p in s.evidence_dir.rglob("*") if p.is_file() and ".tmp" not in p.parts]
+    assert stored and all(p.read_bytes().startswith(MAGIC) for p in stored)
+    await analyse(c, tok("a"), comp["id"])
+    rows = transcript_rows(app)
+    assert rows and rows[0]["status"] == "transcribed"
+    assert not list((s.evidence_dir / ".tmp").glob("plain-*"))

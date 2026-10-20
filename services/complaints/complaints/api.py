@@ -46,7 +46,7 @@ from .case_store import CaseStore
 from .config import ConfigError, Settings
 from .dna import Embedder, FraudDna, SentenceTransformerEmbedder
 from .dna_api import register_dna_routes
-from .evidence import EvidenceStorage, UploadError, receive_upload
+from .evidence import EvidenceStorage, EvidenceUnreadable, UploadError, receive_upload
 from .explain import OllamaClient
 from .geo_api import register_geo_routes
 from .geo_store import GeoStore
@@ -695,7 +695,7 @@ def create_app(
         else:
             local_codes = LocalAuth(settings.demo_jwt_secret)
 
-    storage = EvidenceStorage(settings.evidence_dir)  # type: ignore[arg-type]
+    storage = EvidenceStorage(settings.evidence_dir, key=settings.evidence_key)  # type: ignore[arg-type]
     try:
         storage.prepare()
         storage.sweep_tmp()
@@ -1357,14 +1357,20 @@ def create_app(
              "owner": c["owner_user_id"] == user.id}, now(),
         )  # fmt: skip
         safe_name = ev["original_filename"]
-        return FileResponse(
-            path,
-            media_type=ev["mime_type"],
-            headers={
-                "Content-Disposition": f'attachment; filename="{safe_name}"',
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        headers = {
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+        }
+        if await asyncio.to_thread(storage.is_encrypted, ev["storage_key"]):
+            try:  # encrypted at rest: decrypted in memory (files are at most 25 MB)
+                plain = await asyncio.to_thread(storage.read_plain, ev["storage_key"])
+            except EvidenceUnreadable:
+                log.error("evidence file could not be decrypted")
+                raise ApiError(
+                    500, "evidence_unreadable", "The stored file could not be read."
+                ) from None
+            return Response(plain, media_type=ev["mime_type"], headers=headers)
+        return FileResponse(path, media_type=ev["mime_type"], headers=headers)
 
     # ------------------------------------------------------------------ analysis
     @app.post("/complaints/{complaint_id}/analysis", status_code=201)
@@ -1373,10 +1379,12 @@ def create_app(
         c = await _load(user, complaint_id)
         files = await asyncio.to_thread(store.list_evidence, complaint_id)
 
+        plaintexts = contextlib.ExitStack()  # decrypted temporary copies, removed after the run
+
         def path_for(f: dict[str, Any]) -> Any:
             try:
-                return storage.path_for(f["storage_key"])
-            except ValueError:
+                return plaintexts.enter_context(storage.materialize(f["storage_key"]))
+            except (ValueError, EvidenceUnreadable):
                 return storage.root / "missing"
 
         async def load_existing() -> dict[str, dict[str, Any]]:
@@ -1385,17 +1393,20 @@ def create_app(
         async def save(rec: dict[str, Any]) -> dict[str, Any] | None:
             return await asyncio.to_thread(store.save_transcript, complaint_id, rec, now())
 
-        # audio evidence: transcribed once (synchronously, within the run's budget), reused after
-        transcripts = await stt.prepare(complaint_id, files, path_for, load_existing, save)
+        try:
+            # audio evidence: transcribed once (synchronously, within the run's budget), reused
+            transcripts = await stt.prepare(complaint_id, files, path_for, load_existing, save)
 
-        async def load_ocr() -> dict[str, dict[str, Any]]:
-            return await asyncio.to_thread(store.list_ocr, complaint_id)
+            async def load_ocr() -> dict[str, dict[str, Any]]:
+                return await asyncio.to_thread(store.list_ocr, complaint_id)
 
-        async def save_ocr(rec: dict[str, Any]) -> dict[str, Any] | None:
-            return await asyncio.to_thread(store.save_ocr, complaint_id, rec, now())
+            async def save_ocr(rec: dict[str, Any]) -> dict[str, Any] | None:
+                return await asyncio.to_thread(store.save_ocr, complaint_id, rec, now())
 
-        # screenshots: text read once by OCR (within the run's budget), reused after
-        ocr = await ocr_svc.prepare(files, path_for, load_ocr, save_ocr)
+            # screenshots: text read once by OCR (within the run's budget), reused after
+            ocr = await ocr_svc.prepare(files, path_for, load_ocr, save_ocr)
+        finally:
+            plaintexts.close()  # decrypted copies never outlive the run
         out = await analysis_service.analyse(
             {
                 **c,
@@ -1662,7 +1673,8 @@ def create_app(
                 "admin_bootstrap_size": len(s.admin_bootstrap_emails),
                 "test_outbox_enabled": s.local_auth_outbox is not None,
             },
-            "storage": {"database": db, "evidence_dir_configured": s.evidence_dir is not None},
+            "storage": {"database": db, "evidence_dir_configured": s.evidence_dir is not None,
+                        "evidence_encrypted_at_rest": s.evidence_key is not None},
             "limits": {
                 "max_image_bytes": s.max_image_bytes, "max_audio_bytes": s.max_audio_bytes,
                 "max_evidence_per_complaint": s.max_evidence_per_complaint,

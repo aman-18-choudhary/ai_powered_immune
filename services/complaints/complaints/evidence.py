@@ -15,7 +15,7 @@ import re
 import secrets
 import time
 import unicodedata
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -93,10 +93,25 @@ class StoredFile:
     kind: str
 
 
+MAGIC = b"SSEV1\x00"  # encrypted evidence file: MAGIC + 12-byte nonce + AES-256-GCM ciphertext
+NONCE_BYTES = 12
+
+
+class EvidenceUnreadable(Exception):
+    """An encrypted file without the right key, or a damaged one."""
+
+
 class EvidenceStorage:
-    def __init__(self, root: Path) -> None:
+    """Evidence files on local disk under random names. With ``key`` (32 bytes,
+    ``COMPLAINTS_EVIDENCE_KEY``) new files are encrypted at rest with AES-256-GCM, the storage
+    key bound as associated data; files written before (plaintext) stay readable."""
+
+    def __init__(self, root: Path, key: bytes | None = None) -> None:
         self.root = root
         self.tmp = root / ".tmp"
+        if key is not None and len(key) != 32:
+            raise ValueError("the evidence key must be 32 bytes")
+        self.key = key
 
     def prepare(self) -> None:
         """Create the directories (0700). Raises OSError if the directory is unusable."""
@@ -129,6 +144,78 @@ class EvidenceStorage:
         if not re.fullmatch(r"[0-9a-f]{32}", key):
             raise ValueError("bad storage key")
         return self.root / key[:2] / key
+
+    # ------------------------------------------------------------------ encryption at rest
+    def _aead(self) -> Any:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        assert self.key is not None
+        return AESGCM(self.key)
+
+    def encrypt_bytes(self, name: str, plain: bytes) -> bytes:
+        nonce = secrets.token_bytes(NONCE_BYTES)
+        return MAGIC + nonce + self._aead().encrypt(nonce, plain, name.encode())
+
+    def decrypt_bytes(self, name: str, blob: bytes) -> bytes:
+        if not blob.startswith(MAGIC):
+            return blob  # stored before encryption was enabled
+        if self.key is None:
+            raise EvidenceUnreadable("encrypted file and no evidence key configured")
+        from cryptography.exceptions import InvalidTag
+
+        body = blob[len(MAGIC):]
+        try:
+            return self._aead().decrypt(body[:NONCE_BYTES], body[NONCE_BYTES:], name.encode())
+        except InvalidTag:
+            raise EvidenceUnreadable("wrong key or damaged file") from None
+
+    def is_encrypted(self, key: str) -> bool:
+        with open(self.path_for(key), "rb") as f:
+            return f.read(len(MAGIC)) == MAGIC
+
+    def read_plain(self, key: str) -> bytes:
+        return self.decrypt_bytes(key, self.path_for(key).read_bytes())
+
+    @contextlib.contextmanager
+    def materialize(self, key: str) -> Iterator[Path]:
+        """A path with the plaintext: the file itself, or a 0600 temporary copy (encrypted
+        files), deleted on exit. Raises EvidenceUnreadable / OSError."""
+        path = self.path_for(key)
+        if not path.is_file() or not self.is_encrypted(key):
+            yield path
+            return
+        plain = self.read_plain(key)
+        tmp = self.tmp / f"plain-{secrets.token_hex(16)}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(plain)
+            yield tmp
+        finally:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+
+    def encrypt_existing(self, key: str, expected_sha256: str) -> bool:
+        """Encrypt one plaintext file in place (atomic). False when already encrypted."""
+        if self.key is None:
+            raise EvidenceUnreadable("no evidence key configured")
+        path = self.path_for(key)
+        if self.is_encrypted(key):
+            return False
+        plain = path.read_bytes()
+        if hashlib.sha256(plain).hexdigest() != expected_sha256:
+            raise EvidenceUnreadable("the stored file does not match its recorded hash")
+        tmp = self.tmp / f"enc-{secrets.token_hex(16)}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(self.encrypt_bytes(key, plain))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        _fsync_dir(path.parent)
+        if hashlib.sha256(self.read_plain(key)).hexdigest() != expected_sha256:
+            raise EvidenceUnreadable("verification after encryption failed")
+        return True
 
     def remove(self, key: str) -> None:
         with contextlib.suppress(OSError, ValueError):
@@ -240,11 +327,33 @@ class _Sink:
         key = secrets.token_hex(16)
         final = self.storage.path_for(key)
         final.parent.mkdir(mode=0o700, exist_ok=True)
+        if self.storage.key is not None:
+            # encrypt at rest: the ciphertext replaces the plaintext temp file before the rename
+            plain_tmp = self.tmp_path
+            enc_tmp = self.storage.tmp / f"enc-{secrets.token_hex(16)}"
+            fd = os.open(enc_tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(self.storage.encrypt_bytes(key, plain_tmp.read_bytes()))
+                    f.flush()
+                    os.fsync(f.fileno())
+            finally:
+                with contextlib.suppress(OSError):
+                    plain_tmp.unlink()
+            self.tmp_path = enc_tmp
         os.replace(self.tmp_path, final)
         self.tmp_path = None
         try:
             _fsync_dir(final.parent)
-            digest, size = _rehash(final)
+            if self.storage.key is not None:
+                try:
+                    plain = self.storage.read_plain(key)
+                except EvidenceUnreadable:
+                    raise UploadError(503, "evidence_storage_failed",
+                                      "The file could not be stored.") from None  # fmt: skip
+                digest, size = hashlib.sha256(plain).hexdigest(), len(plain)
+            else:
+                digest, size = _rehash(final)
             if digest != self.hash.hexdigest() or size != self.size:
                 raise UploadError(503, "evidence_storage_failed", "The file could not be stored.")
         except BaseException:

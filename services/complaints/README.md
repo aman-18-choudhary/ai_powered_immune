@@ -210,6 +210,17 @@ deleted.
   same bytes again creates a new record. An audio file's transcript row is deleted in the same
   transaction.
 
+### Encryption at rest (Phase 14)
+
+With `COMPLAINTS_EVIDENCE_KEY` (32 random bytes, urlsafe base64; `python -m
+complaints.encrypt_evidence --new-key`) every new evidence file is stored as AES-256-GCM
+ciphertext with its storage name as associated data (a file copied over another is refused, not
+served). Downloads are decrypted in memory; transcription and OCR read a 0600 temporary
+plaintext copy that is deleted when the analysis ends. Files stored before stay readable;
+`python -m complaints.encrypt_evidence --apply` encrypts them in place, checking the recorded
+SHA-256 before and after. `COMPLAINTS_ENV=production` refuses to start without the key. Keep the
+key backed up separately: without it the files cannot be read.
+
 ## Audio evidence transcription (Phase 6)
 
 `POST /complaints/{id}/analysis` transcribes every stored audio file that has no transcript yet,
@@ -552,6 +563,7 @@ metrics file.
 | `CLERK_BACKEND_LOOKUP`, `CLERK_SECRET_KEY` | optional primary-email lookup (off; never logged) |
 | `COMPLAINTS_DEMO_JWT_SECRET` (falls back to `GATEWAY_JWT_SECRET`) | demo/local modes only (signs and verifies local sign-in tokens) |
 | `INVESTIGATOR_ALLOWLIST` | verified emails allowed to enter as investigator |
+| `COMPLAINTS_EVIDENCE_KEY` | evidence encryption key (urlsafe base64 of 32 bytes); required with `COMPLAINTS_ENV=production`; never logged |
 | `COMPLAINTS_DNA_ENABLED`, `COMPLAINTS_DNA_MODEL`, `COMPLAINTS_DNA_DIR` | Fraud DNA on/off (default on), embedding model id (must be in the local Hugging Face cache), Qdrant embedded index directory (memory when unset) |
 | `ADMIN_BOOTSTRAP_EMAILS` | verified emails promoted to ADMIN at first sign-in |
 | `COMPLAINTS_CORS_ORIGINS` | explicit origins (`*` is refused) |

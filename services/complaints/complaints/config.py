@@ -4,6 +4,8 @@ The service refuses to start (``ConfigError``) when required identity settings a
 is no insecure fallback mode.
 """
 
+import base64
+import binascii
 import os
 import re
 from dataclasses import dataclass, field
@@ -57,6 +59,20 @@ def _https_or_loopback(url: str) -> bool:
     return parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1")
 
 
+def _evidence_key(raw: str | None) -> bytes | None:
+    """``COMPLAINTS_EVIDENCE_KEY``: 32 random bytes, urlsafe base64, for example from
+    ``python -m complaints.encrypt_evidence --new-key``."""
+    if not raw or not raw.strip():
+        return None
+    try:
+        key = base64.urlsafe_b64decode(raw.strip().encode())
+    except (ValueError, binascii.Error):
+        raise ConfigError("COMPLAINTS_EVIDENCE_KEY must be urlsafe base64") from None
+    if len(key) != 32:
+        raise ConfigError("COMPLAINTS_EVIDENCE_KEY must decode to exactly 32 bytes")
+    return key
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = ""
@@ -73,6 +89,8 @@ class Settings:
     investigator_allowlist: frozenset[str] = frozenset()
     admin_bootstrap_emails: frozenset[str] = frozenset()
     evidence_dir: Path | None = None
+    # 32-byte key (urlsafe base64 in COMPLAINTS_EVIDENCE_KEY): evidence files encrypted at rest
+    evidence_key: bytes | None = field(default=None, repr=False)
     max_image_bytes: int = 10 * MIB  # images and PDFs
     max_audio_bytes: int = 25 * MIB
     max_evidence_per_complaint: int = 10
@@ -128,6 +146,7 @@ class Settings:
                 parse_list(os.getenv("ADMIN_BOOTSTRAP_EMAILS"), fold=True)
             ),
             evidence_dir=Path(evidence) if evidence else None,
+            evidence_key=_evidence_key(os.getenv("COMPLAINTS_EVIDENCE_KEY")),
             max_image_bytes=_int("COMPLAINTS_MAX_IMAGE_BYTES", 10 * MIB),
             max_audio_bytes=_int("COMPLAINTS_MAX_AUDIO_BYTES", 25 * MIB),
             max_evidence_per_complaint=_int("COMPLAINTS_MAX_EVIDENCE_PER_COMPLAINT", 10, 1, 100),
@@ -215,6 +234,11 @@ class Settings:
                 )
             if self.local_auth_outbox is not None:
                 raise ConfigError("COMPLAINTS_LOCAL_AUTH_OUTBOX is not allowed in production")
+            if self.evidence_key is None:
+                raise ConfigError(
+                    "COMPLAINTS_ENV=production requires COMPLAINTS_EVIDENCE_KEY (evidence files "
+                    "are encrypted at rest)"
+                )
             if any(not o.startswith("https://") for o in self.cors_origins):
                 raise ConfigError("COMPLAINTS_CORS_ORIGINS must use https in production")
         if self.local_auth_outbox is not None and not self.local_auth_enabled:

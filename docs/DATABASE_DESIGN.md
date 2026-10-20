@@ -259,7 +259,7 @@ see [TECHNOLOGY_DECISIONS.md](TECHNOLOGY_DECISIONS.md).
 | Live transcripts | Server memory only, deleted on Stop or after 10 idle minutes | Implemented |
 | Evidence transcripts | Stored in `evidence_transcripts` (plain text segments), same access as the evidence, deleted with it; never logged | Implemented (Phase 6); **not encrypted**; kept with a soft-deleted complaint like its files |
 | Complaint text and identifiers | Stored in plain columns (needed for review and matching) | Implemented; **not encrypted at column level** |
-| Evidence files | Local disk, random names, outside the web root | Implemented; **not encrypted, not malware-scanned** |
+| Evidence files | Local disk, random names, outside the web root; **encrypted at rest with AES-256-GCM when `COMPLAINTS_EVIDENCE_KEY` is set** (required in production; the storage name is bound as associated data; `python -m complaints.encrypt_evidence --apply` encrypts files stored before) | Encryption implemented 2026-10-19; **not malware-scanned**; transcripts and OCR text in the database are not encrypted |
 | Deletion | Soft delete (`deleted_at`); evidence file removed on evidence delete | Implemented |
 | Retention schedule | `python -m complaints.retention --older-than-days N [--apply]` erases complaints their owners deleted more than N days ago (files, text, identifiers, transcripts, OCR text, notes, quoted analysis text; ids, status and timestamps kept; audited `retention_purge`); dry run by default; **no period is chosen: N is a policy decision** and nothing runs it on a schedule | Mechanism implemented 2026-10-19; schedule and period not decided |
 | Logs | Request logs carry hashed user ids, no bodies; transcripts and tokens not logged | Implemented (tests) |

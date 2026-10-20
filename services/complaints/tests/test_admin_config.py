@@ -22,6 +22,7 @@ async def test_admin_sees_effective_settings_without_secrets(make_app, settings,
         assert cfg["llm"] == {"configured": True, "host": "127.0.0.1", "model": "qwen2.5:0.5b",
                               "timeout_s": 8.0}  # fmt: skip
         assert cfg["storage"]["database"] in ("sqlite", "postgresql")
+        assert cfg["storage"]["evidence_encrypted_at_rest"] is False
         blob = r.text
         for secret in ("SECRETVALUE", "sk_test", INVESTIGATOR_EMAIL, ADMIN_EMAIL, "sqlite:///",
                        str(settings.evidence_dir)):  # fmt: skip
