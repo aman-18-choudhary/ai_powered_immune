@@ -292,10 +292,19 @@ def explanation_parts(facts: dict[str, Any]) -> list[dict[str, Any]]:
             "rule", "call_guard.rules", type="indicators", codes=[i["code"] for i in rule_ind[:5]],
         ))  # fmt: skip
     elif facts.get("text_scorer_ran"):
+        narr = any(i.get("stage") == "complaint_narrative" for i in inds)
         parts.append(_part(
-            "The rules matched no specific scam cue in the text." if ml_ind
+            "The call-script rules matched no cue in the text." if narr
+            else "The rules matched no specific scam cue in the text." if ml_ind
             else "The text matched no specific scam cue.", "rule", "call_guard.rules",
             type="indicators", codes=[],
+        ))  # fmt: skip
+    narr_ind = [i for i in inds if i.get("stage") == "complaint_narrative"]
+    if narr_ind:
+        parts.append(_part(
+            "The report describes: " + "; ".join(str(i["text"]) for i in narr_ind[:5]) + ".",
+            "rule", "complaints.narrative", type="indicators",
+            codes=[i["code"] for i in narr_ind[:5]],
         ))  # fmt: skip
     for i in ml_ind[:1]:
         parts.append(_part(

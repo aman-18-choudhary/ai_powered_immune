@@ -85,8 +85,11 @@ async def test_real_rule_indicators_point_to_a_sentence_not_the_whole_text():
     blob = json.dumps(out.indicators)
     assert LONG not in blob  # the whole description is never copied into evidence
     assert any("safe account" in i["evidence"]["snippet"].lower() for i in rules)
-    starts = {i["evidence"]["start"] for i in rules}
-    assert len(starts) == 2  # two different sentences carry the cues
+    starts = {i["evidence"]["start"] for i in rules if i["stage"] == "call_guard"}
+    assert len(starts) == 2  # two different sentences carry the call-script cues
+    narr = [i for i in rules if i["stage"] == "complaint_narrative"]
+    assert [i["code"] for i in narr] == ["CLAIMED_OFFICIAL_IDENTITY"]  # "said he was an officer"
+    assert narr[0]["evidence"]["start"] == 0 and narr[0]["method"] == "complaints.narrative"
     prov = out.extra["provenance"]
     assert "text_rules" in prov["ran"]
     assert prov["model_versions"]["call_guard_rules"] == RULES_VERSION

@@ -224,9 +224,11 @@ class CallGuardTextAnalysis:
 # =============================================================================================
 PIPELINE_V2 = "complaints-analysis-v2"
 RISK_FORMULA = (
-    "risk = min(100, max(text_score, transcript_score) + round(25 * "
+    "risk = min(100, max(text_score, narrative_score, transcript_score) + round(25 * "
     "noisy_or(url_indicator_weights))); text_score = round(100 * call-guard score of the title "
-    "and description, counting only scored parts with a listed reason); transcript_score = the "
+    "and description, counting only scored parts with a listed reason); narrative_score = "
+    "round(100 * noisy_or(complaint-narrative cue weights)), cues for how a victim describes the "
+    "fraud mechanism afterwards (complaints.narrative); transcript_score = the "
     "same for audio evidence transcripts when audio evidence was transcribed; the predicted "
     "category is a model guess and is NOT part of the score; HIGH or CRITICAL needs at least one "
     "rule-based indicator (a score from the ML classifier alone is capped at MEDIUM); terms of "
@@ -520,6 +522,25 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
                 stage("script_classifier", "ml", pv.classifier_method(text_version), "ran",
                       version=text_version)  # fmt: skip
 
+        # (a1) complaint-narrative cues (complaints.narrative): the fraud mechanism as victims
+        # describe it afterwards, which the call-guard rules do not score (relayed speech)
+        from . import narrative
+
+        narrative_score: int | None = None
+        if insufficient:
+            stage("complaint_narrative", "rule", narrative.METHOD, "skipped", "insufficient_input")
+        else:
+            found = narrative.cues(text)
+            narrative_score = narrative.score(found)
+            indicators += [
+                {"code": c.code, "weight": c.weight, "text": c.text, "stage": narrative.STAGE,
+                 "source": "rule", "method": narrative.METHOD,
+                 "evidence": layout.span_evidence(c.start, c.end)}
+                for c in found
+            ]  # fmt: skip
+            stage("complaint_narrative", "rule", narrative.METHOD, "ran",
+                  version=narrative.NARRATIVE_VERSION)  # fmt: skip
+
         # (a2) audio evidence transcripts (made by the API before this call; see
         # complaints.transcribe): scored by the same call-guard scorer (rules + clf-v1) as the
         # description; indicators point to the evidence id and the segment's time range
@@ -783,7 +804,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
         adj = round(URL_ADJUSTMENT_MAX * (1.0 - miss))
         # the predicted category is shown separately as a model guess; it never adds to the score
         # (accuracy audit 2026-10-17: a category guess alone produced HIGH for legitimate text)
-        bases = [b for b in (text_score, transcript_score, ocr_score) if b is not None]
+        bases = [b for b in (text_score, narrative_score, transcript_score, ocr_score)
+                 if b is not None]  # fmt: skip
         risk: int | None = None
         if bases or ((url_analysis or embedded) and weights):
             risk = max(0, min(100, (max(bases) if bases else 0) + adj))
@@ -1069,7 +1091,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             "entity_checks": entities,
             "context": ctx,
             "score_components": {
-                "text_score": text_score, "transcript_score": transcript_score,
+                "text_score": text_score, "narrative_score": narrative_score,
+                "transcript_score": transcript_score,
                 "category_prior": None, "category_used_in_score": False,
                 "unexplained_scores_ignored": unexplained,
                 "capped_model_only": capped_model_only, "url_adjustment": adj,
@@ -1082,7 +1105,8 @@ class ComplaintAnalysisPipeline(CallGuardTextAnalysis):
             status=status,
             pipeline_version=(
                 f"{PIPELINE_V2}+{text_version}+"
-                f"{getattr(cat_model, 'version', 'category-unavailable')}"
+                f"{getattr(cat_model, 'version', 'category-unavailable')}+"
+                f"{narrative.NARRATIVE_VERSION}"
             ),
             capabilities=caps,
             risk_score=risk,
